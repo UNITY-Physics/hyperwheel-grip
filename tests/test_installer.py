@@ -166,6 +166,18 @@ def test_site_setup_adds_only_what_is_missing_and_never_prints_secrets(tmp_path,
     assert ["systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service"] in fake.commands
 
 
+def test_the_kept_list_names_every_site_file_including_keys(tmp_path, key, signers, pi):
+    root, _ = pi
+    installer(make_release(tmp_path, key, "0.1.0"), signers, pi, site_setup=site_setup(tmp_path)).install()
+    said = []
+    installer(make_release(tmp_path, key, "0.2.0"), signers, pi, said, site_setup=site_setup(tmp_path)).install()
+    kept = next(s for s in said if s.startswith("Site settings kept as they are:"))
+    for name in ("site.toml", "routing.toml", "scanner.json", "orthanc.json", "keys/SiteA-Sandbox.json"):
+        assert name in kept
+    assert not any(s.startswith("Site settings added") for s in said)
+    assert "key-not-for-logs" not in "\n".join(said)
+
+
 def test_installing_the_same_release_again_changes_nothing(tmp_path, key, signers, pi):
     root, fake = pi
     release = make_release(tmp_path, key)

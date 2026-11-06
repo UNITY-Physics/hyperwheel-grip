@@ -248,7 +248,11 @@ class Installer:
         link.symlink_to("/opt/hyperwheel/current/orthanc.json")
         if added:
             self.say(f"Site settings added where missing: {', '.join(added)}.")
-        kept = sorted(p.name for p in etc.iterdir() if p.is_file() and p.name not in {a.split(' ')[0] for a in added})
+        just_added = {a.split(" ")[0] for a in added}
+        present = [p.name for p in etc.iterdir() if p.is_file()]
+        if (etc / "keys").is_dir():
+            present += [f"keys/{p.name}" for p in (etc / "keys").iterdir() if p.is_file()]
+        kept = sorted(name for name in present if name not in just_added)
         if kept:
             self.say(f"Site settings kept as they are: {', '.join(kept)}.")
         configured = (etc / "site.toml").exists() and (etc / "routing.toml").exists()
