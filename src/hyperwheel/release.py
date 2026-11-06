@@ -167,6 +167,82 @@ def verify_release(folder: Path, allowed_signers: Path) -> tuple[Manifest, str]:
     return manifest, signer
 
 
+# ---- channel files --------------------------------------------------------------------
+#
+# A channel file says which release a channel (dev, pilot, stable) should run. It is
+# signed like a manifest (same namespace, same allowed signers) and published as
+# ``channel.json`` + ``channel.json.sig`` on the GitHub release tagged
+# ``channel-<name>``, so each channel has a fixed download address. Promoting a
+# release means signing a new channel file.
+
+CHANNEL_FILE = "channel.json"
+CHANNEL_SIGNATURE = "channel.json.sig"
+_TAR = re.compile(r"hyperwheel-(\d+\.\d+\.\d+)-arm64\.tar")
+
+
+@dataclass(frozen=True)
+class Channel:
+    channel: str
+    version: str
+    tar: str
+    tar_size: int
+    tar_sha256: str
+    manifest_sha256: str
+    published_at: str
+
+    def to_json(self) -> str:
+        return json.dumps({"format": FORMAT, "name": "hyperwheel-channel", "channel": self.channel,
+                           "version": self.version, "tar": self.tar, "tar_size": self.tar_size,
+                           "tar_sha256": self.tar_sha256, "manifest_sha256": self.manifest_sha256,
+                           "published_at": self.published_at}, indent=2, sort_keys=True) + "\n"
+
+
+def version_key(version: str) -> tuple[int, int, int]:
+    if not _VERSION.fullmatch(version):
+        raise ReleaseError(f"not a release version: {version!r}")
+    a, b, c = version.split(".")
+    return int(a), int(b), int(c)
+
+
+def parse_channel(text: str) -> Channel:
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ReleaseError("the channel file is not valid JSON") from None
+    if not isinstance(data, dict) or data.get("format") != FORMAT or data.get("name") != "hyperwheel-channel":
+        raise ReleaseError(f"not a Hyperwheel channel file of format {FORMAT}")
+    if data.get("channel") not in CHANNELS:
+        raise ReleaseError(f"the channel must be one of {', '.join(CHANNELS)}")
+    version = data.get("version")
+    version_key(version if isinstance(version, str) else "")
+    tar = data.get("tar")
+    m = _TAR.fullmatch(tar) if isinstance(tar, str) else None
+    if not m or m.group(1) != version:
+        raise ReleaseError("the channel file's tar name doesn't match its version")
+    size = data.get("tar_size")
+    if not isinstance(size, int) or size <= 0:
+        raise ReleaseError("the channel file needs the tar's size")
+    for key in ("tar_sha256", "manifest_sha256"):
+        if not isinstance(data.get(key), str) or not _SHA256.fullmatch(data[key]):
+            raise ReleaseError(f"the channel file needs {key}")
+    published = data.get("published_at") if isinstance(data.get("published_at"), str) else ""
+    return Channel(data["channel"], version, tar, size, data["tar_sha256"], data["manifest_sha256"], published)
+
+
+def verify_channel(folder: Path, allowed_signers: Path, expected: str | None = None) -> tuple[Channel, str]:
+    """Check a downloaded channel file and its signature; returns it and who signed it.
+
+    ``expected`` is the channel this Pi follows: a file for another channel is refused,
+    so a dev channel file can never be passed off as the stable one.
+    """
+    folder = Path(folder)
+    signer = verify_signature(folder / CHANNEL_FILE, folder / CHANNEL_SIGNATURE, allowed_signers)
+    channel = parse_channel((folder / CHANNEL_FILE).read_text())
+    if expected is not None and channel.channel != expected:
+        raise ReleaseError(f"this is the {channel.channel} channel's file, not {expected}'s")
+    return channel, signer
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m hyperwheel.release")
     sub = ap.add_subparsers(dest="command", required=True)
