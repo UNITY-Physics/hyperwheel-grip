@@ -2,4 +2,4 @@
 # One line per signer: <name> namespaces="hyperwheel-release" <public key> <comment>.
 # There is one release signer. Another can be added as one more line; a release signed by any
 # one of them is accepted.
-release-signer-1 namespaces="hyperwheel-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDQ5AUJ6f13/gf+MUH3trtzNuc58g43m+uhee0FCTriK Hyperwheel release signer 1
+release-signer-1 namespaces="hyperwheel-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPVEIW+Us7mZzrLaR1DDpuBtCiDyPw+77ST6cxJQBPZA Hyperwheel release signer
