@@ -153,7 +153,17 @@ Each part is downloaded on its own and found by its hash, so an update
 fetches only what changed (a code-only update is a few MB). The release
 build checks that the `.deb` set installs on the pinned image.
 
-**Building and signing a release** (on the release signer's Mac, until the repo is public and CI builds it):
+**Building and signing a release.** GitHub Actions builds it; the release
+signer signs it on their own Mac. No secret is ever in a workflow.
+
+1. On GitHub: Actions → "Build release" → Run workflow, on `main`. It runs
+   the tests, fetches the pinned `.deb` files, builds OE2 and the release
+   folder on an arm64 machine, and keeps it as the artifact
+   `hyperwheel-release-unsigned` (30 days), with a `SHA256SUMS` list.
+2. On the release signer's Mac: `gh run download <run id> -n hyperwheel-release-unsigned`,
+   then sign and pack it as in steps 3 and 4 below.
+
+The same steps also run by hand on the build Mac, for a test build:
 
 1. `tools/release/fetch_debs.sh <folder>` fetches the pinned `.deb` files in
    `release/debs.list` in an arm64 Docker container that uses the same archives
