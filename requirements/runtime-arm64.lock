@@ -1,0 +1,14 @@
+# Every runtime package as the wheel a Pi uses (CPython 3.13, Linux arm64), with its SHA-256.
+# Written by tools/release/lock_wheels.py from runtime.lock; used by the release build.
+bcrypt==5.0.0 --hash=sha256:f0ce778135f60799d89c9693b9b398819d15f1921ba15fe719acb3178215a7db  # bcrypt-5.0.0-cp39-abi3-manylinux_2_28_aarch64.whl
+certifi==2026.10.23 --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1  # certifi-2026.10.23-py3-none-any.whl
+cffi==2.1.1 --hash=sha256:f16c709686a78c727bbbf059f92b0bf41c6fc60deec706d2dc19f529175a6125  # cffi-2.1.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+charset-normalizer==3.5.2 --hash=sha256:849df64e889b2e17230d58410a03dba311a65b163508fd33679b2b737d4b7858  # charset_normalizer-3.5.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+cryptography==50.0.2 --hash=sha256:f9f6143a8c75945eb960d9eb98905a441394abfa24afaae239d514ffb2586480  # cryptography-50.0.2-cp311-abi3-manylinux_2_28_aarch64.whl
+idna==3.20 --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c  # idna-3.20-py3-none-any.whl
+paramiko==3.5.1 --hash=sha256:43b9a0501fc2b5e70680388d9346cf252cfb7d00b0667c39e80eb43a408b8f61  # paramiko-3.5.1-py3-none-any.whl
+pycparser==3.12 --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e  # pycparser-3.12-py3-none-any.whl
+pydicom==3.0.1 --hash=sha256:db32f78b2641bd7972096b8289111ddab01fb221610de8d7afa835eb938adb41  # pydicom-3.0.1-py3-none-any.whl
+PyNaCl==1.6.2 --hash=sha256:46065496ab748469cdd999246d17e301b2c24ae2fdf739132e580a0e94c94a87  # pynacl-1.6.2-cp38-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl
+requests==2.32.3 --hash=sha256:70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6  # requests-2.32.3-py3-none-any.whl
+urllib3==2.8.0 --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3  # urllib3-2.8.0-py3-none-any.whl

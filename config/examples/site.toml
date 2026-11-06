@@ -1,0 +1,46 @@
+# /etc/hyperwheel/site.toml: one per Pi. Kept outside the release, so updates
+# don't touch it. Save a copy off the Pi before a reflash.
+schema_version = 1
+
+site = "example-site"
+staging_dir = "/var/lib/hyperwheel/stagingArea"
+state_db = "/var/lib/hyperwheel/state.db"
+# One key file per project, root-only (mode 600). The service gets a private
+# copy from systemd (LoadCredential=); it never reads this folder directly.
+keys_dir = "/etc/hyperwheel/keys"
+
+# Patient ID the site uses for phantom scans. Leave out to skip the phantom check.
+# phantom_patient_id = "PH-0001"
+
+[upload]
+chunk_bytes = 8388608        # 8 MiB raw-file chunks (GRIP's limit is 64 MiB)
+min_chunk_bytes = 262144     # chunks halve down to 256 KiB on a link that can't carry them
+target_chunk_s = 30          # ... or when one takes longer than this
+timeout_s = 60
+slowest_link_bytes_per_s = 16000  # every request gets the time its size needs at this rate
+
+[rrdf]
+enabled = true
+margin_minutes = 60
+watch_days = 7
+
+[scanner]
+host = "10.42.0.1"           # set at install from the network found (older scanner software: 10.0.0.41)
+port = 25125
+username = "rrdf"
+known_hosts = "/etc/hyperwheel/scanner_known_hosts"
+interface = "eth0"           # the Pi's port on the scanner cable
+# The scanner password is in /etc/hyperwheel/scanner.json (root-only), never here.
+
+[orthanc]
+url = "http://127.0.0.1:8042"
+# Orthanc's login for Hyperwheel is in /etc/hyperwheel/orthanc.json (root-only).
+
+[dashboard]
+bind = "192.168.99.1"        # the hotspot address
+port = 5000
+leave_on_after_hours = 48    # ask operators to leave the scanner on once files have waited this long
+
+[disk]
+warn_free_gb = 10
+stop_free_gb = 4

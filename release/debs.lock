@@ -1,0 +1,9 @@
+# SHA-256 of each pinned .deb in debs.list (written by fetch_debs.sh --update-lock)
+80992935fa7abb49cdef064ee745d117f04326c48b3cc8f6468d14014ee53340  dcmtk-data_3.6.9-5+deb13u3_all.deb
+4bcf8b411f0cf8164a87a4ef8e418792366f673004b2ede028b5bd66dd8cbce6  libboost-locale1.83.0_1.83.0-4.2_arm64.deb
+da9cfc16e84b5324082b30933a22e658d5726cce65af5895322c4307ddf2cc3e  libcivetweb1_1.16+dfsg-2+deb13u1_arm64.deb
+12ee4170c36029300d61e16e8232399c9fd3a561cc8d0bc85a2ff8fe765524d8  libdcmtk19_3.6.9-5+deb13u3_arm64.deb
+346da1614a66ae07549243f2abf1dc5fdcc590a4ccb408458b5ea7ef7997477d  libjsoncpp26_1.9.6-3_arm64.deb
+42bb0ab1e6648650114ad28aa839600c6e242482826797e271dce685316365b4  liblua5.3-0_5.3.6-2+b4_arm64.deb
+696b24efbcb13b3f6654709914a2449fc3c18d6d7d08f2149e2a44e38eb29e20  libssl-dev_3.5.7-1~deb13u3+rpt1_arm64.deb
+99ede182b929d608b26f265c3bd56f1a6eb5ca71b207a0398003cf02eda99ceb  orthanc_1.12.7+dfsg-4_arm64.deb

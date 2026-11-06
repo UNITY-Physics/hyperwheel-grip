@@ -1,0 +1,16 @@
+# /etc/hyperwheel/routing.toml: which scanner logins go to which GRIP project.
+#
+# The login is the part of OperatorsName after the last '/', in lower case
+# (e.g. "site_a/sandbox" -> "sandbox"). A login that isn't listed
+# here is never uploaded: its DICOM is deleted on the Pi and its raw files are
+# never pulled from the scanner.
+#
+# Each project has its own key, stored with `hyperwheel keys set`; no keys here.
+schema_version = 1
+
+[projects.Example-Project]
+logins = ["example"]
+api_base_url = "https://grip.example.org/api"
+token_url = "https://grip.example.org/api/get/token"
+# Optional: Patient IDs that don't match are flagged (never changed).
+# patient_id_pattern = 'R2-\d{4}'
