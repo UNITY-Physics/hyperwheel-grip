@@ -206,6 +206,37 @@ class Uploader:
         self.store.set_key_status(project, "working")
         self.store.clear_flags("KEY_NOT_WORKING", project=project)
 
+    def check_keys(self) -> dict[str, str]:
+        """Ask GRIP for a token with every project's key, without uploading anything.
+
+        Run when the service starts (so after an update) and now and then, so the
+        Upload Monitor shows each key as working or not even when nothing is waiting.
+        A key that fails pauses only its own project; GRIP not answering changes nothing.
+        """
+        results = {}
+        for project in self.routing.projects.values():
+            api = self._api(project)
+            try:
+                api.check_key(fresh=True)
+            except Transient as e:
+                results[project.name] = "not checked (GRIP didn't answer)"
+                log.info("project %s: key not checked, GRIP didn't answer (%s)", project.name, e)
+                continue
+            except (KeyProblem, KeyRejected, AuthFailed) as e:
+                status = ("missing" if isinstance(e, KeyMissing) else
+                          "unreadable" if isinstance(e, KeyProblem) else "rejected")
+                try:
+                    self._key_failed(project, status, str(e))
+                except _ProjectBlocked:
+                    pass
+                results[project.name] = status
+                continue
+            self._key_ok.discard(project.name)
+            self._key_working(project.name)
+            results[project.name] = "working"
+            log.info("project %s: GRIP key checked, working", project.name)
+        return results
+
     def _key_failed(self, project: Project, status: str, message: str) -> None:
         self.store.set_key_status(project.name, status, message)
         self.store.raise_flag("KEY_NOT_WORKING", f"GRIP key for {project.name}: {message}. Nothing is uploaded "

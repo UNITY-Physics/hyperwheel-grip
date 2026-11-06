@@ -110,6 +110,10 @@ own and doesn't hold the raw files back. One file per request.
   nothing yet).
 - The key is checked (a token) before any file of a study is touched, so a
   bad key leaves the files exactly as they were.
+- Every project's key is also checked when the service starts (so after every
+  update) and every 12 hours, with a fresh token from GRIP and no upload. The
+  Upload Monitor then shows each key as working or not, even when nothing is
+  waiting, and a key that fails pauses only its own project.
 - Slow links (tested with `tc netem` on the dev Pi): a request's body has to
   be sent within the connect timeout, so each request gets the time its size
   needs at `slowest_link_bytes_per_s` (16 kB/s). A raw chunk that gets no

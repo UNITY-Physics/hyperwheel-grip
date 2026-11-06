@@ -55,8 +55,13 @@ class GripApi:
     def __init__(self, http: Http):
         self.http = http
 
-    def check_key(self) -> None:
-        """Get a token (or reuse a fresh one). Raises KeyProblem, KeyRejected or Transient."""
+    def check_key(self, fresh: bool = False) -> None:
+        """Get a token (or reuse a valid one). Raises KeyProblem, KeyRejected or Transient.
+
+        ``fresh`` drops any cached token first, so GRIP itself checks the key now.
+        """
+        if fresh:
+            self.http.tokens.invalidate()
         self.http.tokens.get()
 
     # ---- studies ---------------------------------------------------------------

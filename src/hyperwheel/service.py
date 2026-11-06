@@ -53,6 +53,10 @@ class Service:
         self.uploader_options = uploader_options
         self.stop = threading.Event()
         self._last_housekeeping = 0.0
+        # Every key is checked when the service starts (so after every update) and then
+        # every 12 hours, without waiting for something to upload.
+        self.key_check_every_s = 12 * 3600
+        self._last_key_check = float("-inf")
 
     # ---- real connections -----------------------------------------------------------
 
@@ -82,6 +86,9 @@ class Service:
         if not self.synced():
             log.info("clock not set yet; uploads wait")
             return
+        if self.clock() - self._last_key_check >= self.key_check_every_s:
+            uploader.check_keys()
+            self._last_key_check = self.clock()
         uploader.run_once()
 
     # ---- the loops --------------------------------------------------------------------
