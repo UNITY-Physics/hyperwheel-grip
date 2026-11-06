@@ -184,6 +184,16 @@ def test_only_current_and_previous_releases_are_kept(pi):
     assert sorted(p.name for p in pi.layout.releases.iterdir()) == ["0.1.3", "0.1.4"]
 
 
+def test_old_releases_are_removed_oldest_first(pi, caplog):
+    for v in ("0.1.10", "0.1.9", "0.1.11"):
+        pi.have(v)
+    pi.publish("0.1.12")
+    with caplog.at_level("INFO"):
+        pi.updater().check()
+    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("Removed")] == \
+        ["Removed old release 0.1.2.", "Removed old release 0.1.9.", "Removed old release 0.1.10."]
+
+
 def test_nothing_happens_when_the_channel_names_the_current_or_an_older_version(pi):
     pi.publish("0.1.2")
     assert pi.updater().check().startswith("up to date: 0.1.2")
@@ -234,13 +244,46 @@ def test_a_tar_that_does_not_match_the_channel_file_is_refused(pi):
 
 def test_a_failed_health_check_rolls_back_and_the_version_is_not_tried_again(pi):
     pi.publish("0.1.3")
-    pi.pi.health["0.1.3"] = "hyperwheel.service is failed"
+    pi.pi.health["0.1.3"] = "Hyperwheel's service didn't start"
     result = pi.updater().check()
-    assert result == "rolled back to 0.1.2: 0.1.3 failed (hyperwheel.service is failed) and won't be tried again"
+    assert result == ("rolled back to 0.1.2: 0.1.3 failed (Hyperwheel's service didn't start within 3 minutes) "
+                      "and won't be tried again")
     assert pi.installs == ["0.1.3", "0.1.2"] and pi.current() == "0.1.2"
+    # 0.1.2 had no previous release before: the failed one doesn't become it, and is removed
+    assert not pi.layout.previous.is_symlink() and not (pi.layout.releases / "0.1.3").exists()
     assert pi.updater().check().startswith("staying on 0.1.2: 0.1.3 failed here before")
     pi.publish("0.1.4")
     assert pi.updater().check() == "updated: 0.1.2 -> 0.1.4"
+
+
+def test_after_a_rollback_previous_is_the_release_it_was_before(pi):
+    pi.have("0.1.3")
+    pi.publish("0.1.4")
+    pi.pi.health["0.1.4"] = "Hyperwheel's service didn't start"
+    assert pi.updater().check().startswith("rolled back to 0.1.3")
+    assert os.readlink(pi.layout.previous) == "releases/0.1.2"
+    assert sorted(f.name for f in pi.layout.releases.iterdir()) == ["0.1.2", "0.1.3"]
+    assert [f.name for f in pi.paths.downloads.iterdir()] == ["channel"]
+
+
+def test_an_alert_if_the_old_release_is_not_healthy_after_the_rollback_either(pi):
+    pi.publish("0.1.3")
+    pi.pi.health = {"0.1.3": "Hyperwheel's service didn't start", "0.1.2": "Orthanc didn't answer"}
+    result = pi.updater().check()
+    assert result.startswith("ALERT: 0.1.3 failed") and "0.1.2 is back on but isn't healthy either" in result
+    assert pi.current() == "0.1.2" and "0.1.3" in json.loads(pi.paths.failed.read_text())
+
+
+def test_the_passing_checks_are_logged(pi, caplog):
+    pi.publish("0.1.3")
+    pi.pi.worked = {"SiteA-Sandbox", "SiteA-Other"}
+    pi.pi.keys = {"0.1.3": {"SiteA-Sandbox": "working"}}
+    with caplog.at_level("INFO"):
+        pi.updater().check()
+    lines = [r.getMessage() for r in caplog.records]
+    assert any(line.startswith("Health check passed") for line in lines)
+    assert "Key check: SiteA-Sandbox working." in lines
+    assert "Key check: SiteA-Other not checked yet (GRIP not reached)." in lines
 
 
 def test_a_key_that_stops_working_with_the_new_release_rolls_back(pi):
@@ -261,6 +304,18 @@ def test_a_key_revoked_meanwhile_is_not_blamed_on_the_release(pi):
     assert result.startswith("updated: 0.1.2 -> 0.1.3; the key for SiteA-Sandbox doesn't work with either release")
     assert pi.installs == ["0.1.3", "0.1.2", "0.1.3"] and pi.current() == "0.1.3"
     assert os.readlink(pi.layout.previous) == "releases/0.1.2" and not pi.paths.failed.exists()
+
+
+def test_a_revoked_key_and_a_release_that_then_fails_to_start_ends_on_the_old_release(pi):
+    pi.publish("0.1.3")
+    pi.pi.worked = {"SiteA-Sandbox"}
+    pi.pi.keys = {"0.1.3": {"SiteA-Sandbox": "rejected"}, "0.1.2": {"SiteA-Sandbox": "rejected"}}
+    healthy_once = iter([None])
+    pi.pi.health_problem = lambda since: next(healthy_once, "Hyperwheel's service didn't start") \
+        if pi.current() == "0.1.3" else None
+    result = pi.updater().check()
+    assert result.startswith("rolled back to 0.1.2") and "failed to start again" in result
+    assert pi.installs == ["0.1.3", "0.1.2", "0.1.3", "0.1.2"] and pi.current() == "0.1.2"
 
 
 def test_grip_not_answering_is_not_a_reason_to_roll_back(pi):
@@ -335,6 +390,30 @@ def test_status_shows_the_last_check_and_a_hold(pi, capsys):
     up.main(["status"], pi.paths)
     out = capsys.readouterr().out
     assert "Release: 0.1.3 (on hold)" in out and "updated: 0.1.2 -> 0.1.3" in out
+
+
+def test_every_check_updates_the_last_check_time(pi):
+    pi.publish("0.1.3")
+    pi.updater().check()
+    first = json.loads(pi.paths.status.read_text())["checked_at"]
+    pi.clock.sleep(5)
+    assert pi.updater().check().startswith("up to date")
+    assert json.loads(pi.paths.status.read_text())["checked_at"] != first
+
+
+def test_update_now_prints_the_result_in_plain_words(pi, capsys, monkeypatch):
+    monkeypatch.setattr(up, "start_service", lambda: pi.updater()._status(
+        "rolled back to 0.1.2: 0.1.3 failed (Hyperwheel's service didn't start within 3 minutes) "
+        "and won't be tried again"))
+    assert up.main(["now"], pi.paths) == 1
+    out = capsys.readouterr().out
+    assert "rolled back to 0.1.2" in out and "systemctl" not in out
+
+
+def test_update_now_says_so_if_the_check_left_no_result(pi, capsys, monkeypatch):
+    monkeypatch.setattr(up, "start_service", lambda: None)
+    assert up.main(["now"], pi.paths) == 1
+    assert "stopped without a result" in capsys.readouterr().out
 
 
 def test_the_upload_monitor_and_the_doctor_show_a_hold(pi):

@@ -262,7 +262,10 @@ release signed by any listed signer is accepted.
   It runs the same check in `hyperwheel-update.service` (so a dropped
   connection can't cut an install short), with a one-minute quiet spell
   instead of 30, and it also applies releases marked `manual_only` or
-  `kernel_or_firmware`, which the timer only downloads.
+  `kernel_or_firmware`, which the timer only downloads. It ends with the
+  check's result in one line, e.g. `updated: 0.1.3 -> 0.1.4` or
+  `rolled back to 0.1.4: 0.1.5 failed (Hyperwheel's service didn't start
+  within 3 minutes) and won't be tried again`.
 - **Never applied by the updater:** releases that change Orthanc's database
   (`orthanc_db_change`). They back up Orthanc's data first, and go to the dev
   Pi, then a pilot site, by hand.
@@ -298,8 +301,10 @@ release signed by any listed signer is accepted.
      answering in that time is not a failure.
 6. **Rollback:** the previous release's own `install.sh` puts it back, with
    its own Orthanc `.deb` files, settings and units. The state database is
-   not restored (see below). The failed version is not tried again; a newer
-   one is.
+   not restored (see below). `previous` points at the release it pointed at
+   before the update, and the failed release is removed. The failed version is
+   not tried again; a newer one is. If the release put back doesn't pass the
+   health check either, the result is an ALERT.
 7. Afterwards only `current` and `previous` are kept in `releases/`, and the
    downloads are removed.
 

@@ -30,9 +30,10 @@ A check:
 9. **Key check:** every project whose key worked before must get a GRIP token
    again. GRIP not answering is not a failure.
 10. **Rollback** if 8 or 9 fails: the previous release's own ``install.sh`` puts it
-    back, and the failed version is never tried again here. If the previous release
-    can't use the key either, the key was revoked or expired, not broken by the
-    release: the version may be tried again, and the key is flagged as usual.
+    back, ``previous`` points at the release it pointed at before, the failed
+    release is removed, and that version is never tried again here. If the previous
+    release can't use the key either, the key was revoked or expired, not broken by
+    the release: the new release goes back on, and the key is flagged as usual.
 
 Logs and the status file hold versions and file names only, never settings or keys.
 """
@@ -55,7 +56,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from .installer import Layout
+from .installer import Layout, _atomic_link
 from .release import (CHANNEL_FILE, CHANNEL_SIGNATURE, MANIFEST, Channel, ReleaseError, sha256_file,
                       verify_channel, verify_release, version_key)
 
@@ -295,6 +296,7 @@ class Updater:
     def apply(self, folder: Path, version: str, before: str | None) -> str:
         user = self.service_user()
         worked = self.pi.working_keys()
+        previous = self.previous_version()
         log.info("Installing %s (now %s).", version, before)
         switched_at = self.clock()
         code = self.run(["sh", str(folder / "install.sh"), "--signers", str(self.paths.signers),
@@ -302,11 +304,13 @@ class Updater:
         if self.current_version() != version:
             self._failed(version, f"the install stopped (exit {code})")
             return f"staying on {before}: installing {version} stopped before the switch (exit {code})"
-        problem = None if code == 0 else f"the install ended with exit {code}"
-        problem = problem or self._wait(lambda: self.pi.health_problem(switched_at), HEALTH_WAIT_S)
+        problem = None if code == 0 else f"its install ended with an error (exit {code})"
+        problem = problem or self._healthy(switched_at)
         lost: list[str] = []
         if problem is None and worked:
             results = self._wait_keys(switched_at, worked)
+            for project in sorted(worked):
+                log.info("Key check: %s %s.", project, results.get(project) or "not checked yet (GRIP not reached)")
             lost = sorted(p for p in worked if results.get(p) not in (None, "working", "unknown"))
             if lost:
                 problem = f"the key for {', '.join(lost)} worked before and doesn't now"
@@ -314,9 +318,10 @@ class Updater:
             self._prune_releases()
             self._prune_downloads(keep=None)
             return f"updated: {before} -> {version}"
-        return self.roll_back(version, before, user, problem, lost)
+        return self.roll_back(version, before, previous, user, problem, lost)
 
-    def roll_back(self, version: str, before: str | None, user: str, problem: str, lost: list[str]) -> str:
+    def roll_back(self, version: str, before: str | None, previous: str | None, user: str, problem: str,
+                  lost: list[str]) -> str:
         log.warning("Rolling back %s: %s.", version, problem)
         if not before:
             self._failed(version, problem)
@@ -337,21 +342,35 @@ class Updater:
                 forward_at = self.clock()
                 self.run(["sh", str(self.paths.downloads / f"hyperwheel-{version}" / "install.sh"), "--signers",
                           str(self.paths.signers), "--service-user", user])
-                if self.current_version() == version and \
-                        self._wait(lambda: self.pi.health_problem(forward_at), HEALTH_WAIT_S) is None:
+                if self.current_version() == version and self._healthy(forward_at) is None:
                     self._prune_releases()
                     self._prune_downloads(keep=None)
                     return (f"updated: {before} -> {version}; the key for {keys} doesn't work with either "
                             "release, so it was revoked or has expired: it needs replacing")
                 problem = f"{problem}; it also failed to start again after the key check"
+                if self.current_version() != before:
+                    return self.roll_back(version, before, previous, user, problem, [])
         self._failed(version, problem)
+        # The reinstall made the failed release 'previous'; point it back at the release before.
+        if previous:
+            _atomic_link(self.paths.layout.previous, f"releases/{previous}")
+        else:
+            self.paths.layout.previous.unlink(missing_ok=True)
+        self._prune_releases()
+        self._prune_downloads(keep=None)
+        if (still := self._healthy(back_at)) is not None:
+            return f"ALERT: {version} failed ({problem}); {before} is back on but isn't healthy either ({still})"
         return f"rolled back to {before}: {version} failed ({problem}) and won't be tried again"
 
-    def _wait(self, probe: Callable[[], str | None], limit_s: float) -> str | None:
+    def _healthy(self, since: float) -> str | None:
+        """None once the health check passes; what's wrong if it hasn't within HEALTH_WAIT_S."""
         start = self.clock()
-        while (problem := probe()) is not None and self.clock() - start < limit_s:
+        while (problem := self.pi.health_problem(since)) is not None and self.clock() - start < HEALTH_WAIT_S:
             self.sleep(10)
-        return problem
+        if problem is None:
+            log.info("Health check passed.")
+            return None
+        return f"{problem} within {HEALTH_WAIT_S // 60} minutes"
 
     def _wait_keys(self, since: float, projects: set[str]) -> dict[str, str]:
         start = self.clock()
@@ -366,6 +385,10 @@ class Updater:
     def current_version(self) -> str | None:
         current = self.paths.layout.current
         return Path(os.readlink(current)).name if current.is_symlink() else None
+
+    def previous_version(self) -> str | None:
+        previous = self.paths.layout.previous
+        return Path(os.readlink(previous)).name if previous.is_symlink() else None
 
     def service_user(self) -> str:
         unit = self.paths.service_unit
@@ -407,7 +430,7 @@ class Updater:
     def _prune_releases(self) -> None:
         keep = {Path(os.readlink(p)).name for p in (self.paths.layout.current, self.paths.layout.previous)
                 if p.is_symlink()}
-        for folder in self.paths.layout.releases.iterdir():
+        for folder in sorted(self.paths.layout.releases.iterdir(), key=lambda f: version_key(f.name)):
             if folder.is_dir() and folder.name not in keep and not folder.name.startswith("."):
                 shutil.rmtree(folder)
                 log.info("Removed old release %s.", folder.name)
@@ -531,36 +554,43 @@ class LivePi(Pi):
 
     def health_problem(self, since: float) -> str | None:
         from .dashboard import HEARTBEAT
-        units = ["orthanc"] + (["hyperwheel.service", "hyperwheel-dashboard.service"] if self.routing else [])
-        for unit in units:
+        units = {"orthanc": "Orthanc"}
+        if self.routing:
+            units |= {"hyperwheel.service": "Hyperwheel's service", "hyperwheel-dashboard.service": "the Upload Monitor"}
+        for unit, name in units.items():
             state = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True).stdout.strip()
             if state != "active":
-                return f"{unit} is {state or 'not running'}"
+                return f"{name} didn't start"
         try:
             self._orthanc("/system")
         except Exception:
-            return "Orthanc doesn't answer"
+            return "Orthanc didn't answer"
         if not self.routing:
             return None
         store = self._store()
         if store is None:
-            return "Hyperwheel has no state database"
+            return "Hyperwheel didn't open its state database"
         try:
             if store.cursor(HEARTBEAT) < since:
-                return "Hyperwheel hasn't started its work yet"
+                return "Hyperwheel didn't start its work"
         finally:
             store.close()
         d = self.site.dashboard
         try:
             with urllib.request.urlopen(f"http://{d.bind}:{d.port}/api/status", timeout=10) as r:
                 if r.status != 200:
-                    return f"the Upload Monitor answers {r.status}"
+                    return f"the Upload Monitor didn't answer properly (HTTP {r.status})"
         except OSError:
-            return "the Upload Monitor doesn't answer"
+            return "the Upload Monitor didn't answer"
         return None
 
 
 # ---- command line -----------------------------------------------------------------------
+
+def start_service() -> None:
+    """Run one check in hyperwheel-update.service and wait for it to finish."""
+    subprocess.run(["systemctl", "start", "hyperwheel-update.service"], capture_output=True)
+
 
 def main(argv: list[str], paths: Paths | None = None) -> int:
     ap = argparse.ArgumentParser(prog="hyperwheel update")
@@ -602,8 +632,17 @@ def main(argv: list[str], paths: Paths | None = None) -> int:
         paths.state.mkdir(parents=True, exist_ok=True)
         _write(paths.request, json.dumps({"url": args.url}) + "\n")
         print("Checking for an update now (this waits until nothing is arriving from the scanner)...")
-        subprocess.run(["systemctl", "start", "hyperwheel-update.service"])
-        return main(["status"], paths)
+        started = time.time()
+        start_service()  # systemd's own "Job ... failed" text isn't shown: the result below says what happened
+        try:
+            s = json.loads(paths.status.read_text()) if paths.status.stat().st_mtime >= started - 1 else None
+        except (OSError, ValueError):
+            s = None
+        if s is None:
+            print("The update check stopped without a result. Its log: journalctl -u hyperwheel-update.service")
+            return 1
+        main(["status"], paths)
+        return 1 if s["result"].startswith(("ALERT", "rolled back")) else 0
 
     from .config import ConfigError, UpdateSettings, load_site
     try:
