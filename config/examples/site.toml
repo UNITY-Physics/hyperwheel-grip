@@ -41,6 +41,9 @@ bind = "192.168.99.1"        # the hotspot address
 port = 5000
 leave_on_after_hours = 48    # ask operators to leave the scanner on once files have waited this long
 
+[updates]
+channel = "stable"           # dev on the dev Pi, pilot at the pilot site, stable everywhere else
+
 [disk]
 warn_free_gb = 10
 stop_free_gb = 4

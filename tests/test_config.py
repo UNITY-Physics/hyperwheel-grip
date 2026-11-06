@@ -35,6 +35,8 @@ timeout_s = 30
 """))
     assert site.phantom_patient_id == "PH-0001"
     assert site.upload.timeout_s == 30.0
+    assert site.updates.channel == "stable"  # every Pi but the dev Pi and the pilot site
+    assert site.updates.url == "https://github.com/UNITY-Physics/hyperwheel-grip/releases/download"
 
 
 @pytest.mark.parametrize("text,message", [
@@ -48,6 +50,10 @@ timeout_s = 30
     ('schema_version = 1\nsite="a"\nstaging_dir="/s"\nstate_db="/d"\nkeys_dir="/k"\n[rrdf]\nmargin = 60', "unknown"),
     ('schema_version = 1\nsite="a"\nstaging_dir="/s"\nstate_db="/d"\nkeys_dir="/k"\nphantom_patient_id = " "',
      "phantom"),
+    ('schema_version = 1\nsite="a"\nstaging_dir="/s"\nstate_db="/d"\nkeys_dir="/k"\n[updates]\nchannel = "beta"',
+     "channel must be dev, pilot or stable"),
+    ('schema_version = 1\nsite="a"\nstaging_dir="/s"\nstate_db="/d"\nkeys_dir="/k"\n[updates]\n'
+     'url = "http://releases.example"', r"\[updates\].url: must be https"),
 ])
 def test_bad_site_settings(tmp_path, text, message):
     with pytest.raises(ConfigError, match=message):

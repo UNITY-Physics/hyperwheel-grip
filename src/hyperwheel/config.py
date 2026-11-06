@@ -100,6 +100,14 @@ class DashboardSettings:
 
 
 @dataclass(frozen=True)
+class UpdateSettings:
+    # Which releases this Pi takes: dev (the dev Pi), pilot (the pilot site) or stable.
+    channel: str = "stable"
+    # Where releases and channel files are published (GitHub Releases downloads).
+    url: str = "https://github.com/UNITY-Physics/hyperwheel-grip/releases/download"
+
+
+@dataclass(frozen=True)
 class DiskSettings:
     warn_free_gb: float = 10.0
     stop_free_gb: float = 4.0
@@ -120,6 +128,7 @@ class SiteConfig:
     scanner: ScannerSettings = field(default_factory=ScannerSettings)
     orthanc: OrthancSettings = field(default_factory=OrthancSettings)
     dashboard: DashboardSettings = field(default_factory=DashboardSettings)
+    updates: UpdateSettings = field(default_factory=UpdateSettings)
 
 
 @dataclass(frozen=True)
@@ -206,6 +215,9 @@ def load_site(path: Path) -> SiteConfig:
     if urlsplit(orthanc.url).hostname not in _LOCAL_HOSTS:
         raise ConfigError(f"{where} [orthanc].url must point at this machine")
     dashboard = _section(DashboardSettings, data.get("dashboard", {}), f"{where} [dashboard]")
+    updates = _section(UpdateSettings, data.get("updates", {}), f"{where} [updates]")
+    if updates.channel not in ("dev", "pilot", "stable"):
+        raise ConfigError(f"{where} [updates].channel must be dev, pilot or stable")
 
     phantom = data.get("phantom_patient_id")
     if phantom is not None and (not isinstance(phantom, str) or not phantom.strip()):
@@ -227,6 +239,8 @@ def load_site(path: Path) -> SiteConfig:
         scanner=scanner,
         orthanc=orthanc,
         dashboard=dashboard,
+        updates=UpdateSettings(updates.channel, check_url(updates.url, f"{where} [updates].url",
+                                                          test_mode=test_mode)),
     )
 
 

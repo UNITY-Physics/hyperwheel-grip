@@ -206,7 +206,13 @@ class Installer:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text.replace("@USER@", self.service_user))
             path.chmod(0o644)
-        self.say("Systemd units: written (hyperwheel, hyperwheel-dashboard, Orthanc's settings drop-in).")
+        self.say("Systemd units: written (hyperwheel, hyperwheel-dashboard, hyperwheel-update and its timer, "
+                 "Orthanc's settings drop-in).")
+        # The hyperwheel command (status, doctor, update ...), always the current release's.
+        command = self.layout.p("/usr/local/bin/hyperwheel")
+        command.parent.mkdir(parents=True, exist_ok=True)
+        if not (command.is_symlink() and os.readlink(command) == "/opt/hyperwheel/current/venv/bin/hyperwheel"):
+            _atomic_link(command, "/opt/hyperwheel/current/venv/bin/hyperwheel")
 
     # ---- 6. site settings and secrets: add what's missing, never overwrite ----------
 
@@ -232,6 +238,11 @@ class Installer:
             for key in sorted((self.site_setup / "keys").glob("*.json")) if (self.site_setup / "keys").is_dir() else []:
                 if self._add_if_missing(key, etc / "keys" / key.name, 0o600):
                     added.append(f"keys/{key.name}")
+        # Who may sign releases, for the updater: from --signers on the first install,
+        # never replaced by an update (the image ships the real one).
+        if self.signers.resolve() != (etc / "release_allowed_signers").resolve():
+            if self._add_if_missing(self.signers, etc / "release_allowed_signers", 0o644):
+                added.append("release_allowed_signers")
         # Orthanc's login: made once, here, and never changed by an update.
         login = etc / "orthanc.json"
         if not login.exists():
@@ -294,6 +305,9 @@ class Installer:
         self.run(["systemctl", "daemon-reload"])
         self.run(["systemctl", "restart", "orthanc"])
         self.say("Orthanc: restarted with the release's settings.")
+        if self.start:
+            self.run(["systemctl", "enable", "--now", "hyperwheel-update.timer"])
+            self.say("Update checks: on (every 6 hours).")
         if not (configured and self.start):
             return
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
@@ -369,6 +383,28 @@ PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
+""",
+    "hyperwheel-update.service": """[Unit]
+Description=Hyperwheel: check for an update and apply it (hyperwheel update)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel update check
+# It waits until the Pi is idle, up to 5 hours, before installing.
+TimeoutStartSec=8h
+""",
+    "hyperwheel-update.timer": """[Unit]
+Description=Hyperwheel: update check every 6 hours
+
+[Timer]
+OnBootSec=20min
+OnUnitInactiveSec=6h
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target
 """,
     "orthanc.service.d/hyperwheel.conf": """# Orthanc reads the Hyperwheel release's settings (and the site's login), not Debian's.
 [Service]

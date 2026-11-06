@@ -41,8 +41,12 @@ KEY_TEXT = {
 
 
 def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
-             free_bytes: Callable[[Path], int] | None = None, clock_synced: bool | None = None) -> dict:
+             free_bytes: Callable[[Path], int] | None = None, clock_synced: bool | None = None,
+             update_hold: Callable[[], str | None] | None = None) -> dict:
     """Everything the page shows, as plain data."""
+    if update_hold is None:
+        from .updater import Paths, hold_text
+        update_hold = lambda: hold_text(Paths())  # noqa: E731
     free_bytes = free_bytes or (lambda p: shutil.disk_usage(p).free)
     studies = [s for s in store.studies() if s.state not in _HIDDEN]
     cards, receiving, fetching = [], False, False
@@ -72,6 +76,8 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     pending_files = store.files(states=PENDING_FILE_STATES)
     pending = len(pending_files)
     general = [{"level": f.level, "text": f.detail} for f in store.open_flags() if f.study_id is None]
+    if held := update_hold():
+        general.append({"level": "flag", "text": held})
     heartbeat = store.cursor(HEARTBEAT)
     running = bool(heartbeat) and now - heartbeat <= 300
     links = reach.read(store)

@@ -203,7 +203,11 @@ release signed by any listed signer is accepted.
 /opt/hyperwheel/previous -> releases/<version>
 /etc/hyperwheel/                      site.toml, routing.toml, keys/, Orthanc and scanner logins,
                                       hotspot password, update settings: never touched by an update
+/etc/hyperwheel/release_allowed_signers   who may sign releases (from the image, or the first
+                                      install's --signers); never replaced by an update
+/etc/hyperwheel/update-hold           present while the Pi is held
 /var/lib/hyperwheel/                  state.db and stagingArea: never replaced by an update
+/var/lib/hyperwheel-update/           the updater's status, failed versions and downloads (root)
 /var/lib/orthanc/                     Orthanc's data
 ```
 
@@ -234,48 +238,75 @@ release signed by any listed signer is accepted.
 - Each Pi's channel is a site setting (`[updates] channel` in `site.toml`):
   the dev Pi on `dev`, the pilot site on `pilot`, every other Pi on
   `stable`.
-- **Holding a Pi:** `hyperwheel update hold` (admin, over Connect or SSH)
-  writes a hold to `/etc/hyperwheel`. A held Pi keeps its version until
-  `hyperwheel update release-hold`; the Upload Monitor and `hyperwheel
-  doctor` show the hold.
+- **Holding a Pi:** `sudo hyperwheel update hold --reason "..."` (admin, over
+  Connect or SSH) writes `/etc/hyperwheel/update-hold`. A held Pi keeps its
+  version, and downloads nothing, until `sudo hyperwheel update
+  release-hold`. The Upload Monitor and `hyperwheel doctor` show the hold.
+- `hyperwheel update status` shows the release and the last check's result.
 - A Pi never moves backwards because a channel file names an older version,
   except through a rollback (below).
 
 ## What starts an update
 
-- A **timer** checks the channel file every 6 hours (with a random delay),
-  when the Pi is online, and downloads and verifies a new release in the
-  background.
-- It **applies** the release only when the Pi is idle: nothing being
-  received or fetched, and no new DICOM for 30 minutes.
+- A **timer** (`hyperwheel-update.timer`) runs `hyperwheel update check` 20
+  minutes after boot, then 6 hours after each check ends, with up to 30
+  minutes of random delay. It downloads and verifies a new release in the
+  background; a Pi offline just tries again next time.
+- It **applies** the release only when the Pi is idle: the Upload Monitor
+  would say everything from the scanner is on the Pi, nothing new has been
+  recorded for 30 minutes, and Orthanc has received no image for 30 minutes
+  (the last also covers a Pi whose service is down). It waits up to 5 hours;
+  if the Pi is never idle that long, the next check tries again, with the
+  download kept.
 - The maintainer can start it at once over Connect: `sudo hyperwheel update now`.
-- **Never applied automatically:** releases that change Orthanc's database.
-  They are marked in the manifest, back up Orthanc's data first, and go to
-  the dev Pi, then a pilot site, by hand.
+  It runs the same check in `hyperwheel-update.service` (so a dropped
+  connection can't cut an install short), with a one-minute quiet spell
+  instead of 30, and it also applies releases marked `manual_only` or
+  `kernel_or_firmware`, which the timer only downloads. It ends with the
+  check's result in one line, e.g. `updated: 0.1.3 -> 0.1.4` or
+  `rolled back to 0.1.4: 0.1.5 failed (Hyperwheel's service didn't start
+  within 3 minutes) and won't be tried again`.
+- **Never applied by the updater:** releases that change Orthanc's database
+  (`orthanc_db_change`). They back up Orthanc's data first, and go to the dev
+  Pi, then a pilot site, by hand.
+- **Only forwards:** the updater takes only a version newer than the current
+  one, and never one that already failed on this Pi.
 
 ## Applying an update
 
-1. Verify the signature and every hash; unpack into `releases/<new>`;
-   build the venv offline.
+1. Download the tar; check its size and SHA-256 against the channel file;
+   unpack it; check its signature and every file, and that its manifest is
+   the one the channel file names.
 2. Record which project keys work now (last token request succeeded).
-3. Wait until the Pi is idle; stop Hyperwheel; install Orthanc's `.deb`
-   files only if Orthanc's version changes; switch `current`; start.
-4. **Health check:** the service runs, Orthanc answers, and the Upload
-   Monitor is up. If not, roll back.
+3. Wait until the Pi is idle. Run the new release's own `install.sh`, the
+   same steps as an install by hand: Orthanc's `.deb` files only if Orthanc's
+   version changes, the release into `releases/<new>` with its venv built
+   offline, switch `current`, restart. If it stops before the switch,
+   nothing has changed: the Pi stays on its release and that version isn't
+   tried again.
+4. **Health check** (up to 3 minutes): Orthanc runs and answers, Hyperwheel
+   runs and has written its heartbeat since the switch, and the Upload
+   Monitor answers. If not, roll back.
 5. **Key check, per project, once the Pi is online:** each project's
    uploads wait until its key gets a GRIP token.
    - A key that works: that project's uploads go on.
    - A key that fails: that project's uploads are paused and flagged, the
-     others go on. If it worked before the update, the previous release
-     tries the same key. If the previous release gets a token, the new
-     release is at fault and the Pi rolls back. If it doesn't, the key has
-     expired or been revoked. That isn't the release's fault: the Pi keeps
-     the new release and the project stays paused and flagged until the key
-     is replaced.
-6. **Rollback:** switch `current` back to `previous` and reinstall the
-   previous Orthanc `.deb` files if they changed. The state database is not
-   restored (see below). The failed version is not tried again until a newer
-   one is published.
+     others go on. If it worked before the update, the Pi goes back to the
+     previous release, which tries the same key. If the previous release
+     gets a token, the new release is at fault and the Pi stays back. If it
+     doesn't, the key has expired or been revoked. That isn't the release's
+     fault: the Pi installs the new release again and the project stays
+     paused and flagged until the key is replaced.
+   - The updater waits up to 15 minutes for each key's check. GRIP not
+     answering in that time is not a failure.
+6. **Rollback:** the previous release's own `install.sh` puts it back, with
+   its own Orthanc `.deb` files, settings and units. The state database is
+   not restored (see below). `previous` points at the release it pointed at
+   before the update, and the failed release is removed. The failed version is
+   not tried again; a newer one is. If the release put back doesn't pass the
+   health check either, the result is an ALERT.
+7. Afterwards only `current` and `previous` are kept in `releases/`, and the
+   downloads are removed.
 
 ## Settings and keys
 

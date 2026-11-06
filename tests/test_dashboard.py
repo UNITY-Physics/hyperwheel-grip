@@ -158,3 +158,9 @@ def test_a_loop_that_cannot_start_stops_the_service(env):
     svc.run()
     safety.cancel()
     assert svc.failed
+
+
+def test_an_update_hold_is_shown(env):
+    s = snap(env, update_hold=lambda: "Updates are on hold since 2026-11-06 15:00: site visit.")
+    assert {"level": "flag", "text": "Updates are on hold since 2026-11-06 15:00: site visit."} in s["general"]
+    assert not any("on hold" in g["text"] for g in snap(env, update_hold=lambda: None)["general"])
