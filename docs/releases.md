@@ -180,9 +180,10 @@ folder. After changing `requirements/runtime.lock`, run
 **Signing.** OpenSSH signatures (`ssh-keygen -Y sign`) with a
 passphrase-protected key on the release signer's Mac, backed up in their password manager.
 The Pi verifies with `ssh-keygen -Y verify` against an allowed-signers file
-in the image and in each release. A second signer is added before
-11 Dec, so a release can go out while the release signer is away. Either signature is
-enough.
+in the image and in each release. There is **one release signer**, so a new
+release can only be published by them. The allowed-signers file takes one line
+per signer, so another can be added later with no change to the format: a
+release signed by any listed signer is accepted.
 
 ## On the Pi
 
