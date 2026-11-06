@@ -34,12 +34,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         from .service import AlreadyRunning, Service
+        service = Service(site, routing)
         try:
-            Service(site, routing).run()
+            service.run()
         except AlreadyRunning as e:
             print(f"Not started: {e}.", file=sys.stderr)
             return 3
-        return 0
+        return 1 if service.failed else 0
     if args.command == "dashboard":
         serve(site, routing)
         return 0

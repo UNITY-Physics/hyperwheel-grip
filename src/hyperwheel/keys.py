@@ -42,16 +42,17 @@ class Credentials:
 
 
 class KeyStore:
-    def __init__(self, directory: Path, prefix: str = ""):
+    def __init__(self, directory: Path, prefix: str = "", *, systemd: bool = False):
         self.directory = Path(directory)
         self.prefix = prefix
+        self.systemd = systemd  # a copy in systemd's private credentials folder
 
     @classmethod
     def for_process(cls, keys_dir: Path) -> "KeyStore":
         """The service's copy from systemd when there is one, else the key directory itself."""
         credentials = os.environ.get("CREDENTIALS_DIRECTORY")
         if credentials:
-            return cls(Path(credentials), prefix="keys_")
+            return cls(Path(credentials), prefix="keys_", systemd=True)
         return cls(keys_dir)
 
     def path(self, project: str) -> Path:
@@ -68,8 +69,7 @@ class KeyStore:
         except OSError as e:
             raise KeyUnreadable(f"key file for project {project} can't be read ({e.strerror})") from None
         with os.fdopen(fd, "rb") as f:
-            mode = os.fstat(f.fileno()).st_mode
-            if mode & (stat.S_IRWXG | stat.S_IRWXO):
+            if _too_open(os.fstat(f.fileno()).st_mode, self.systemd):
                 raise KeyUnreadable(
                     f"key file for project {project} is readable by other users; it must be mode 600"
                 )
@@ -119,7 +119,7 @@ def read_secret_json(name: str, fallback: Path) -> dict:
     except OSError as e:
         raise KeyUnreadable(f"{name}: secret file can't be read ({e.strerror})") from None
     with os.fdopen(fd, "rb") as f:
-        if os.fstat(f.fileno()).st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        if _too_open(os.fstat(f.fileno()).st_mode, bool(credentials)):
             raise KeyUnreadable(f"{name}: secret file is readable by other users; it must be mode 600")
         raw = f.read()
     try:
@@ -129,3 +129,11 @@ def read_secret_json(name: str, fallback: Path) -> dict:
     if not isinstance(data, dict):
         raise KeyUnreadable(f"{name}: secret file is not in the expected format")
     return data
+
+
+def _too_open(mode: int, systemd: bool) -> bool:
+    """A secret in /etc/hyperwheel must be mode 600. systemd's copy for the service (LoadCredential)
+    may be group-readable: systemd makes it so, and its folder is private to the service."""
+    if systemd:
+        return bool(mode & (stat.S_IRWXO | stat.S_IWGRP | stat.S_IXGRP))
+    return bool(mode & (stat.S_IRWXG | stat.S_IRWXO))

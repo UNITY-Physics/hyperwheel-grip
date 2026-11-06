@@ -144,3 +144,17 @@ def test_a_second_service_on_the_same_state_store_refuses_to_start(env, tmp_path
         assert subprocess.run([sys.executable, "-c", code]).returncode == 3
     with single_instance(env.site.state_db):  # free again once the first has stopped
         pass
+
+
+def test_a_loop_that_cannot_start_stops_the_service(env):
+    """Seen on the dev Pi: the Orthanc login couldn't be read, a loop thread died, and the process
+    stayed 'active' doing nothing. Now the service stops with an error, so systemd restarts it."""
+    def no_orthanc():
+        raise RuntimeError("orthanc login can't be read")
+    svc = Service(env.site, env.routing, orthanc=no_orthanc, keys=env.keys, clock=env.clock, synced=lambda: True)
+    safety = threading.Timer(10, svc.stop.set)  # only if the service failed to stop by itself
+    safety.daemon = True
+    safety.start()
+    svc.run()
+    safety.cancel()
+    assert svc.failed
