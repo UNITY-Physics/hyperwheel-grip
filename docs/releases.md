@@ -200,9 +200,27 @@ release signed by any listed signer is accepted.
 ## Which release a Pi takes, and holding a Pi
 
 - The release signer publishes a signed **channel file** (one per channel: `dev`, `pilot`,
-  `stable`) naming the version for that channel and its manifest's hash.
-  Promoting a release means signing a new channel file. A Pi only ever
-  moves to the version its channel file names.
+  `stable`) naming the version for that channel, its tar's name, size and
+  SHA-256, and its manifest's hash. Promoting a release means signing a new
+  channel file. A Pi only ever moves to the version its channel file names.
+- **Where they are:** each release is a GitHub release `v<version>` (its tar,
+  manifest and signature). Each channel file is `channel.json` and
+  `channel.json.sig` on the GitHub release `channel-<name>`, so a Pi always
+  downloads from the same address. A channel file is signed with the same key
+  and namespace as a manifest, names its own channel (a Pi refuses another
+  channel's file), and can't be mistaken for a manifest.
+- **Publishing** (on the release signer's Mac, with `gh` logged in; no secret
+  is involved):
+  ```
+  .venv/bin/python tools/release/publish.py release dist/releases/hyperwheel-<v>-arm64.tar
+  .venv/bin/python tools/release/publish.py channel-file --channel dev dist/releases/hyperwheel-<v>-arm64.tar
+  ssh-keygen -Y sign -f ~/.ssh/hyperwheel-release -n hyperwheel-release dist/channels/dev/channel.json
+  .venv/bin/python tools/release/publish.py channel dist/channels/dev
+  ```
+  Each step checks the release or channel file the way a Pi will before
+  anything is published, and `channel` also checks that the release it names
+  is published with the same tar size and checksum. Every step takes
+  `--dry-run`, except `channel-file`, which only writes a local file.
 - Each Pi's channel is a site setting (`[updates] channel` in `site.toml`):
   the dev Pi on `dev`, the pilot site on `pilot`, every other Pi on
   `stable`.
