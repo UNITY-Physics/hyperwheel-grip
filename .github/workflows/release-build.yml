@@ -1,0 +1,44 @@
+# Build a release on an arm64 machine, from the commit it is run on, and keep it
+# as a workflow artifact. Nothing is signed or published here, and no secrets are
+# used: the release signer downloads the artifact, signs its manifest on their
+# own Mac, then packs and publishes it (docs/releases.md).
+name: Build release
+
+on:
+  workflow_dispatch:
+  # Also when this workflow itself changes in a pull request, to prove it still builds.
+  pull_request:
+    paths: [".github/workflows/release-build.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --no-deps -r requirements/dev.lock
+          python -m pip install --no-deps -e .
+      - name: Run the tests
+        run: python -m pytest -q
+      - name: Fetch Orthanc's packages (checked against release/debs.lock)
+        run: tools/release/fetch_debs.sh build/debs
+      - name: Build Orthanc Explorer 2 for arm64
+        run: tools/oe2/build.sh build/oe2
+      - name: Build the release folder (unsigned)
+        run: python tools/release/build_release.py build --debs build/debs --oe2 build/oe2 --out build/releases
+      - name: Checksums
+        run: cd build/releases && find . -type f | sort | xargs sha256sum | tee SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: hyperwheel-release-unsigned
+          path: build/releases/
+          if-no-files-found: error
+          retention-days: 30
