@@ -73,6 +73,8 @@ def build(args) -> int:
     if not list((folder / "wheels").glob(f"hyperwheel-{version}-*.whl")):
         return fail("the Hyperwheel wheel wasn't built")
 
+    shutil.copy2(REPO / "tools" / "release" / "install.sh", folder / "install.sh")
+
     lock = debs_lock()
     found = {p.name: p for p in args.debs.glob("*.deb")}
     if set(found) != set(lock):
@@ -123,7 +125,7 @@ def pack(args) -> int:
             info.uid = info.gid = 0
             info.uname = info.gname = "root"
             info.mtime = built
-            info.mode = 0o755 if info.isdir() else 0o644
+            info.mode = 0o755 if info.isdir() or name == "install.sh" else 0o644
             if info.isdir():
                 tar.addfile(info)
             else:
