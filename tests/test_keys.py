@@ -45,3 +45,27 @@ def test_bad_contents_never_echo_the_file(tmp_path):
     with pytest.raises(KeyUnreadable) as e:
         KeyStore(tmp_path).read("A")
     assert "leaky" not in str(e.value)
+
+
+def test_systemd_credential_copies_may_be_group_readable(tmp_path, monkeypatch):
+    """systemd's LoadCredential copy is group-readable (seen on the dev Pi); /etc copies must be 600."""
+    from hyperwheel.keys import read_secret_json
+    creds = tmp_path / "credentials"
+    creds.mkdir()
+    for name, body in (("keys_SiteA-Sandbox.json", '{"client_id": "c", "client_secret": "s"}'),
+                       ("orthanc", '{"username": "u", "password": "p"}')):
+        (creds / name).write_text(body)
+        (creds / name).chmod(0o440)
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds))
+    assert KeyStore.for_process(tmp_path / "unused").read("SiteA-Sandbox").client_id == "c"
+    assert read_secret_json("orthanc", tmp_path / "unused")["username"] == "u"
+    (creds / "orthanc").chmod(0o444)  # readable by everyone: still refused
+    with pytest.raises(KeyUnreadable):
+        read_secret_json("orthanc", tmp_path / "unused")
+    monkeypatch.delenv("CREDENTIALS_DIRECTORY")
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    (etc / "orthanc.json").write_text('{"username": "u", "password": "p"}')
+    (etc / "orthanc.json").chmod(0o640)  # group-readable outside systemd's folder: refused
+    with pytest.raises(KeyUnreadable):
+        read_secret_json("orthanc", etc / "orthanc.json")

@@ -52,6 +52,7 @@ class Service:
         self.housekeeping_every_s = housekeeping_every_s
         self.uploader_options = uploader_options
         self.stop = threading.Event()
+        self.failed = False
         self._last_housekeeping = 0.0
 
     # ---- real connections -----------------------------------------------------------
@@ -101,6 +102,18 @@ class Service:
         self._loop("upload", self.upload_every_s, lambda: self.upload_round(uploader))
         store.close()
 
+    def _guard(self, loop: Callable[[], None]) -> Callable[[], None]:
+        """A loop that can't even start (e.g. its secrets can't be read) stops the whole service,
+        so systemd restarts it and the failure shows, instead of one loop silently missing."""
+        def guarded() -> None:
+            try:
+                loop()
+            except Exception:
+                log.exception("a loop stopped with an error; Hyperwheel stops so it is restarted")
+                self.failed = True
+                self.stop.set()
+        return guarded
+
     def _loop(self, name: str, every_s: float, round_: Callable[[], None]) -> None:
         while not self.stop.is_set():
             try:
@@ -118,8 +131,8 @@ class Service:
     def _run(self) -> None:
         self.site.staging_dir.mkdir(parents=True, exist_ok=True)
         Store(self.site.state_db).close()  # create or migrate before the loops start
-        threads = [threading.Thread(target=self._local_loop, name="local", daemon=True),
-                   threading.Thread(target=self._upload_loop, name="upload", daemon=True)]
+        threads = [threading.Thread(target=self._guard(self._local_loop), name="local", daemon=True),
+                   threading.Thread(target=self._guard(self._upload_loop), name="upload", daemon=True)]
         for t in threads:
             t.start()
         for sig in (signal.SIGTERM, signal.SIGINT):
