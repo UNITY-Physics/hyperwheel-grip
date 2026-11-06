@@ -142,6 +142,8 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
                 out.append((PROBLEM, f"GRIP key for {name}", KEY_TEXT.get(status[0], status[0])))
         store.close()
 
+    from .updater import Paths, summary
+    out.append((NOTE, "Updates", summary(Paths())))
     out.append((NOTE, "Versions", f"Hyperwheel {__version__}, {_os_name()}, kernel {platform.release()}"))
     return out, int(any(r == PROBLEM for r, _, _ in out))
 

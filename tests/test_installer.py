@@ -166,6 +166,23 @@ def test_site_setup_adds_only_what_is_missing_and_never_prints_secrets(tmp_path,
     assert ["systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service"] in fake.commands
 
 
+def test_update_checks_are_switched_on_and_the_release_signers_kept_for_the_updater(tmp_path, key, signers, pi):
+    root, fake = pi
+    installer(make_release(tmp_path, key), signers, pi).install()
+    units = root / "etc/systemd/system"
+    assert "ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel update check" in \
+        (units / "hyperwheel-update.service").read_text()
+    assert "OnUnitInactiveSec=6h" in (units / "hyperwheel-update.timer").read_text()
+    assert ["systemctl", "enable", "--now", "hyperwheel-update.timer"] in fake.commands
+    assert os.readlink(root / "usr/local/bin/hyperwheel") == "/opt/hyperwheel/current/venv/bin/hyperwheel"
+    trusted = root / "etc/hyperwheel/release_allowed_signers"
+    assert trusted.read_bytes() == signers.read_bytes() and mode(trusted) == 0o644
+    (tmp_path / "other").mkdir()
+    other = signers_file(tmp_path / "other", ("someone-else", key))
+    installer(make_release(tmp_path, key, "0.2.0"), other, pi).install()
+    assert trusted.read_bytes() == signers.read_bytes()  # an update never replaces who may sign releases
+
+
 def test_the_kept_list_names_every_site_file_including_keys(tmp_path, key, signers, pi):
     root, _ = pi
     installer(make_release(tmp_path, key, "0.1.0"), signers, pi, site_setup=site_setup(tmp_path)).install()

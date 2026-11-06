@@ -1,4 +1,4 @@
-"""Command line: ``hyperwheel run``, ``dashboard``, ``status`` and ``doctor``."""
+"""Command line: ``hyperwheel run``, ``dashboard``, ``status``, ``doctor`` and ``update``."""
 
 from __future__ import annotations
 
@@ -14,6 +14,11 @@ from .state import Store
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["update"]:  # runs as root, also on a Pi that isn't set up yet
+        from . import updater
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
+        return updater.main(argv[1:])
     ap = argparse.ArgumentParser(prog="hyperwheel", description="Hyperwheel: scanner -> GRIP uploads")
     ap.add_argument("--site", type=Path, default=Path("/etc/hyperwheel/site.toml"))
     ap.add_argument("--routing", type=Path, default=Path("/etc/hyperwheel/routing.toml"))
@@ -22,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("dashboard", help="run the Upload Monitor web page")
     sub.add_parser("status", help="show what the Upload Monitor shows, as text")
     sub.add_parser("doctor", help="check the scanner, GRIP, Orthanc, clock, disk and keys")
+    sub.add_parser("update", help="updates: check, now, hold, release-hold, status (as root)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)

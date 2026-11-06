@@ -204,10 +204,13 @@ Signed, versioned releases published on GitHub, pulled by each Pi without
 credentials. Each release pins every dependency (Python wheels with hashes,
 the arm64 Orthanc Explorer 2 plugin, OS packages as `.deb` files when needed).
 Channels (`dev`, `pilot`, `stable`) name the version each group of Pis runs.
-The updater checks the signature, unpacks the release, copies the state
-database, migrates it, switches `current`, restarts and runs a health check;
-if the check fails it switches back and restores the database copy. Updates
-apply automatically when no study is arriving.
+The updater (`hyperwheel update`, run by a timer every 6 hours) checks the
+channel file and the release's signature and files, waits until nothing is
+arriving from the scanner, installs with the release's own `install.sh`,
+then checks health and every project's key; if either fails it puts the
+previous release back with that release's `install.sh`. The state database
+is never restored: its migrations only add, so the older release can use it
+(`docs/releases.md`).
 
 ## Testing
 

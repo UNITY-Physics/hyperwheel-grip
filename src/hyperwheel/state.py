@@ -549,6 +549,12 @@ class Store:
             db.execute("INSERT INTO cursors (name, value) VALUES (?, ?) "
                        "ON CONFLICT(name) DO UPDATE SET value = excluded.value", (name, value))
 
+    def last_arrival(self) -> float | None:
+        """When the newest study or file was first recorded (the updater waits until this is long ago)."""
+        row = self._db.execute("SELECT max(t) AS t FROM (SELECT max(created_at) AS t FROM files "
+                               "UNION ALL SELECT max(created_at) FROM studies)").fetchone()
+        return row["t"]
+
     # ---- key status ---------------------------------------------------------
 
     def set_key_status(self, project: str, status: str, detail: str | None = None) -> None:
