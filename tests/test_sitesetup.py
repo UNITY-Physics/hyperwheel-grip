@@ -10,6 +10,7 @@ import pytest
 from test_keyscmd import Scripted
 
 from hyperwheel import passwords, reach
+from hyperwheel.adminpw import AdminError
 from hyperwheel.config import load_routing, load_site
 from hyperwheel.installer import Layout, sudo_rule
 from hyperwheel.rawpull import LoginRefused
@@ -104,7 +105,12 @@ def template_lines():
     return TEMPLATE.read_text().splitlines()
 
 
-def make(pi, typed, *, scanner=reach.SCANNER_OK, try_password=None, new_password=lambda: DM_PW):
+def no_admin_file(site):
+    raise AdminError("couldn't download admin.json (404)")
+
+
+def make(pi, typed, *, scanner=reach.SCANNER_OK, try_password=None, new_password=lambda: DM_PW,
+         admin_password=no_admin_file):
     tried = []
 
     def default_try(site, password):
@@ -113,7 +119,7 @@ def make(pi, typed, *, scanner=reach.SCANNER_OK, try_password=None, new_password
     setup = Setup(layout=Layout(pi.root), console=typed.console(), run=pi.run,
                   scanner_state=lambda site: scanner, try_password=try_password or default_try,
                   unreachable=lambda site: "the scanner cable has no link", new_password=new_password,
-                  chown=lambda path: None, clock=lambda: 1_800_000_000.0)
+                  chown=lambda path: None, clock=lambda: 1_800_000_000.0, admin_password=admin_password)
     return setup, tried
 
 
