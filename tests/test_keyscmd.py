@@ -117,7 +117,8 @@ def test_the_project_can_be_picked_by_name_and_wrong_answers_are_explained(env):
     assert code == 0, typed.text
     assert "There's no project '7'" in typed.text and "There's no project '../keys'" in typed.text
     assert env.keys.read("SiteA-Other").client_id == "other-client"
-    assert "2. SiteA-Other  (no key stored)" in typed.text
+    assert f"  1. {PROJECT}: key stored, client ID ending ient, not checked yet" in typed.shown
+    assert "  2. SiteA-Other: no key stored" in typed.shown
 
 
 def test_a_secret_with_a_space_or_line_break_inside_is_refused_before_grip_is_asked(env):
@@ -161,7 +162,7 @@ def test_list_shows_each_project_and_its_status_but_never_the_secret(env):
     typed = Scripted()
     assert list_keys(env.site, env.routing, typed.console(), keys=env.keys, is_root=lambda: True) == 0
     assert typed.shown == ["GRIP keys on this Pi:",
-                           f"  {PROJECT}: key stored (client ID ending ient), working",
+                           f"  {PROJECT}: key stored, client ID ending ient, working",
                            "  SiteA-Other: no key stored"]
     assert OLD_SECRET not in typed.text and "site-a-sandbox-client" not in typed.text
 
