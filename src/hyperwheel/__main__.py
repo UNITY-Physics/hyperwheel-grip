@@ -10,14 +10,18 @@ import sys
 import time
 from pathlib import Path
 
-from . import cli
+from . import cli, unexpected
 from .config import ConfigError, load_routing, load_site
 from .dashboard import clock_synced, serve, snapshot
 from .state import Store
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
+    """Every command, with no traceback ever shown: see ``unexpected``."""
+    return unexpected.guarded(_main, sys.argv[1:] if argv is None else list(argv))
+
+
+def _main(argv: list[str]) -> int:
     if not argv or argv[0] in ("help", "-h", "--help"):
         print(cli.help_text(cli.is_admin()))
         return 0
