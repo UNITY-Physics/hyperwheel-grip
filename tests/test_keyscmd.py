@@ -144,7 +144,7 @@ def test_a_failed_restart_is_reported_and_the_key_is_kept(env):
         raise RuntimeError("systemctl restart ended with exit 1")
     code = set_key(env.site, env.routing, typed.console(), keys=env.keys, restart=broken, is_root=lambda: True)
     assert code == 1 and env.keys.read(PROJECT).client_id == "site-a-new-client"
-    assert "couldn't be restarted" in typed.text and "Ask the maintainer" in typed.text
+    assert "couldn't be restarted" in typed.text and "Ask your Hyperwheel admin" in typed.text
 
 
 def test_both_commands_need_root(env):

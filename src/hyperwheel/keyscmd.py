@@ -183,7 +183,7 @@ def set_key(site: SiteConfig, routing: Routing, console: Console | None = None, 
         return 2
     if not routing.projects:
         c.say("There are no projects in this Pi's routing settings, so there's no key to set. "
-              "Ask the maintainer to add the project first.")
+              "Ask your Hyperwheel admin to add the project first.")
         return 1
     keys = keys or KeyStore(site.keys_dir)
     c.say("Set the GRIP key for one project. You need the project's client ID and secret from GRIP.")
@@ -236,7 +236,7 @@ def set_key(site: SiteConfig, routing: Routing, console: Console | None = None, 
         c.say(restart())
     except Exception as e:  # noqa: BLE001 - the key is saved; say so plainly
         c.say(f"Hyperwheel couldn't be restarted ({e}), so it still uses the old key until it next starts. "
-              "Ask the maintainer.")
+              "Ask your Hyperwheel admin.")
         return 1
     c.say("In a minute, check it shows as working with: hyperwheel keys list")
     return 0

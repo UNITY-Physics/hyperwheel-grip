@@ -2,7 +2,7 @@
 
 An unexpected error is turned into one plain line on screen, saying which
 command stopped, what went wrong and what the person can do. The full
-traceback goes to the system log (tag ``hyperwheel``), where the maintainer
+traceback goes to the system log (tag ``hyperwheel``), where the admin
 reads it with ``journalctl -t hyperwheel``; only the admin account is pointed
 there, since a data manager can't read the system log.
 """
@@ -60,13 +60,11 @@ def person_is_admin() -> bool:
 
 def user_line(words: str, e: BaseException, admin: bool) -> str:
     line = f"'hyperwheel {words}' stopped: {what_went_wrong(e)}."
+    if admin:  # the admin is who the others are sent to; they get where the details are
+        return line + " Details: journalctl -t hyperwheel"
     if words.split()[:1] == ["doctor"]:
-        line += " Send this message to support."
-    else:
-        line += " Run hyperwheel doctor, and if that doesn't help, send this message to support."
-    if admin:
-        line += " Details: journalctl -t hyperwheel"
-    return line
+        return line + " Send this message to your Hyperwheel admin."
+    return line + " Run hyperwheel doctor, and if that doesn't help, send this message to your Hyperwheel admin."
 
 
 def log_details(lines: list[str]) -> None:

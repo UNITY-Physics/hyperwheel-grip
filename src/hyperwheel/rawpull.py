@@ -116,7 +116,8 @@ class RawPuller:
             self.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the raw-data login, most likely "
                                   "because its software was upgraded or it's missing the RRDF entitlement. Set the "
                                   "new password with: hyperwheel scanner password. If that doesn't help, tell "
-                                  "support. Raw data stays on the scanner until then; DICOM keeps uploading.",
+                                  "your Hyperwheel admin. Raw data stays on the scanner until then; DICOM keeps "
+                                  "uploading.",
                                   level="alert")
             log.error("raw data: the scanner refused the login; trying again in %d min", self.LOGIN_RETRY_S // 60)
             return report
@@ -174,7 +175,7 @@ class RawPuller:
                     continue
                 if not is_rrdf_name(name):
                     self.store.raise_flag("RAW_NAME_UNEXPECTED", f"A raw file in scanner folder {folder} has an "
-                                          "unexpected name and was not fetched; please contact the Hyperwheel team.",
+                                          "unexpected name and was not fetched; please contact your Hyperwheel admin.",
                                           level="alert", ref=f"{folder}/{name}")
                     continue
                 row = self.store.rrdf_file(folder, name)
@@ -317,7 +318,7 @@ class RawPuller:
         why = ("its scanner folder matches more than one session" if len(matches) > 1
                else "its time doesn't fit the session's time window")
         self.store.raise_flag("UNASSIGNED_RAW", f"Raw file {row.name} from scanner folder {folder} is kept on the Pi "
-                              f"but not uploaded: {why}. Please contact the Hyperwheel team.", file_id=f.id,
+                              f"but not uploaded: {why}. Please contact your Hyperwheel admin.", file_id=f.id,
                               level="hold")
         for m in matches:
             self.store.raise_flag("RAW_FILE_UNASSIGNED", "A raw file in this session's scanner folder could not be "

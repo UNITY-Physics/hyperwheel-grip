@@ -332,7 +332,7 @@ class Uploader:
         except Refused as e:
             if e.invalid_name:
                 self._refuse(f, "RAW_NAME_REFUSED", f"GRIP refused the name of raw file {f.name} as invalid (it is "
-                                                    "never renamed; please tell the Hyperwheel team)")
+                                                    "never renamed; please tell your Hyperwheel admin)")
             else:
                 self._refuse(f, "RAW_REFUSED", f"GRIP refused raw file {f.name}: {e}")
         except (KeyProblem, KeyRejected, AuthFailed):

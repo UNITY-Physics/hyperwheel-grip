@@ -84,7 +84,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     scanner_down = running and links.scanner_down(now)
     if not running:
         general.insert(0, {"level": "alert", "text": "The Hyperwheel service is not running. Nothing is being "
-                                                     "fetched or uploaded; please contact the Hyperwheel team."})
+                                                     "fetched or uploaded; please contact your Hyperwheel admin."})
     else:
         general[:0] = reach.messages(links, now)
     if clock_synced is False:
@@ -104,7 +104,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     files = f"{pending} file{'s' if pending != 1 else ''}"
     leave_on = False
     if not running:
-        headline, sub = "Hyperwheel is not running", "Please keep the scanner on and contact the Hyperwheel team."
+        headline, sub = "Hyperwheel is not running", "Please keep the scanner on and contact your Hyperwheel admin."
     elif scanner_down and (receiving or fetching):
         headline = "Can't reach the scanner"
         sub = ("Images or raw data are still to come from the scanner. Please check that the scanner is on and "

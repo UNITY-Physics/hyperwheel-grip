@@ -55,7 +55,7 @@ def test_the_first_scanner_is_quiet_and_a_second_one_gets_a_notice_for_a_day(sto
     clock.now += 60
     book.seen(HOST, "ssh-ed25519", KEY_B)  # the site's other scanner, on the same address
     [text] = notices(store, clock)
-    assert fingerprint(KEY_B)[:19] in text and "tell support" in text
+    assert fingerprint(KEY_B)[:19] in text and "tell your Hyperwheel admin" in text
     clock.now += 23 * 3600
     assert len(notices(store, clock)) == 1
     clock.now += 3600
@@ -282,4 +282,4 @@ def test_the_notice_text():
                          first_seen=0.0, last_seen=0.0)
     text = hostkeys.notice(k)
     assert "(scanner key SHA256:abcdefghijkl…)" in text
-    assert text.endswith("If no one upgraded or swapped the scanner, tell support.")
+    assert text.endswith("If no one upgraded or swapped the scanner, tell your Hyperwheel admin.")

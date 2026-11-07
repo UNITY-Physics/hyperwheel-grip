@@ -171,7 +171,7 @@ on the scanner, and DICOM keeps uploading. The Pi tries the login again every
 
 **Setting the new password:**
 
-1. Get the new raw-data password (from Hyperfine, or support).
+1. Get the new raw-data password from your Hyperwheel admin.
 2. On the Pi, as the data manager or admin, type
    `hyperwheel scanner password`. It asks for the account's password.
 3. Paste the raw-data password. It is typed hidden and never shown, logged
@@ -180,7 +180,7 @@ on the scanner, and DICOM keeps uploading. The Pi tries the login again every
    (read-only) **before** saving it. If the scanner refuses it, or can't be
    reached, nothing is saved and the old password stays. If you're sure the
    password is right and the scanner still refuses it, the scanner may be
-   missing the RRDF entitlement: tell support.
+   missing the RRDF entitlement: tell your Hyperwheel admin.
 5. The password is saved root-only, and the Hyperwheel service is restarted
    to use it. The alert clears at the next fetch, within a minute.
 
