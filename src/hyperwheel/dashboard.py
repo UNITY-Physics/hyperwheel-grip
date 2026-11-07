@@ -84,7 +84,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     scanner_down = running and links.scanner_down(now)
     if not running:
         general.insert(0, {"level": "alert", "text": "The Hyperwheel service is not running. Nothing is being "
-                                                     "fetched or uploaded; please contact your Hyperwheel admin."})
+                                                     "fetched or uploaded. Please contact your Hyperwheel admin."})
     else:
         general[:0] = reach.messages(links, now)
     if clock_synced is False:
@@ -121,7 +121,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
             why = (f"some have waited more than {site.dashboard.leave_on_after_hours:g} hours" if long_wait
                    else "the Pi's disk is getting full")
             sub = (f"Everything from the scanner is on the Pi. {files} still to upload, and {why}. Please leave "
-                   "the scanner on to finish uploading; the Pi's internet goes through it.")
+                   "the scanner on to finish uploading. The Pi's internet goes through it.")
         else:
             sub = (f"Everything from the scanner is on the Pi. {files} still to upload. You can switch the scanner "
                    "off: the Pi keeps the files and uploads them next time the scanner is on.")

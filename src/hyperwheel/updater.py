@@ -214,7 +214,7 @@ class Updater:
             return f"{channel.version} needs an image from {manifest.min_image} or later (this Pi: " \
                    f"{self.image_version() or 'unknown'})"
         if not self.wait_until_idle(QUIET_NOW_S if now else QUIET_S):
-            return f"{channel.version} is ready; waiting for the Pi to be idle (will try again at the next check)"
+            return f"{channel.version} is ready. Waiting for the Pi to be idle (will try again at the next check)"
         return self.apply(folder, channel.version, current)
 
     # ---- 2. the channel file -------------------------------------------------------------
@@ -345,9 +345,9 @@ class Updater:
                 if self.current_version() == version and self._healthy(forward_at) is None:
                     self._prune_releases()
                     self._prune_downloads(keep=None)
-                    return (f"updated: {before} -> {version}; the key for {keys} doesn't work with either "
+                    return (f"updated: {before} -> {version}. The key for {keys} doesn't work with either "
                             "release, so it was revoked or has expired: it needs replacing")
-                problem = f"{problem}; it also failed to start again after the key check"
+                problem = f"{problem}, and it also failed to start again after the key check"
                 if self.current_version() != before:
                     return self.roll_back(version, before, previous, user, problem, [])
         self._failed(version, problem)
@@ -359,7 +359,7 @@ class Updater:
         self._prune_releases()
         self._prune_downloads(keep=None)
         if (still := self._healthy(back_at)) is not None:
-            return f"ALERT: {version} failed ({problem}); {before} is back on but isn't healthy either ({still})"
+            return f"ALERT: {version} failed ({problem}). {before} is back on but isn't healthy either ({still})"
         return f"rolled back to {before}: {version} failed ({problem}) and won't be tried again"
 
     def _healthy(self, since: float) -> str | None:

@@ -171,9 +171,9 @@ class Http:
     def _wait(self, attempt: int, attempts: int, seconds: float, why: str) -> None:
         if attempt >= attempts:
             if attempts > 1:
-                log.warning("%s; giving up for now", why)
+                log.warning("%s. Giving up for now", why)
             return
-        log.warning("%s; trying again in %.1f s", why, seconds)
+        log.warning("%s. Trying again in %.1f s", why, seconds)
         self.sleep(seconds)
 
     def _retry_after(self, r: requests.Response) -> float | None:

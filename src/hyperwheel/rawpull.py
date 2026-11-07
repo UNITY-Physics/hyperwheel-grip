@@ -116,10 +116,10 @@ class RawPuller:
             self.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the raw-data login, most likely "
                                   "because its software was upgraded or it's missing the RRDF entitlement. Set the "
                                   "new password with: hyperwheel scanner password. If that doesn't help, tell "
-                                  "your Hyperwheel admin. Raw data stays on the scanner until then; DICOM keeps "
+                                  "your Hyperwheel admin. Raw data stays on the scanner until then. DICOM keeps "
                                   "uploading.",
                                   level="alert")
-            log.error("raw data: the scanner refused the login; trying again in %d min", self.LOGIN_RETRY_S // 60)
+            log.error("raw data: the scanner refused the login. Trying again in %d min", self.LOGIN_RETRY_S // 60)
             return report
         except (ScannerError, OSError) as e:
             self._failed(str(e), watched)
@@ -146,7 +146,7 @@ class RawPuller:
         now = self.clock()
         if self._failing_since is None:
             self._failing_since = now
-        log.warning("raw data: can't read the scanner (%s); will try again", why)
+        log.warning("raw data: can't read the scanner (%s). Will try again", why)
         if now - self._failing_since >= self.ALERT_AFTER_S:
             self.store.raise_flag("RAW_PULL_FAILING", f"Raw data can't be fetched from the scanner ({why}). "
                                   "Check the scanner is on and its cable is plugged in.", level="alert")
@@ -175,7 +175,7 @@ class RawPuller:
                     continue
                 if not is_rrdf_name(name):
                     self.store.raise_flag("RAW_NAME_UNEXPECTED", f"A raw file in scanner folder {folder} has an "
-                                          "unexpected name and was not fetched; please contact your Hyperwheel admin.",
+                                          "unexpected name and was not fetched. Please contact your Hyperwheel admin.",
                                           level="alert", ref=f"{folder}/{name}")
                     continue
                 row = self.store.rrdf_file(folder, name)
@@ -226,10 +226,10 @@ class RawPuller:
         already = any(f.code == "RAW_CHANGED_ON_SCANNER" and f.ref == ref for f in self.store.open_flags())
         self.store.raise_flag("RAW_CHANGED_ON_SCANNER", f"Raw file {row.name} in scanner folder {folder} now has a "
                               f"different size on the scanner ({size} bytes) from when the Pi fetched it "
-                              f"({row.size} bytes). The Pi has not fetched it again; please contact the Hyperwheel "
-                              "team.", study_id=row.study_id, level="alert", ref=ref)
+                              f"({row.size} bytes). The Pi has not fetched it again. Please "
+                              "contact your Hyperwheel admin.", study_id=row.study_id, level="alert", ref=ref)
         if not already:
-            log.warning("raw file %s in %s: size changed on the scanner after it was fetched; flagged, not fetched "
+            log.warning("raw file %s in %s: size changed on the scanner after it was fetched. Flagged, not fetched "
                         "again", row.name, folder)
 
     def _assign_held(self, folder: str, row: File, study: Study, report: PullReport) -> None:
@@ -281,7 +281,7 @@ class RawPuller:
             final = directory / row.name
         if final.exists():
             self.store.raise_flag("RAW_NAME_CLASH", f"Raw file {row.name} from scanner folder {folder} has the same "
-                                  "name as a file already on the Pi; it was not fetched.", level="alert",
+                                  "name as a file already on the Pi. It was not fetched.", level="alert",
                                   ref=f"{folder}/{row.name}")
             return False
 
@@ -324,7 +324,7 @@ class RawPuller:
             self.store.raise_flag("RAW_FILE_UNASSIGNED", "A raw file in this session's scanner folder could not be "
                                   "matched to it and is held on the Pi.", study_id=m.id)
         report.unassigned += 1
-        log.warning("raw file %s from %s: not assigned (%s); kept and held", row.name, folder, why)
+        log.warning("raw file %s from %s: not assigned (%s). Kept and held", row.name, folder, why)
         return True
 
 
@@ -368,7 +368,7 @@ class SshScanner:
                 try:
                     host_key(hostname, key.get_name(), key.asbytes())
                 except Exception as e:  # e.g. the state database is busy: try again next round
-                    log.warning("scanner key could not be recorded (%s); not connecting this time",
+                    log.warning("scanner key could not be recorded (%s). Not connecting this time",
                                 type(e).__name__)
                     raise paramiko.SSHException("scanner key not recorded") from None
 

@@ -149,7 +149,7 @@ def messages(r: Reach, now: float) -> list[dict]:
         if r.scanner == SCANNER_NO_LINK:
             out.append({"level": "flag", "text": "The Pi has no network link to the scanner: the scanner is off "
                                                  "or the cable is unplugged. Nothing can be fetched or uploaded "
-                                                 "until it's back; files on the Pi are kept."})
+                                                 "until it's back. Files on the Pi are kept."})
         elif r.scanner == SCANNER_NO_ANSWER:
             out.append({"level": "alert", "text": "The Pi can't reach the scanner. The cable is connected, but the "
                                                   "scanner isn't answering on the network, so the Pi also has no "
@@ -161,7 +161,7 @@ def messages(r: Reach, now: float) -> list[dict]:
                                                   "Files on the Pi are kept."})
     elif r.internet_down(now):
         out.append({"level": "alert", "text": "The Pi can reach the scanner but not GRIP: the internet connection "
-                                              "through the scanner is down, or GRIP is. Uploads wait; files on the "
+                                              "through the scanner is down, or GRIP is. Uploads wait. Files on the "
                                               "Pi are kept."})
     return out
 

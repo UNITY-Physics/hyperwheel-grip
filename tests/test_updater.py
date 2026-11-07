@@ -301,7 +301,7 @@ def test_a_key_revoked_meanwhile_is_not_blamed_on_the_release(pi):
     pi.pi.worked = {"SiteA-Sandbox"}
     pi.pi.keys = {"0.1.3": {"SiteA-Sandbox": "rejected"}, "0.1.2": {"SiteA-Sandbox": "rejected"}}
     result = pi.updater().check()
-    assert result.startswith("updated: 0.1.2 -> 0.1.3; the key for SiteA-Sandbox doesn't work with either release")
+    assert result.startswith("updated: 0.1.2 -> 0.1.3. The key for SiteA-Sandbox doesn't work with either release")
     assert pi.installs == ["0.1.3", "0.1.2", "0.1.3"] and pi.current() == "0.1.3"
     assert os.readlink(pi.layout.previous) == "releases/0.1.2" and not pi.paths.failed.exists()
 
@@ -337,7 +337,7 @@ def test_a_pi_that_is_never_idle_waits_for_the_next_check_and_keeps_the_download
     pi.publish("0.1.3")
     pi.pi.busy_until = pi.clock() + 24 * 3600
     result = pi.updater().check()
-    assert "waiting for the Pi to be idle" in result and pi.installs == []
+    assert "Waiting for the Pi to be idle" in result and pi.installs == []
     assert (pi.paths.downloads / "hyperwheel-0.1.3-arm64.tar").exists()
     pi.pi.busy_until = 0
     downloads = []

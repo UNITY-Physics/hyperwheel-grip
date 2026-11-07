@@ -54,7 +54,7 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
     try:
         store = Store(site.state_db, readonly=True)
     except Exception as e:  # noqa: BLE001 - reported, not raised
-        out.append((PROBLEM, "State store", f"can't be read ({type(e).__name__}); has the service ever run?"))
+        out.append((PROBLEM, "State store", f"can't be read ({type(e).__name__}). Has the service ever run?"))
 
     if store is not None:
         beat = store.cursor(HEARTBEAT)
@@ -67,7 +67,7 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
     # An upload GRIP answered in the last 90 s proves both work, even when a quick
     # check times out behind the upload's own traffic on a slow link.
     answered = store.cursor(reach.GRIP_ANSWERED) if store is not None else 0
-    busy = f"an upload got an answer from GRIP {now - answered:.0f} s ago; the link is busy or slow"
+    busy = f"an upload got an answer from GRIP {now - answered:.0f} s ago. The link is busy or slow"
     recent = bool(answered) and now - answered <= reach.RECENT_S
     s = site.scanner
     scanner_ok = None
@@ -123,7 +123,7 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
     if p.synced():
         out.append((OK, "Clock", "set from the network"))
     else:
-        out.append((PROBLEM, "Clock", "not set from the network yet; uploads wait until it is"))
+        out.append((PROBLEM, "Clock", "not set from the network yet. Uploads wait until it is"))
 
     try:
         free = p.free_bytes(site.staging_dir if site.staging_dir.exists() else Path("/")) / 1024 ** 3
