@@ -306,7 +306,7 @@ class Store:
                                        timeout=30)
             self._db.row_factory = sqlite3.Row
             if self.schema_version < len(_SCHEMA):
-                raise StateError(f"state database is schema version {self.schema_version}; this release expects "
+                raise StateError(f"state database is schema version {self.schema_version}. This release expects "
                                  f"at least {len(_SCHEMA)}")
             return
         self._db = sqlite3.connect(str(path), isolation_level=None, timeout=30)
@@ -337,7 +337,7 @@ class Store:
         if version > len(_SCHEMA):
             # Written by a newer release (e.g. after a rollback). Its changes only
             # add, so this release can work with it as it is; never downgrade it.
-            log.warning("state database is schema version %d, newer than this release's %d; using it as it is",
+            log.warning("state database is schema version %d, newer than this release's %d. Using it as it is",
                         version, len(_SCHEMA))
             return
         for number, script in enumerate(_SCHEMA[version:], start=version + 1):

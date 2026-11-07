@@ -64,10 +64,10 @@ def study_issues(store: Store, study: Study, instances: list[InstanceInfo], site
                             "session to the right subject in GRIP."))
     elif clean == "":
         issues.append(Issue("BLANK_PATIENT_ID", "The Patient ID is blank. GRIP files the session under a "
-                            "MISSING_<n> subject; please move it to the right subject in GRIP."))
+                            "MISSING_<n> subject. Please move it to the right subject in GRIP."))
     elif clean != pid:
-        issues.append(Issue("PATIENT_ID_SPACES", "The Patient ID starts or ends with a space. It is sent as typed; "
-                            "check the subject in GRIP."))
+        issues.append(Issue("PATIENT_ID_SPACES", "The Patient ID starts or ends with a space. It is sent as typed. "
+                            "Check the subject in GRIP."))
     if clean and project.patient_id_pattern:
         pattern = re.compile(project.patient_id_pattern)
         if not pattern.fullmatch(clean):

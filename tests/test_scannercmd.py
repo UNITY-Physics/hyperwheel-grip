@@ -108,7 +108,7 @@ def test_enter_stops_before_anything_is_tried(site, stored):
         typed = Scripted(hidden=hidden)
         code, restarts, tried = run(site, stored, typed)
         assert code == 1 and tried == [] and restarts == []
-        assert typed.shown[-1] == "Stopped. Nothing was saved; the password on this Pi is as it was."
+        assert typed.shown[-1] == "Stopped. Nothing was saved. The password on this Pi is as it was."
 
 
 def test_a_pasted_line_break_or_space_is_refused_before_trying(site, stored):

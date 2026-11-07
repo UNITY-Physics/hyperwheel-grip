@@ -71,7 +71,7 @@ class KeyStore:
         with os.fdopen(fd, "rb") as f:
             if _too_open(os.fstat(f.fileno()).st_mode, self.systemd):
                 raise KeyUnreadable(
-                    f"key file for project {project} is readable by other users; it must be mode 600"
+                    f"key file for project {project} is readable by other users. It must be mode 600"
                 )
             raw = f.read()
         try:
@@ -120,7 +120,7 @@ def read_secret_json(name: str, fallback: Path) -> dict:
         raise KeyUnreadable(f"{name}: secret file can't be read ({e.strerror})") from None
     with os.fdopen(fd, "rb") as f:
         if _too_open(os.fstat(f.fileno()).st_mode, bool(credentials)):
-            raise KeyUnreadable(f"{name}: secret file is readable by other users; it must be mode 600")
+            raise KeyUnreadable(f"{name}: secret file is readable by other users. It must be mode 600")
         raw = f.read()
     try:
         data = json.loads(raw)

@@ -139,7 +139,7 @@ def set_password(site: SiteConfig, console: Console | None = None, *, path: Path
         password = _ask(c)
     except (Cancelled, EOFError, KeyboardInterrupt):
         c.say("")
-        c.say("Stopped. Nothing was saved; the password on this Pi is as it was.")
+        c.say("Stopped. Nothing was saved. The password on this Pi is as it was.")
         return 1
 
     old = _stored(path)

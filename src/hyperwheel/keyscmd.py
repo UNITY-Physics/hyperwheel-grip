@@ -68,7 +68,7 @@ def restart_service(what: str = "key") -> str:
     """Restart the upload service if it's running. Returns what happened, in plain words."""
     active = subprocess.run(["systemctl", "is-active", "--quiet", SERVICE], capture_output=True).returncode == 0
     if not active:
-        return f"Hyperwheel isn't running just now; it will use the new {what} when it starts."
+        return f"Hyperwheel isn't running just now. It will use the new {what} when it starts."
     done = subprocess.run(["systemctl", "restart", SERVICE], capture_output=True, text=True)
     if done.returncode != 0:
         raise RuntimeError(f"systemctl restart ended with exit {done.returncode}")
@@ -200,7 +200,7 @@ def set_key(site: SiteConfig, routing: Routing, console: Console | None = None, 
         creds = Credentials(_ask_client_id(c), _ask_secret(c))
     except (Cancelled, EOFError, KeyboardInterrupt):
         c.say("")
-        c.say("Stopped. Nothing was saved; the keys on this Pi are as they were.")
+        c.say("Stopped. Nothing was saved. The keys on this Pi are as they were.")
         return 1
 
     try:

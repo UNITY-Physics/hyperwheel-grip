@@ -79,7 +79,7 @@ class HostKeyBook:
             if first:
                 log.info("scanner at %s: first scanner key, %s %s, remembered", host, key_type, fp)
             else:
-                log.warning("scanner at %s: a key this Pi hasn't seen before, %s %s; accepted and remembered "
+                log.warning("scanner at %s: a key this Pi hasn't seen before, %s %s. Accepted and remembered "
                             "(a scanner upgrade, or a different scanner)", host, key_type, fp)
 
 
