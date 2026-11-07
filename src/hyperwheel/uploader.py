@@ -132,7 +132,7 @@ class Uploader:
         project = self.routing.projects.get(study.project or "")
         if project is None:
             self.store.raise_flag("PROJECT_NOT_ROUTED",
-                                  f"Project {study.project} is no longer in the routing file; files are kept.",
+                                  f"Project {study.project} is no longer in the routing file. Files are kept.",
                                   study_id=study.id, level="alert")
             return
         self.store.clear_flags("PROJECT_NOT_ROUTED", study_id=study.id)
@@ -158,7 +158,7 @@ class Uploader:
         except AuthFailed as e:
             self._key_failed(project, "rejected", str(e))
         except Transient as e:
-            log.warning("study %s: %s; will try again later", study.study_uid, e)
+            log.warning("study %s: %s. Will try again later", study.study_uid, e)
 
     def _due_files(self, study: Study, kind: str) -> list[File]:
         now = self.clock()
@@ -240,9 +240,9 @@ class Uploader:
     def _key_failed(self, project: Project, status: str, message: str) -> None:
         self.store.set_key_status(project.name, status, message)
         self.store.raise_flag("KEY_NOT_WORKING", f"GRIP key for {project.name}: {message}. Nothing is uploaded "
-                              "for this project until the key works; files are kept.", project=project.name,
+                              "for this project until the key works. Files are kept.", project=project.name,
                               level="alert")
-        log.error("project %s: GRIP key not working (%s); uploads paused for this project, files kept",
+        log.error("project %s: GRIP key not working (%s). Uploads paused for this project, files kept",
                   project.name, message)
         raise _ProjectBlocked()
 
@@ -306,7 +306,7 @@ class Uploader:
             self._refuse(f, "LOCAL_FILE_CHANGED", "staged raw file has a different size from when it was pulled")
             return
         if size == 0:
-            self._refuse(f, "RAW_FILE_EMPTY", "raw file is empty; kept for a person to check")
+            self._refuse(f, "RAW_FILE_EMPTY", "raw file is empty (kept for a person to check)")
             return
         chunk_bytes = self._chunk_bytes
         last_chunk_start = ((size - 1) // chunk_bytes) * chunk_bytes
@@ -331,8 +331,8 @@ class Uploader:
             self._park(f, str(e))
         except Refused as e:
             if e.invalid_name:
-                self._refuse(f, "RAW_NAME_REFUSED", f"GRIP refused the name of raw file {f.name} as invalid (it is "
-                                                    "never renamed; please tell your Hyperwheel admin)")
+                self._refuse(f, "RAW_NAME_REFUSED", f"GRIP refused the name of raw file {f.name} as invalid. Raw "
+                                                    "files are never renamed, so tell your Hyperwheel admin")
             else:
                 self._refuse(f, "RAW_REFUSED", f"GRIP refused raw file {f.name}: {e}")
         except (KeyProblem, KeyRejected, AuthFailed):
@@ -366,17 +366,17 @@ class Uploader:
                         raise
                     if e.no_answer and self._chunk_bytes > self.settings.min_chunk_bytes:
                         self._chunk_bytes = max(self.settings.min_chunk_bytes, self._chunk_bytes // 2)
-                        log.warning("raw file %s: no answer for a chunk of %d KiB; trying again, with chunks of "
+                        log.warning("raw file %s: no answer for a chunk of %d KiB. Trying again, with chunks of "
                                     "at most %d KiB", f.name, len(chunk) // 1024, self._chunk_bytes // 1024)
                     else:
-                        log.warning("raw file %s: %s; trying again", f.name, e)
+                        log.warning("raw file %s: %s. Trying again", f.name, e)
                     self.sleep(e.retry_after if e.retry_after is not None else api.http.backoff(failures))
                     continue
                 except Refused as e:
                     if restarted or e.invalid_name:
                         raise
                     # GRIP wouldn't take the rest of an earlier upload: send it in full instead.
-                    log.info("raw file %s: GRIP refused continuing at byte %d (HTTP %d); sending it in full",
+                    log.info("raw file %s: GRIP refused continuing at byte %d (HTTP %d). Sending it in full",
                              f.name, offset, e.status)
                     restarted, resent_last, offset = True, False, 0
                     self.store.update_file(f.id, upload_offset=0)
@@ -389,7 +389,7 @@ class Uploader:
                     if took > self.settings.target_chunk_s and self._chunk_bytes > self.settings.min_chunk_bytes:
                         self._chunk_bytes = max(self.settings.min_chunk_bytes, self._chunk_bytes // 2)
                         good = 0
-                        log.info("raw file %s: a chunk of %d KiB took %.0f s; chunks of at most %d KiB from now",
+                        log.info("raw file %s: a chunk of %d KiB took %.0f s. Chunks of at most %d KiB from now",
                                  f.name, len(chunk) // 1024, took, self._chunk_bytes // 1024)
                     elif took <= self.settings.target_chunk_s / 4 and len(chunk) >= self._chunk_bytes:
                         good += 1
@@ -445,14 +445,14 @@ class Uploader:
         delay *= 0.5 + self.rng()
         self.store.move_file(f.id, "retry_wait", next_attempt_at=self.clock() + delay, last_error=why)
         self._report.parked += 1
-        log.warning("%s %s: %s; kept, will try again in %.0f s", _label(f), _ident(f), why, delay)
+        log.warning("%s %s: %s. Kept, will try again in %.0f s", _label(f), _ident(f), why, delay)
 
     def _refuse(self, f: File, code: str, detail: str) -> None:
         self.store.move_file(f.id, "refused", last_error=detail)
-        self.store.raise_flag(code, f"{detail}; the file is kept on the Pi.", study_id=f.study_id, file_id=f.id,
+        self.store.raise_flag(code, f"{detail}. The file is kept on the Pi.", study_id=f.study_id, file_id=f.id,
                               level="alert")
         self._report.refused += 1
-        log.error("%s %s: %s; file kept", _label(f), _ident(f), detail)
+        log.error("%s %s: %s. File kept", _label(f), _ident(f), detail)
 
     def _delete_local(self, f: File) -> None:
         """Delete a confirmed file: the staged copy, then Orthanc's copy, then mark it deleted."""
@@ -466,7 +466,7 @@ class Uploader:
         except (OSError, OrthancError) as e:
             self.store.raise_flag("LOCAL_DELETE_FAILED", f"On GRIP, but deleting the copy on the Pi failed ({e}).",
                                   study_id=f.study_id, file_id=f.id, level="alert")
-            log.error("%s %s: on GRIP, but the local delete failed (%s); will try again", _label(f), _ident(f), e)
+            log.error("%s %s: on GRIP, but the local delete failed (%s). Will try again", _label(f), _ident(f), e)
             return
         self.store.move_file(f.id, "deleted")
         self.store.clear_flags("LOCAL_DELETE_FAILED", study_id=f.study_id, file_id=f.id)

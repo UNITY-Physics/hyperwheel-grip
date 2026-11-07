@@ -108,7 +108,7 @@ def test_enter_stops_before_anything_is_tried(site, stored):
         typed = Scripted(hidden=hidden)
         code, restarts, tried = run(site, stored, typed)
         assert code == 1 and tried == [] and restarts == []
-        assert typed.shown[-1] == "Stopped. Nothing was saved; the password on this Pi is as it was."
+        assert typed.shown[-1] == "Stopped. Nothing was saved. The password on this Pi is as it was."
 
 
 def test_a_pasted_line_break_or_space_is_refused_before_trying(site, stored):
@@ -188,4 +188,5 @@ def test_the_command_says_why_the_scanner_cannot_be_reached(site, monkeypatch):
 def test_it_says_who_can_give_the_new_password(site, stored):
     typed = Scripted(hidden=[""])
     run(site, stored, typed)
-    assert typed.shown[0].endswith("Your Hyperwheel admin can tell you the new one.")
+    assert typed.shown[0] == ("Set the scanner's raw-data password on this Pi. It changes when the scanner's "
+                              "software is upgraded. Your Hyperwheel admin can tell you the new one.")

@@ -146,7 +146,7 @@ class Installer:
             return
         if entry.pw_uid >= 1000 or not entry.pw_shell.endswith(("nologin", "/false")):
             raise InstallError(f"an account called {self.service_user} already exists and isn't a system account "
-                               f"(UID {entry.pw_uid}, shell {entry.pw_shell}); it won't be taken over. "
+                               f"(UID {entry.pw_uid}, shell {entry.pw_shell}). It won't be taken over. "
                                "Use --service-user with another name on this Pi.")
         self.say(f"Service account {self.service_user}: already there.")
 
@@ -178,7 +178,7 @@ class Installer:
             try:
                 verify_release(target / "release", self.signers)
             except ReleaseError as e:
-                raise InstallError(f"{target} exists but doesn't verify ({e}); remove it to reinstall") from None
+                raise InstallError(f"{target} exists but doesn't verify ({e}). Remove it to reinstall") from None
             self.say(f"Release folder {target}: already there and checked.")
             return target
         tmp = target.with_name(f".{manifest.version}.partial")

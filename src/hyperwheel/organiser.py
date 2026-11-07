@@ -99,7 +99,7 @@ class Organiser:
                 self.store.update_study(study.id, **fields)
         else:
             self.store.move_study(study.id, "receiving", **fields)
-            log.info("study %s: more images arrived; receiving again", info.study_uid)
+            log.info("study %s: more images arrived. Receiving again", info.study_uid)
 
     def _uids_ok(self, info: InstanceInfo, instance_id: str) -> bool:
         if is_uid(info.study_uid) and is_uid(info.sop_uid) and is_uid(info.series_uid):
@@ -107,8 +107,8 @@ class Organiser:
             return True
         self.store.raise_flag(
             "BAD_UID", "An image has an invalid StudyInstanceUID, SeriesInstanceUID or SOP Instance UID. It is "
-            "kept in Orthanc and not uploaded; please contact your Hyperwheel admin.", level="hold", ref=instance_id)
-        log.error("Orthanc instance %s: invalid UID; kept in Orthanc, not uploaded", instance_id)
+            "kept in Orthanc and not uploaded. Please contact your Hyperwheel admin.", level="hold", ref=instance_id)
+        log.error("Orthanc instance %s: invalid UID. Kept in Orthanc, not uploaded", instance_id)
         return False
 
     # ---- stable study --------------------------------------------------------------
@@ -146,7 +146,7 @@ class Organiser:
             if study.state == "checking":
                 study = self.store.move_study(study.id, "held")
             checks.apply(self.store, study, [mixed], ["MIXED_LOGINS"])
-            log.warning("study %s: images from more than one login; held", uid)
+            log.warning("study %s: images from more than one login. Held", uid)
             return
 
         login = infos[0].login
@@ -154,7 +154,7 @@ class Organiser:
         if study.project and (project is None or project.name != study.project):
             # The routing changed after this study was routed: keep it with its first project.
             self.store.raise_flag("ROUTING_CHANGED", f"This study's login now routes to "
-                                  f"{project.name if project else 'nothing'}; it stays with {study.project}.",
+                                  f"{project.name if project else 'nothing'}. It stays with {study.project}.",
                                   study_id=study.id, level="alert")
             project = self.routing.projects.get(study.project)
         if project is None:
@@ -183,13 +183,13 @@ class Organiser:
             study = self.store.move_study(study.id, "unrouted")
         if study.state != "unrouted":
             return
-        log.info("study %s: login %r has no routing entry; deleting it from the Pi, never uploaded",
+        log.info("study %s: login %r has no routing entry. Deleting it from the Pi, never uploaded",
                  study.study_uid, login or "")
         try:
             if study.orthanc_id:
                 self.orthanc.delete_study(study.orthanc_id)
         except OrthancError as e:
-            log.error("study %s: could not delete from Orthanc yet (%s); will try again", study.study_uid, e)
+            log.error("study %s: could not delete from Orthanc yet (%s). Will try again", study.study_uid, e)
             return
         self.store.move_study(study.id, "purged", patient_id=None, patient_name=None, patient_sex=None,
                               patient_birth_date=None, operators_name=None)

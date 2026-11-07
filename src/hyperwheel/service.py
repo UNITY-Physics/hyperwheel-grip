@@ -86,7 +86,7 @@ class Service:
     def upload_round(self, uploader: Uploader) -> None:
         reach.record_internet(uploader.store, self.internet_probe(self.routing), self.clock())
         if not self.synced():
-            log.info("clock not set yet; uploads wait")
+            log.info("clock not set yet. Uploads wait")
             return
         if self.clock() - self._last_key_check >= self.key_check_every_s:
             uploader.check_keys()
@@ -121,7 +121,7 @@ class Service:
             try:
                 loop()
             except Exception:
-                log.exception("a loop stopped with an error; Hyperwheel stops so it is restarted")
+                log.exception("a loop stopped with an error. Hyperwheel stops so it is restarted")
                 self.failed = True
                 self.stop.set()
         return guarded
@@ -131,9 +131,9 @@ class Service:
             try:
                 round_()
             except (OrthancError, StateError) as e:
-                log.warning("%s loop: %s; trying again shortly", name, e)
+                log.warning("%s loop: %s. Trying again shortly", name, e)
             except Exception:
-                log.exception("%s loop: unexpected error; trying again shortly", name)
+                log.exception("%s loop: unexpected error. Trying again shortly", name)
             self.stop.wait(every_s)
 
     def run(self) -> None:

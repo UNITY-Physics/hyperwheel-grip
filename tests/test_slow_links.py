@@ -74,7 +74,7 @@ def test_chunk_halves_until_the_link_carries_it_then_the_file_goes(env, caplog):
     assert all(s <= 256 * KIB for s in sizes[2:])
     assert env.fake.study_for(study.study_uid).raw[raw.name].complete
     assert not env.store.open_flags(study_id=study.id)
-    assert sum("trying again, with chunks" in r.getMessage() for r in caplog.records) == 2
+    assert sum("Trying again, with chunks" in r.getMessage() for r in caplog.records) == 2
 
 
 def test_chunks_grow_back_once_the_link_is_good(env):
