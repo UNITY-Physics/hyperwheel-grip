@@ -131,7 +131,7 @@ def set_password(site: SiteConfig, console: Console | None = None, *, path: Path
     if not s.host:
         c.say("This Pi has no scanner address in its site settings yet. Ask your Hyperwheel admin.")
         return 1
-    c.say("Set the scanner's raw-data password on this Pi. It changes when the scanner's software is upgraded; "
+    c.say("Set the scanner's raw-data password on this Pi. It changes when the scanner's software is upgraded. "
           "Your Hyperwheel admin can tell you the new one.")
     c.say(f"Scanner: {s.host}, login {s.username}")
     c.say("")
