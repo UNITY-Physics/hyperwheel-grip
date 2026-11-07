@@ -64,11 +64,11 @@ def check_with_grip(project: Project, creds: Credentials, timeout_s: float) -> N
             raise GripError(f"no answer ({type(e).__name__})") from None
 
 
-def restart_service() -> str:
+def restart_service(what: str = "key") -> str:
     """Restart the upload service if it's running. Returns what happened, in plain words."""
     active = subprocess.run(["systemctl", "is-active", "--quiet", SERVICE], capture_output=True).returncode == 0
     if not active:
-        return "Hyperwheel isn't running just now; it will use the new key when it starts."
+        return f"Hyperwheel isn't running just now; it will use the new {what} when it starts."
     done = subprocess.run(["systemctl", "restart", SERVICE], capture_output=True, text=True)
     if done.returncode != 0:
         raise RuntimeError(f"systemctl restart ended with exit {done.returncode}")

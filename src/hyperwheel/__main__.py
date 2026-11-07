@@ -1,4 +1,4 @@
-"""Command line: ``hyperwheel help``, ``status``, ``doctor``, ``keys``, ``update``, and the services' ``run``
+"""Command line: ``hyperwheel help``, ``status``, ``doctor``, ``keys``, ``scanner``, ``update``, and the services' ``run``
 and ``dashboard``. See ``cli`` for the help and for how root commands go through sudo."""
 
 from __future__ import annotations
@@ -47,6 +47,8 @@ def _main(argv: list[str]) -> int:
     sub.add_parser("doctor", help="check the scanner, GRIP, Orthanc, clock, disk and keys")
     keys = sub.add_parser("keys", help="GRIP keys: list, or set one project's key (as root)")
     keys.add_argument("action", choices=["list", "set"])
+    scanner = sub.add_parser("scanner", help="set the scanner's raw-data password (as root)")
+    scanner.add_argument("action", choices=["password"])
     sub.add_parser("update", help="updates: check, now, hold, release-hold, status (as root)")
     args = ap.parse_args(argv)
 
@@ -73,6 +75,9 @@ def _main(argv: list[str]) -> int:
     if args.command == "keys":
         from . import keyscmd
         return keyscmd.main(site, routing, [args.action])
+    if args.command == "scanner":
+        from . import scannercmd
+        return scannercmd.main(site, [args.action])
     if args.command == "doctor":
         from . import doctor
         results, code = doctor.run(site, routing)

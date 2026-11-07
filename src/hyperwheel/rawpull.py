@@ -113,9 +113,10 @@ class RawPuller:
             scanner = self.connect()
         except LoginRefused:
             self._login_refused_at = self.clock()
-            self.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the Pi's raw-data login, so raw data "
-                                  "can't be fetched; it stays on the scanner. The Pi tries again every 15 minutes. "
-                                  "Please contact the Hyperwheel team (the scanner's login may have changed).",
+            self.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the raw-data login, most likely "
+                                  "because its software was upgraded or it's missing the RRDF entitlement. Set the "
+                                  "new password with: hyperwheel scanner password. If that doesn't help, tell "
+                                  "support. Raw data stays on the scanner until then; DICOM keeps uploading.",
                                   level="alert")
             log.error("raw data: the scanner refused the login; trying again in %d min", self.LOGIN_RETRY_S // 60)
             return report
