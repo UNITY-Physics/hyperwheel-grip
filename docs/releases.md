@@ -181,19 +181,25 @@ The same steps also run by hand on the build Mac, for a test build:
    bytes every time for the same release).
 
 A Pi checks a release with `python -m hyperwheel.release verify <folder>`: the
-signature, by a key in `release/allowed_signers`, for the `hyperwheel-release`
-namespace, then every file's size and SHA-256, with nothing extra in the
+signature, by a key in the Pi's `/etc/hyperwheel/release_allowed_signers`, for
+the `hyperwheel-release` namespace, then every file's size and SHA-256, with nothing extra in the
 folder. After changing `requirements/runtime.lock`, run
 `tools/release/lock_wheels.py`; after changing `release/debs.list`, run
 `fetch_debs.sh --update-lock`.
 
 **Signing.** OpenSSH signatures (`ssh-keygen -Y sign`) with a
 passphrase-protected key on the release signer's Mac, backed up in their password manager.
-The Pi verifies with `ssh-keygen -Y verify` against an allowed-signers file
-in the image and in each release. There is **one release signer**, so a new
-release can only be published by them. The allowed-signers file takes one line
-per signer, so another can be added later with no change to the format: a
-release signed by any listed signer is accepted.
+The Pi verifies with `ssh-keygen -Y verify` against its own allowed-signers
+file, `/etc/hyperwheel/release_allowed_signers`. That file comes from the image
+(or from `--signers` on the first install) and is the only list a Pi trusts. A
+release doesn't carry one, and an update never replaces it, so a release can't
+change who may sign the next one. `release/allowed_signers` in the repo is the
+copy the image and the build and publish tools use. Changing the signer means
+changing that copy and the file on every Pi, by hand or with a new image.
+There is **one release signer**, so a new release can only be published by
+them. The allowed-signers file takes one line per signer, so another can be
+added later with no change to the format: a release signed by any listed
+signer is accepted.
 
 ## On the Pi
 
