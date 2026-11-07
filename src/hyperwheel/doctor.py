@@ -92,9 +92,10 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
             out.append((PROBLEM, "Scanner", f"not answering ({where}), and the link on {s.interface} can't be "
                                             "read. Check that the scanner is on and the cable is connected."))
         if store is not None:
-            failing = [f for f in store.open_flags() if f.code == "RAW_PULL_FAILING"]
+            failing = [f for code in ("RAW_LOGIN_REFUSED", "RAW_PULL_FAILING")
+                       for f in store.open_flags() if f.code == code]
             if failing:
-                out.append((PROBLEM, "Raw-data login on the scanner", failing[0].detail))
+                out.append((PROBLEM, "Raw data from the scanner", failing[0].detail))
 
     hosts = reach.grip_hosts(routing)
     if not hosts:

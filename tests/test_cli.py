@@ -13,11 +13,12 @@ from hyperwheel.installer import SUDO_RULE
 
 DATA_MANAGER_HELP = """\
 What you can do on this Pi:
-  hyperwheel status          Is everything on GRIP, and is it safe to switch off?
-  hyperwheel doctor          Check the cable, the scanner and the internet
-  hyperwheel keys list       Which GRIP keys are stored, and are they working
-  hyperwheel keys set        Store a GRIP key for a project (asks your password)
-  hyperwheel update status   Which version is running, and is an update waiting
+  hyperwheel status             Is everything on GRIP, and is it safe to switch off?
+  hyperwheel doctor             Check the cable, the scanner and the internet
+  hyperwheel keys list          Which GRIP keys are stored, and are they working
+  hyperwheel keys set           Store a GRIP key for a project (asks your password)
+  hyperwheel scanner password   Set the scanner's raw-data password (asks your password)
+  hyperwheel update status      Which version is running, and is an update waiting
 
 Type them just as shown. Hyperwheel asks for your password when it needs it."""
 
@@ -55,6 +56,8 @@ def test_no_words_or_help_shows_the_help(argv, capsys, monkeypatch):
     (["frob"], "There's no command 'hyperwheel frob'."),
     (["keys", "delete"], "There's no command 'hyperwheel keys delete'."),
     (["keys"], "'hyperwheel keys' needs one more word: list or set."),
+    (["scanner"], "'hyperwheel scanner' needs one more word: password."),
+    (["scanner", "key"], "There's no command 'hyperwheel scanner key'."),
     (["update", "now-please"], "There's no command 'hyperwheel update now-please'."),
     (["update"], "'hyperwheel update' needs one more word, e.g. status."),
 ])
@@ -66,7 +69,7 @@ def test_an_unknown_command_says_so_in_one_line_then_shows_the_help(argv, line, 
 
 
 def test_which_commands_need_root():
-    for argv in (["status"], ["doctor"], ["keys", "list"], ["keys", "set"], ["update", "now"],
+    for argv in (["status"], ["doctor"], ["keys", "list"], ["keys", "set"], ["scanner", "password"], ["update", "now"],
                  ["update", "hold", "--reason", "x"], ["update", "release-hold"], ["update", "check"]):
         assert cli.needs_root(argv), argv
     for argv in (["update", "status"], ["run"], ["dashboard"], ["help"], [], ["--site", "x", "status"],

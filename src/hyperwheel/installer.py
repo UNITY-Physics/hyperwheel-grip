@@ -46,14 +46,14 @@ ORTHANC_USER = "orthanc"
 DATA_MANAGER = "datamanager"
 
 # What the data-manager account may run as root: exactly these command lines and nothing else
-# (sudo allows no other arguments when a rule lists them). Setting a key asks for the data
-# manager's own password; looking at the status doesn't.
+# (sudo allows no other arguments when a rule lists them). Setting a key or the scanner password
+# asks for the data manager's own password; looking at the status doesn't.
 SUDO_RULE = f"""\
 # Written by Hyperwheel's installer, and written again by every release: changes made here are lost.
 # The {DATA_MANAGER} account may run only these Hyperwheel commands as root, with exactly these words.
 Cmnd_Alias HYPERWHEEL_LOOK = /usr/local/bin/hyperwheel status, /usr/local/bin/hyperwheel doctor, \\
     /usr/local/bin/hyperwheel keys list, /usr/local/bin/hyperwheel update status
-Cmnd_Alias HYPERWHEEL_KEYS = /usr/local/bin/hyperwheel keys set
+Cmnd_Alias HYPERWHEEL_KEYS = /usr/local/bin/hyperwheel keys set, /usr/local/bin/hyperwheel scanner password
 {DATA_MANAGER} ALL = (root) NOPASSWD: HYPERWHEEL_LOOK
 {DATA_MANAGER} ALL = (root) HYPERWHEEL_KEYS
 """

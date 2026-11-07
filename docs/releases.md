@@ -85,7 +85,8 @@ again.
     checked with `visudo` first) lets it run exactly these as root, with no
     other arguments: `hyperwheel status`, `hyperwheel doctor`,
     `hyperwheel keys list` and `hyperwheel update status` without a password,
-    and `hyperwheel keys set` with its own password. The screen locks after 15
+    and `hyperwheel keys set` and `hyperwheel scanner password` with its own
+    password. The screen locks after 15
     minutes idle and unlocks with that Pi's `datamanager` password.
   - Data managers never type `sudo`. `hyperwheel help` lists what they can
     run, one command per line. A command that needs root runs itself again
@@ -154,6 +155,36 @@ have leaked or someone who had it leaves):
 If a key stops working (revoked, or entered wrong), the Upload Monitor shows
 an alert for that project. Only that project's uploads pause, and its files
 are kept until a working key is set.
+
+## Scanner raw-data password (SOP outline)
+
+The Pi fetches raw data from the scanner with a raw-data login. Its password
+changes with the scanner's software (from version 12, every release has a
+new one), so it is a setting on each Pi, never in the repo or a release. It
+is in `/etc/hyperwheel/scanner.json`, root-only (mode 600).
+
+After a scanner upgrade, or when the scanner is missing the RRDF entitlement
+that Hyperfine adds, the scanner refuses the login. The Upload Monitor,
+`hyperwheel status` and `hyperwheel doctor` then show an alert, raw data stays
+on the scanner, and DICOM keeps uploading. The Pi tries the login again every
+15 minutes, no more often, so the scanner account isn't locked.
+
+**Setting the new password:**
+
+1. Get the new raw-data password (from Hyperfine, or support).
+2. On the Pi, as the data manager or admin, type
+   `hyperwheel scanner password`. It asks for the account's password.
+3. Paste the raw-data password. It is typed hidden and never shown, logged
+   or put on a command line. Pressing Enter stops, and nothing is saved.
+4. The command logs in to the scanner with it and lists the raw-data folder
+   (read-only) **before** saving it. If the scanner refuses it, or can't be
+   reached, nothing is saved and the old password stays. If you're sure the
+   password is right and the scanner still refuses it, the scanner may be
+   missing the RRDF entitlement: tell support.
+5. The password is saved root-only, and the Hyperwheel service is restarted
+   to use it. The alert clears at the next fetch, within a minute.
+
+No new release is needed.
 
 ## The release
 

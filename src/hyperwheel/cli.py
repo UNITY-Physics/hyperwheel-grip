@@ -27,6 +27,7 @@ DATA_MANAGER = (
     ("doctor", "Check the cable, the scanner and the internet"),
     ("keys list", "Which GRIP keys are stored, and are they working"),
     ("keys set", "Store a GRIP key for a project (asks your password)"),
+    ("scanner password", "Set the scanner's raw-data password (asks your password)"),
     ("update status", "Which version is running, and is an update waiting"),
 )
 ADMIN = (
@@ -35,8 +36,9 @@ ADMIN = (
     ("update release-hold", "Let this Pi take updates again"),
 )
 
-COMMANDS = {"help", "status", "doctor", "keys", "update", "run", "dashboard"}  # run, dashboard: the services
+COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "run", "dashboard"}  # run, dashboard: services
 KEYS_ACTIONS = {"list", "set"}
+SCANNER_ACTIONS = {"password"}
 UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status"}
 
 
@@ -81,6 +83,10 @@ def problem(argv: Sequence[str]) -> str | None:
         return f"There's no command 'hyperwheel keys {argv[1]}'."
     if command == "keys" and not rest:
         return "'hyperwheel keys' needs one more word: list or set."
+    if command == "scanner" and rest and rest[0] not in SCANNER_ACTIONS:
+        return f"There's no command 'hyperwheel scanner {argv[1]}'."
+    if command == "scanner" and not rest:
+        return "'hyperwheel scanner' needs one more word: password."
     if command == "update" and rest and rest[0] not in UPDATE_ACTIONS:
         return f"There's no command 'hyperwheel update {argv[1]}'."
     if command == "update" and not rest:
@@ -93,7 +99,7 @@ def needs_root(argv: Sequence[str]) -> bool:
     (started by systemd under their own account), and ``update status`` reads only public files."""
     if not argv or "-h" in argv or "--help" in argv:
         return False
-    if argv[0] in ("status", "doctor", "keys"):
+    if argv[0] in ("status", "doctor", "keys", "scanner"):
         return True
     return argv[0] == "update" and argv[1:2] != ["status"]
 
