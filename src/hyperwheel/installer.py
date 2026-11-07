@@ -13,7 +13,9 @@ by the updater:
    files only, and only if a version differs.
 4. The release copied to ``/opt/hyperwheel/releases/<version>/`` (read-only),
    with a venv built offline from its wheels.
-5. Orthanc's settings and the systemd units, which belong to the release.
+5. Orthanc's settings, the systemd units and the data-manager sudo rule
+   (``/etc/sudoers.d/hyperwheel``, checked with ``visudo`` before it's put in
+   place), which belong to the release.
 6. Site settings and secrets in ``/etc/hyperwheel``: added from ``--site-setup``
    only where missing, never overwritten, reset, printed or logged.
 7. ``current`` switched to the new release (``previous`` kept), services
@@ -41,6 +43,20 @@ from .release import Manifest, ReleaseError, verify_release
 
 SERVICE_USER = "hyperwheel"
 ORTHANC_USER = "orthanc"
+DATA_MANAGER = "datamanager"
+
+# What the data-manager account may run as root: exactly these command lines and nothing else
+# (sudo allows no other arguments when a rule lists them). Setting a key asks for the data
+# manager's own password; looking at the status doesn't.
+SUDO_RULE = f"""\
+# Written by Hyperwheel's installer, and written again by every release: changes made here are lost.
+# The {DATA_MANAGER} account may run only these Hyperwheel commands as root, with exactly these words.
+Cmnd_Alias HYPERWHEEL_LOOK = /usr/local/bin/hyperwheel status, /usr/local/bin/hyperwheel doctor, \\
+    /usr/local/bin/hyperwheel keys list, /usr/local/bin/hyperwheel update status
+Cmnd_Alias HYPERWHEEL_KEYS = /usr/local/bin/hyperwheel keys set
+{DATA_MANAGER} ALL = (root) NOPASSWD: HYPERWHEEL_LOOK
+{DATA_MANAGER} ALL = (root) HYPERWHEEL_KEYS
+"""
 
 
 class InstallError(Exception):
@@ -113,6 +129,7 @@ class Installer:
         self.directories()
         configured = self.site_settings()
         self.units()
+        self.sudo_rule()
         self.switch(target)
         self.restart(configured)
         return manifest
@@ -213,6 +230,27 @@ class Installer:
         command.parent.mkdir(parents=True, exist_ok=True)
         if not (command.is_symlink() and os.readlink(command) == "/opt/hyperwheel/current/venv/bin/hyperwheel"):
             _atomic_link(command, "/opt/hyperwheel/current/venv/bin/hyperwheel")
+
+    def sudo_rule(self) -> None:
+        folder = self.layout.p("/etc/sudoers.d")
+        path = folder / "hyperwheel"
+        if path.is_file() and not path.is_symlink() and path.read_text() == SUDO_RULE:
+            self.say("Data-manager commands: sudo rule already there.")
+            return
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / ".hyperwheel.new"  # sudo skips files with a dot in the name
+        tmp.unlink(missing_ok=True)
+        tmp.write_text(SUDO_RULE)
+        tmp.chmod(0o440)
+        try:
+            self.run(["visudo", "-c", "-q", "-f", str(tmp)])
+        except InstallError as e:
+            tmp.unlink(missing_ok=True)
+            raise InstallError(f"the data-manager sudo rule didn't pass visudo's check, so sudo was left as it "
+                               f"was ({e})") from None
+        os.replace(tmp, path)
+        self.say(f"Data-manager commands: sudo rule written ({DATA_MANAGER} may run only keys, status, doctor "
+                 "and update status as root).")
 
     # ---- 6. site settings and secrets: add what's missing, never overwrite ----------
 

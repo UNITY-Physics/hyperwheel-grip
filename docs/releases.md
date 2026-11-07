@@ -80,9 +80,13 @@ again.
 
 - Three accounts:
   - `datamanager` runs the desktop (logged in automatically, so Connect screen
-    sharing works) and Raspberry Pi Connect. It can run only the key, status
-    and doctor commands. The screen locks after 15 minutes idle and unlocks
-    with that Pi's `datamanager` password.
+    sharing works) and Raspberry Pi Connect. It isn't in the `sudo` group. A
+    sudo rule (`/etc/sudoers.d/hyperwheel`, written by every release and
+    checked with `visudo` first) lets it run exactly these as root, with no
+    other arguments: `hyperwheel status`, `hyperwheel doctor`,
+    `hyperwheel keys list` and `hyperwheel update status` without a password,
+    and `hyperwheel keys set` with its own password. The screen locks after 15
+    minutes idle and unlocks with that Pi's `datamanager` password.
   - `admin` never has a desktop session. It is reached over SSH, or with
     `su - admin` from Connect's remote shell, and uses `sudo` with its own
     password. Screen sharing alone never gives admin rights.
@@ -107,20 +111,28 @@ their keys and set them through the **data-manager account**, which can run
 only the key and status commands. The SOP has a page for each step, with
 screenshots.
 
+`sudo hyperwheel keys list` shows each project on the Pi, whether it has a key
+(with only the last four characters of the client ID) and whether it last
+worked. It never shows a secret.
+
 **Setting a key** (at install, or for a new project):
 
 1. Get the project's client ID and secret from GRIP.
 2. On the Pi, open the "GRIP keys" launcher on the desktop (or log in over
-   SSH as the data-manager user) and run `hyperwheel keys set`.
-3. Pick the project from the list, then paste the client ID and the secret.
-   The secret is typed hidden and never shown, logged or put on a command
-   line.
+   SSH as the data-manager user) and run `sudo hyperwheel keys set`. It asks
+   for the data-manager password.
+3. Pick the project from the list by its number, then paste the client ID
+   and the secret. The secret is typed hidden and never shown, logged or put
+   on a command line. Pressing Enter at any question stops, and nothing is
+   saved.
 4. The command asks GRIP for a token with the new key **before** saving it.
-   If GRIP refuses it, nothing is saved and the old key stays.
+   If GRIP refuses it, or can't be reached to check it, nothing is saved and
+   the old key stays.
 5. The key is saved root-only (mode 600), and the upload service is
    restarted so it picks the key up. Uploads continue where they stopped.
-6. The Upload Monitor shows the project's key as "Working" after its next
-   upload.
+6. The service checks every key when it starts, so a minute later
+   `sudo hyperwheel keys list` and the Upload Monitor show the project's key
+   as working.
 
 **Rotating a key** (on a schedule, e.g. once a year; at once if a key may
 have leaked or someone who had it leaves):

@@ -1,4 +1,4 @@
-"""Command line: ``hyperwheel run``, ``dashboard``, ``status``, ``doctor`` and ``update``."""
+"""Command line: ``hyperwheel run``, ``dashboard``, ``status``, ``doctor``, ``keys`` and ``update``."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("dashboard", help="run the Upload Monitor web page")
     sub.add_parser("status", help="show what the Upload Monitor shows, as text")
     sub.add_parser("doctor", help="check the scanner, GRIP, Orthanc, clock, disk and keys")
+    keys = sub.add_parser("keys", help="GRIP keys: list, or set one project's key (as root)")
+    keys.add_argument("action", choices=["list", "set"])
     sub.add_parser("update", help="updates: check, now, hold, release-hold, status (as root)")
     args = ap.parse_args(argv)
 
@@ -50,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "dashboard":
         serve(site, routing)
         return 0
+    if args.command == "keys":
+        from . import keyscmd
+        return keyscmd.main(site, routing, [args.action])
     if args.command == "doctor":
         from . import doctor
         results, code = doctor.run(site, routing)
