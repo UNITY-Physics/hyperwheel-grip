@@ -24,13 +24,13 @@ It contains:
 - the **EEE fix**: a NetworkManager dispatcher script that turns
   Energy-Efficient Ethernet off on `eth0` each time it comes up (EEE made the
   scanner's PACS checks fail);
-- the **hotspot connection set up but switched off and without a password**.
-  It is never an open hotspot: the install adds the shared password from the
-  site config and only then switches it on;
+- a default **Wi-Fi country**, so the hotspot can start at first boot, on a
+  2.4 GHz channel allowed everywhere (1, 6 or 11). Setup then switches to the
+  site's country;
 - the **firewall** (below), SSH, and the user accounts without passwords;
-- the first-boot service: it detects the scanner network (10.42.0.x or
-  10.0.0.x), sets the Pi's address, and runs `rpi-connect signin`, showing
-  the code on the Upload Monitor;
+- the first-boot service: it starts the hotspot `Hyperwheel` with the shared
+  password from the card (see "Setting up a Pi"), and runs
+  `rpi-connect signin`, showing the code on the Upload Monitor;
 - the release-signing public keys;
 - **release 1, already installed**, by the same offline installer an update
   uses. A freshly flashed Pi works without downloading anything. Until the
@@ -99,16 +99,77 @@ again.
     password. Screen sharing alone never gives admin rights.
   - `hyperwheel` is a system account (no login, password or shell) that runs
     the service and owns `/var/lib/hyperwheel`; Orthanc runs as Debian's
-    `orthanc` user. Logins are by username
-  and password, with a **different password on each Pi**, set at setup and
-  never in the image, the repo or the logs.
+    `orthanc` user.
+- Logins are by username and password. Passwords are generated, never
+  chosen, in a readable form: three made-up five-letter chunks such as
+  `borak-kefim-tumos` (about 49 bits). The `datamanager` password is
+  **different on each Pi**, made by setup. The `admin` password is the same on
+  every Pi and reaches the Pis only as a hash through the signed update
+  channel. Neither is ever in the image, the repo or the logs.
 - SSH is allowed only from the hotspot and the scanner cable.
-- On the hotspot, devices reach only the Upload Monitor and SSH to the Pi
-  itself (plus the DHCP and DNS the hotspot needs), nothing beyond: no
-  routing to the scanner network or the internet. The dev Pi keeps sharing
-  its connection.
+- On the Pi itself, hotspot devices reach only the Upload Monitor and SSH
+  (plus the DHCP and DNS the hotspot needs), never Orthanc's DICOM port. The
+  hotspot routes through to the scanner and the internet beyond it, so
+  operators can use the scanner interface from their laptops, with a
+  per-site setting to turn routing off. The Pi's own uploads get priority
+  over hotspot traffic.
 - On the scanner cable: SSH, DICOM (port 4242) and ping.
 - The release-signing key is only for signing releases, never for logins.
+
+## Setting up a Pi (`hyperwheel setup`)
+
+The admin runs `hyperwheel setup` once on a newly flashed Pi, over the
+Connect shell. Until the Pi is set up, the `datamanager` account may run it
+without a password (there's no admin password to ask for yet). Once it is set
+up, setup refuses to run, and the sudo rule no longer lists it.
+
+1. **The site file.** The admin writes one per site, from
+   `config/examples/site-file.toml`: the site name, time zone, Wi-Fi country,
+   update channel, phantom Patient ID, and which scanner logins go to which
+   GRIP project. No keys or passwords are in it. Setup asks for it to be
+   pasted (it ends with the line `# end of site file`), checks it, shows it
+   back and writes `site.toml` and `routing.toml` once it is confirmed. Site
+   settings already on the Pi are never overwritten.
+2. **Time zone and Wi-Fi country** from the site file.
+3. **The scanner cable:** every scanner is 10.42.0.1 and the Pi is
+   10.42.0.88. Setup adds that connection (from the next restart) and says
+   whether the scanner answers.
+4. **The hotspot** `Hyperwheel`. Its password comes from the private copy of
+   the image, where the admin's Mac put it
+   (`/boot/firmware/hyperwheel/hotspot-password`). Setup moves it into
+   `/etc/hyperwheel/hotspot.json` and the NetworkManager connection (both
+   root-only) and deletes the copy. Only if there's none does it ask, hidden
+   and twice.
+5. **The scanner's raw-data password**, tried on the scanner first, as
+   `hyperwheel scanner password` does. It can be skipped and set later.
+6. **The datamanager password**, generated, shown once, and set only after it
+   has been typed back. Then the screen is cleared.
+7. **The admin account**, in the `sudo` group, with its password from the
+   update channel.
+8. **Password-free sudo removed** (Raspberry Pi OS's `010_pi-nopasswd`) and
+   `datamanager` taken out of the `sudo` group, but only once another account
+   can still become root with a password. Until then setup says so and the
+   Pi isn't marked set up.
+
+Then Hyperwheel starts, and setup offers to restart the Pi, which the scanner
+cable address and the Wi-Fi country need. If setup stops half way, running it
+again carries on: what's done stays done, and nothing is redone without
+asking.
+
+## Switch-over checklist (per Pi)
+
+Each Pi moves from the old Hyperwheel (uploading to Flywheel) to this one on a
+freshly flashed card. The SOP will give each step with pictures. So far:
+
+1. Before the card is wiped: the old Flywheel backlog has finished (or is
+   copied off), and the site's scanner logins are noted for its site file.
+2. Flash the card, run `hyperwheel setup`, and store each project's key with
+   `hyperwheel keys set`.
+3. **Check each scanner's DICOM destination** in the scanner's settings: IP
+   address 10.42.0.88, port 4242, AE title HYPERWHEEL. The Pi is always
+   10.42.0.88 on the scanner cable, so a scanner sending anywhere else is
+   changed to it.
+4. Send a test exam and check it on GRIP and on the Upload Monitor.
 
 ## GRIP keys (SOP outline)
 

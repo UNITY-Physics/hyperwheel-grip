@@ -12,6 +12,11 @@ keys_dir = "/etc/hyperwheel/keys"
 # Patient ID the site uses for phantom scans. Leave out to skip the phantom check.
 # phantom_patient_id = "PH-0001"
 
+# Set on the Pi by hyperwheel setup: times on the Upload Monitor are local, and the
+# hotspot uses the channels allowed in this country.
+# time_zone = "Europe/London"
+# wifi_country = "GB"
+
 [upload]
 chunk_bytes = 8388608        # 8 MiB raw-file chunks (GRIP's limit is 64 MiB)
 min_chunk_bytes = 262144     # chunks halve down to 256 KiB on a link that can't carry them
@@ -25,7 +30,7 @@ margin_minutes = 60
 watch_days = 7
 
 [scanner]
-host = "10.42.0.1"           # set at install from the network found (older scanner software: 10.0.0.41)
+host = "10.42.0.1"           # every scanner (the Pi is 10.42.0.88 on the scanner cable)
 port = 25125
 username = "rrdf"
 known_hosts = "/etc/hyperwheel/scanner_known_hosts"  # optional: keys taken as already seen

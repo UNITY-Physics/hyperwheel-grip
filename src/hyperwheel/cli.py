@@ -30,13 +30,16 @@ DATA_MANAGER = (
     ("scanner password", "Set the scanner's raw-data password (asks your password)"),
     ("update status", "Which version is running, and is an update waiting"),
 )
+# Shown only until the Pi is set up (the sudo rule allows it only until then, without a password).
+SETUP = ("setup", "Set up this Pi for its site (only until it is set up)")
 ADMIN = (
     ("update now", "Look for an update now, and install it once the Pi is idle"),
     ("update hold", "Keep this Pi on its version until the hold is released"),
     ("update release-hold", "Let this Pi take updates again"),
 )
 
-COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "run", "dashboard"}  # run, dashboard: services
+# run and dashboard are the services
+COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "setup", "run", "dashboard"}
 KEYS_ACTIONS = {"list", "set"}
 SCANNER_ACTIONS = {"password"}
 UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status"}
@@ -53,14 +56,23 @@ def is_admin() -> bool:
     return gid == os.getgid() or gid in os.getgroups()
 
 
-def help_text(admin: bool) -> str:
-    rows = [*DATA_MANAGER, *(ADMIN if admin else ())]
+def setup_pending(etc: str = "/etc/hyperwheel") -> bool:
+    """Whether this Pi still waits for ``hyperwheel setup``."""
+    from pathlib import Path
+
+    from .installer import is_set_up
+    return Path("/opt/hyperwheel/current").exists() and not is_set_up(Path(etc))
+
+
+def help_text(admin: bool, setup: bool = False) -> str:
+    mine = [SETUP, *DATA_MANAGER] if setup else list(DATA_MANAGER)
+    rows = [*mine, *(ADMIN if admin else ())]
     width = max(len(f"hyperwheel {words}") for words, _ in rows) + 3
 
     def line(words: str, what: str) -> str:
         return f"  {f'hyperwheel {words}':<{width}}{what}"
 
-    out = ["What you can do on this Pi:", *(line(w, t) for w, t in DATA_MANAGER)]
+    out = ["What you can do on this Pi:", *(line(w, t) for w, t in mine)]
     if admin:
         out += ["", "Admin commands:", *(line(w, t) for w, t in ADMIN)]
     out += ["", "Type them just as shown. Hyperwheel asks for your password when it needs it."]
@@ -99,7 +111,7 @@ def needs_root(argv: Sequence[str]) -> bool:
     (started by systemd under their own account), and ``update status`` reads only public files."""
     if not argv or "-h" in argv or "--help" in argv:
         return False
-    if argv[0] in ("status", "doctor", "keys", "scanner"):
+    if argv[0] in ("status", "doctor", "keys", "scanner", "setup"):
         return True
     return argv[0] == "update" and argv[1:2] != ["status"]
 

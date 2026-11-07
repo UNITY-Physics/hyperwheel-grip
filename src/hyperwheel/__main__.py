@@ -1,5 +1,5 @@
-"""Command line: ``hyperwheel help``, ``status``, ``doctor``, ``keys``, ``scanner``, ``update``, and the services' ``run``
-and ``dashboard``. See ``cli`` for the help and for how root commands go through sudo."""
+"""Command line: ``hyperwheel help``, ``status``, ``doctor``, ``keys``, ``scanner``, ``update``, ``setup``, and the
+services' ``run`` and ``dashboard``. See ``cli`` for the help and for how root commands go through sudo."""
 
 from __future__ import annotations
 
@@ -23,16 +23,19 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str]) -> int:
     if not argv or argv[0] in ("help", "-h", "--help"):
-        print(cli.help_text(cli.is_admin()))
+        print(cli.help_text(cli.is_admin(), cli.setup_pending()))
         return 0
     wrong = cli.problem(argv)
     if wrong:
         print(wrong)
         print()
-        print(cli.help_text(cli.is_admin()))
+        print(cli.help_text(cli.is_admin(), cli.setup_pending()))
         return 2
     if cli.needs_root(argv) and os.geteuid() != 0:
         return cli.run_as_root(argv)
+    if argv[:1] == ["setup"]:  # runs as root, before there are site settings to read
+        from . import sitesetup
+        return sitesetup.main(argv[1:])
     if argv[:1] == ["update"]:  # runs as root, also on a Pi that isn't set up yet
         from . import updater
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)

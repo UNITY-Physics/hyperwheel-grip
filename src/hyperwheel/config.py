@@ -2,8 +2,10 @@
 
 Two files, both site-specific and both kept outside the release:
 
-- ``site.toml``: paths, upload settings, the raw-data rule, disk limits and
-  the site's phantom Patient ID.
+- ``site.toml``: paths, upload settings, the raw-data rule, disk limits, the
+  site's phantom Patient ID, time zone and Wi-Fi country.
+
+Both are written by ``hyperwheel setup`` from the site file (see ``sitesetup``).
 - ``routing.toml``: scanner login -> GRIP project, with that project's API
   address and token URL. Keys are not in here; they live in the key store
   (see ``keys.py``).
@@ -70,7 +72,7 @@ class RrdfSettings:
 
 @dataclass(frozen=True)
 class ScannerSettings:
-    # Set at install from the scanner network the Pi finds (10.42.0.1 or 10.0.0.41).
+    # Every scanner is on 10.42.0.1 (the Pi is 10.42.0.88 on the scanner cable).
     host: str = ""
     port: int = 25125
     username: str = "rrdf"
@@ -121,6 +123,9 @@ class SiteConfig:
     state_db: Path
     keys_dir: Path
     phantom_patient_id: str | None = None
+    # The site's time zone (e.g. "Africa/Nairobi") and Wi-Fi country (e.g. "KE"), set on the Pi by setup.
+    time_zone: str | None = None
+    wifi_country: str | None = None
     # Allows http:// API addresses on this machine only (a local fake GRIP).
     test_mode: bool = False
     upload: UploadSettings = field(default_factory=UploadSettings)
@@ -223,6 +228,12 @@ def load_site(path: Path) -> SiteConfig:
     phantom = data.get("phantom_patient_id")
     if phantom is not None and (not isinstance(phantom, str) or not phantom.strip()):
         raise ConfigError(f"{where}: phantom_patient_id must be a non-empty string, or left out")
+    time_zone = data.get("time_zone")
+    if time_zone is not None and not is_time_zone_name(time_zone):
+        raise ConfigError(f"{where}: time_zone must be a name such as \"Europe/London\", or left out")
+    country = data.get("wifi_country")
+    if country is not None and not (isinstance(country, str) and re.fullmatch(r"[A-Z]{2}", country)):
+        raise ConfigError(f"{where}: wifi_country must be a two-letter country code such as \"GB\", or left out")
     test_mode = data.get("test_mode", False)
     if not isinstance(test_mode, bool):
         raise ConfigError(f"{where}: test_mode must be true or false")
@@ -233,6 +244,8 @@ def load_site(path: Path) -> SiteConfig:
         state_db=Path(data["state_db"]),
         keys_dir=Path(data["keys_dir"]),
         phantom_patient_id=phantom,
+        time_zone=time_zone,
+        wifi_country=country,
         test_mode=test_mode,
         upload=upload,
         rrdf=rrdf,
@@ -243,6 +256,12 @@ def load_site(path: Path) -> SiteConfig:
         updates=UpdateSettings(updates.channel, check_url(updates.url, f"{where} [updates].url",
                                                           test_mode=test_mode)),
     )
+
+
+def is_time_zone_name(value: object) -> bool:
+    """Looks like a tz database name ("Europe/London", "UTC"). Whether this Pi knows it is checked at setup."""
+    return isinstance(value, str) and len(value) <= 64 and bool(
+        re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9][A-Za-z0-9_+-]*)*", value))
 
 
 def check_url(url: object, where: str, *, test_mode: bool) -> str:

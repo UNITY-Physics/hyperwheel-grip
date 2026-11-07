@@ -1,7 +1,7 @@
 """Wording rules for everything a data manager or operator sees (messages, flags, the Upload Monitor, logs).
 
 Every string in the source is checked except docstrings and the few that aren't words for people:
-HTTP headers, the page's style and script, and the state database's SQL.
+HTTP headers, the page's style and script, the state database's SQL and NetworkManager's files.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ NOT_FOR_PEOPLE = (
     re.compile(r'^\s*"use strict";'),  # the page's script
     re.compile(r"^\s*(CREATE|ALTER) TABLE ", re.M),  # the state database's schema
     re.compile(r"^;$"),  # splitting that schema into statements
+    re.compile(r"^\[connection\]\n"),  # NetworkManager connection files
 )
 
 
