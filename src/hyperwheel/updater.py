@@ -174,6 +174,9 @@ class Updater:
     run: Callable[[Sequence[str]], int] = run_logged
     clock: Callable[[], float] = time.time
     sleep: Callable[[float], None] = time.sleep
+    # The admin password and setup's last step (see adminpw), every check, on hold or not.
+    # Returns what happened, in one line. None: not done here (tests of releases only).
+    admin: Callable[[], str] | None = None
 
     # ---- the whole check ----------------------------------------------------------------
 
@@ -186,12 +189,23 @@ class Updater:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return "another update check is already running"
+            admin = self._admin()
             try:
                 result = self._check(now)
             except UpdateError as e:
                 result = f"no update: {e}"
-            self._status(result)
+            self._status(result, admin)
             return result
+
+    def _admin(self) -> str | None:
+        if self.admin is None:
+            return None
+        try:
+            line = self.admin()
+        except Exception as e:  # noqa: BLE001 - never stops the release check
+            line = f"admin password: not checked: {e}"
+        log.info("%s", line)
+        return line
 
     def _check(self, now: bool) -> str:
         current = self.current_version()
@@ -420,12 +434,14 @@ class Updater:
         failed[version] = why
         _write(self.paths.failed, json.dumps(failed, indent=2, sort_keys=True) + "\n")
 
-    def _status(self, result: str) -> None:
+    def _status(self, result: str, admin: str | None = None) -> None:
         log.info("Update check: %s", result)
-        _write(self.paths.status, json.dumps({
-            "checked_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.clock())),
-            "channel": self.channel, "current": self.current_version(), "held": self.paths.hold.exists(),
-            "result": result}, indent=2) + "\n")
+        status = {"checked_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.clock())),
+                  "channel": self.channel, "current": self.current_version(), "held": self.paths.hold.exists(),
+                  "result": result}
+        if admin is not None:
+            status["admin"] = admin
+        _write(self.paths.status, json.dumps(status, indent=2) + "\n")
 
     def _prune_releases(self) -> None:
         keep = {Path(os.readlink(p)).name for p in (self.paths.layout.current, self.paths.layout.previous)
@@ -587,6 +603,27 @@ class LivePi(Pi):
 
 # ---- command line -----------------------------------------------------------------------
 
+def admin_check(layout: Layout, base_url: str) -> str:
+    """Take a new admin password, then finish setup if it was waiting for one."""
+    from .adminpw import AdminError, AdminPassword
+    from .sitesetup import finish_waiting_setup
+    try:
+        line = AdminPassword(base_url, layout).check()
+    except AdminError as e:
+        line = f"admin password: not taken: {e}"
+    lines: list[str] = []
+    if finish_waiting_setup(layout, say=lambda text: lines.append(text) if text.strip() else None):
+        for text in lines:
+            log.info("Setup: %s", text)
+        line += ". Setup's last step is done: password-free sudo is gone"
+    return line
+
+
+def cli_is_admin() -> bool:
+    from .cli import is_admin
+    return is_admin()
+
+
 def start_service() -> None:
     """Run one check in hyperwheel-update.service and wait for it to finish."""
     subprocess.run(["systemctl", "start", "hyperwheel-update.service"], capture_output=True)
@@ -613,6 +650,8 @@ def main(argv: list[str], paths: Paths | None = None) -> int:
         current = Updater(paths, "", "", Pi()).current_version()
         print(f"Release: {current or 'none'}" + (" (on hold)" if paths.hold.exists() else ""))
         print(f"Last check: {s.get('checked_at', '-')}, channel {s.get('channel', '-')}: {s['result']}")
+        if s.get("admin") and cli_is_admin():
+            print(f"{s['admin'][:1].upper()}{s['admin'][1:]}")
         return 0
     if os.geteuid() != 0 and paths.layout.root == Path("/"):
         print(f"'hyperwheel update {args.action}' needs administrator rights. Run it as root.", file=sys.stderr)
@@ -659,6 +698,7 @@ def main(argv: list[str], paths: Paths | None = None) -> int:
             pass
         paths.request.unlink(missing_ok=True)
         now = True
-    result = Updater(paths, settings.channel, url.rstrip("/"), pi).check(now=now)
+    result = Updater(paths, settings.channel, url.rstrip("/"), pi,
+                     admin=lambda: admin_check(paths.layout, url.rstrip("/"))).check(now=now)
     print(result)
     return 1 if result.startswith(("ALERT", "rolled back")) else 0

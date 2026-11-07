@@ -4,6 +4,9 @@
     .venv/bin/python tools/release/publish.py channel-file --channel dev dist/releases/hyperwheel-<v>-arm64.tar
     ssh-keygen -Y sign -f ~/.ssh/hyperwheel-release -n hyperwheel-release dist/channels/dev/channel.json
     .venv/bin/python tools/release/publish.py channel dist/channels/dev [--dry-run]
+    .venv/bin/python tools/release/publish.py admin-file
+    ssh-keygen -Y sign -f ~/.ssh/hyperwheel-release -n hyperwheel-release dist/admin/admin.json
+    .venv/bin/python tools/release/publish.py admin dist/admin [--dry-run]
 
 release:      checks the signed tar the way a Pi will (signature, every file), then creates the
               GitHub release v<version> with the tar, its manifest and the manifest's signature.
@@ -11,6 +14,11 @@ channel-file: writes dist/channels/<channel>/channel.json for that release, to b
 channel:      checks the signed channel file, and that the release it names is published with the
               same tar checksum, then puts it on the GitHub release channel-<name> (replacing the
               channel's previous file). That is the promotion: Pis on that channel move to it.
+admin-file:   makes a new admin password (the same on every Pi): shows readable ones until you
+              take one, asks you to type it back, then writes only its hash to dist/admin/admin.json,
+              to be signed. The password is shown once and never written anywhere.
+admin:        checks the signed admin file and puts it on the GitHub release admin-password
+              (replacing the one before). Every Pi takes it at its next update check.
 
 Uses the gh CLI as whoever is logged in; no secrets are read or written here.
 """
@@ -28,8 +36,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from hyperwheel.release import (CHANNEL_FILE, CHANNEL_SIGNATURE, CHANNELS, MANIFEST, SIGNATURE, Channel,  # noqa: E402
-                                ReleaseError, sha256_file, verify_channel, verify_release)
+from hyperwheel import passwords  # noqa: E402
+from hyperwheel.release import (ADMIN_FILE, ADMIN_SIGNATURE, ADMIN_TAG, CHANNEL_FILE,  # noqa: E402
+                                CHANNEL_SIGNATURE, CHANNELS, MANIFEST, SIGNATURE, AdminFile, Channel, ReleaseError,
+                                parse_admin, sha256_file, verify_admin, verify_channel, verify_release)
 
 GITHUB = "UNITY-Physics/hyperwheel-grip"
 SIGNERS = REPO / "release" / "allowed_signers"
@@ -138,6 +148,80 @@ def cmd_channel(args) -> int:
     return 0
 
 
+CLEAR_SCREEN = "\x1b[H\x1b[2J\x1b[3J"
+
+
+def published_admin() -> AdminFile | None:
+    """The admin file now on GitHub (its signature isn't checked here: only its serial is used)."""
+    found = subprocess.run(["gh", "release", "download", ADMIN_TAG, "-p", ADMIN_FILE, "-O", "-", "-R", GITHUB],
+                           capture_output=True, text=True)
+    if found.returncode != 0:
+        return None
+    try:
+        return parse_admin(found.stdout)
+    except ReleaseError:
+        return None
+
+
+def cmd_admin_file(args, ask=input, say=print, published=published_admin) -> int:
+    say("A new admin password, the same on every Pi. Only its hash leaves this Mac.")
+    while True:
+        password = passwords.readable()
+        say("")
+        say(f"    {password}")
+        say("")
+        if ask("Use this one? Type yes to use it, or press Enter for another: ").strip().lower() == "yes":
+            break
+    say("Save it in your password manager now. It's shown only this once.")
+    for _ in range(5):
+        if passwords.same(ask("Type it back to check you have it: "), password):
+            break
+        say(f"That isn't it. Here it is again:    {password}")
+    else:
+        return fail("the password wasn't typed back, so nothing was written")
+    say(CLEAR_SCREEN)
+    say("Typed back correctly. The screen was cleared so the password isn't left on it.")
+    say(f"Hashing it ({passwords.ROUNDS:,} rounds of SHA-512) ...")
+    hashed = passwords.sha512_crypt(password, rounds=passwords.ROUNDS)
+    if not passwords.matches(password, hashed):
+        return fail("the hash didn't check out against the password")
+    before = published()
+    serial = before.serial + 1 if before else 1
+    out = args.out
+    out.mkdir(parents=True, exist_ok=True)
+    admin = AdminFile(serial, hashed, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    (out / ADMIN_FILE).write_text(admin.to_json())
+    (out / ADMIN_SIGNATURE).unlink(missing_ok=True)
+    say(f"Wrote {out / ADMIN_FILE}: version {serial} of the admin password (the hash only). Next, sign it:")
+    say(f"  ssh-keygen -Y sign -f ~/.ssh/hyperwheel-release -n hyperwheel-release {out / ADMIN_FILE}")
+    say(f"Then: .venv/bin/python tools/release/publish.py admin {out}")
+    return 0
+
+
+def cmd_admin(args, published=published_admin) -> int:
+    try:
+        admin, signer = verify_admin(args.folder, args.signers)
+    except ReleaseError as e:
+        return fail(str(e))
+    before = None if args.dry_run else published()
+    if before and admin.serial <= before.serial:
+        return fail(f"this is version {admin.serial}, and version {before.serial} is already published. Make a new "
+                    "one with: publish.py admin-file")
+    if not args.dry_run:
+        exists = subprocess.run(["gh", "release", "view", ADMIN_TAG, "-R", GITHUB], capture_output=True).returncode == 0
+    else:
+        exists = True
+    if not exists:
+        gh(["release", "create", ADMIN_TAG, "--title", "Admin password (hash only)",
+            "--notes", "The signed hash of the admin password, the same on every Pi. Every Pi takes it at its next "
+                       "update check.", "--target", "main", "--latest=false"], args.dry_run)
+    gh(["release", "upload", ADMIN_TAG, str(args.folder / ADMIN_FILE), str(args.folder / ADMIN_SIGNATURE),
+        "--clobber"], args.dry_run)
+    print(f"Admin password version {admin.serial} published (signed by {signer}). Every Pi takes it at its next "
+          "update check." if not args.dry_run else "Dry run done.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--signers", type=Path, default=SIGNERS, help=argparse.SUPPRESS)
@@ -153,8 +237,14 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("channel")
     c.add_argument("folder", type=Path)
     c.add_argument("--dry-run", action="store_true")
+    af = sub.add_parser("admin-file")
+    af.add_argument("--out", type=Path, default=REPO / "dist" / "admin")
+    a = sub.add_parser("admin")
+    a.add_argument("folder", type=Path)
+    a.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
-    return {"release": cmd_release, "channel-file": cmd_channel_file, "channel": cmd_channel}[args.command](args)
+    return {"release": cmd_release, "channel-file": cmd_channel_file, "channel": cmd_channel,
+            "admin-file": cmd_admin_file, "admin": cmd_admin}[args.command](args)
 
 
 if __name__ == "__main__":

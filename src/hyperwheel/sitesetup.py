@@ -26,13 +26,15 @@ refuses to run once the Pi is set up. The steps:
 6. **The datamanager password**, generated (``passwords``), shown once, and
    set only once it has been typed back. It is never written to a file or a
    log, only to the system's password hashes.
-7. **The admin account**, in the sudo group. Its password isn't set here: it
-   is the same on every Pi and arrives as a hash through the signed update
-   channel.
+7. **The admin account**, in the sudo group. Its password is the same on
+   every Pi and arrives as a hash in a signed file (``adminpw``). Setup fetches
+   it straight away, so step 8 can finish while the admin is still connected.
 8. **Password-free sudo removed** (Raspberry Pi OS's ``010_pi-nopasswd``) and
    datamanager taken out of the sudo group, but only once another account can
    still become root with a password. Then the Pi is marked set up, and the
-   data-manager sudo rule loses its setup line.
+   data-manager sudo rule loses its setup line. If the admin password couldn't
+   be fetched, the updater finishes this step by itself once it arrives
+   (``finish_waiting_setup``).
 
 Then Hyperwheel starts, and setup offers to restart the Pi. Every step can be
 run again: stopping half way and running setup again carries on, and nothing
@@ -55,6 +57,8 @@ from datetime import datetime
 from pathlib import Path
 
 from . import passwords, reach, scannercmd
+from .accounts import ADMIN_GROUP, Accounts
+from .adminpw import AdminError, AdminPassword
 from .config import ConfigError, Routing, SiteConfig, is_time_zone_name, load_routing, load_site
 from .installer import (DATA_MANAGER, SETUP_DONE, SETUP_PROGRESS, InstallError, Layout, is_set_up,
                         write_sudo_rule)
@@ -62,7 +66,6 @@ from .keyscmd import Console
 from .rawpull import LoginRefused, ScannerError
 
 ADMIN = "admin"
-ADMIN_GROUP = "sudo"
 SCANNER_HOST = "10.42.0.1"
 PI_ON_CABLE = "10.42.0.88/24"
 HOTSPOT_SSID = "Hyperwheel"
@@ -279,49 +282,6 @@ method=disabled
 """
 
 
-# ---- accounts --------------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Accounts:
-    """Read from the system's account files (under the layout's root)."""
-    users: dict[str, int]  # name -> primary group ID
-    groups: dict[str, tuple[int, set[str]]]  # name -> (ID, members)
-    hashes: dict[str, str]
-
-    @classmethod
-    def read(cls, layout: Layout) -> Accounts:
-        def rows(name: str) -> list[list[str]]:
-            try:
-                return [line.split(":") for line in layout.p(f"/etc/{name}").read_text().splitlines()
-                        if line and not line.startswith("#")]
-            except FileNotFoundError:
-                return []
-        users = {r[0]: int(r[3]) for r in rows("passwd") if len(r) >= 4 and r[3].isdigit()}
-        groups = {r[0]: (int(r[2]), {m for m in r[3].split(",") if m}) for r in rows("group")
-                  if len(r) >= 4 and r[2].isdigit()}
-        hashes = {r[0]: r[1] for r in rows("shadow") if len(r) >= 2}
-        return cls(users, groups, hashes)
-
-    def exists(self, user: str) -> bool:
-        return user in self.users
-
-    def in_group(self, user: str, group: str) -> bool:
-        if group not in self.groups or user not in self.users:
-            return False
-        gid, members = self.groups[group]
-        return user in members or self.users[user] == gid
-
-    def has_password(self, user: str) -> bool:
-        """A password someone can log in with: not empty, not locked ("!", "*")."""
-        h = self.hashes.get(user, "")
-        return bool(h) and not h.startswith(("!", "*")) and h != "x"
-
-    def admins_with_password(self, besides: str) -> list[str]:
-        return sorted(u for u in self.users if u != besides and self.in_group(u, ADMIN_GROUP)
-                      and self.has_password(u))
-
-
 # ---- running it ------------------------------------------------------------------------------------
 
 
@@ -345,13 +305,17 @@ class Setup:
     try_password: Callable[[SiteConfig, str], int] = scannercmd.try_on_scanner
     unreachable: Callable[[SiteConfig], str] = scannercmd.why_unreachable
     new_password: Callable[[], str] = passwords.readable
-    chown: Callable[[Path], None] = field(default=lambda path: os.chown(path, 0, 0))
+    chown: Callable[[Path], None] = field(default=lambda path: os.chown(path, 0, 0) if os.geteuid() == 0 else None)
+    # Fetch and set the admin password now (see adminpw). Returns what happened, raises AdminError.
+    admin_password: Callable[[SiteConfig], str] | None = None
     clock: Callable[[], float] = time.time
     zoneinfo: Path | None = None
 
     def __post_init__(self):
         if self.zoneinfo is None:
             self.zoneinfo = self.layout.p("/usr/share/zoneinfo")
+        if self.admin_password is None:
+            self.admin_password = lambda site: AdminPassword(site.updates.url, self.layout).check()
 
     @property
     def etc(self) -> Path:
@@ -383,7 +347,7 @@ class Setup:
         self.hotspot()
         self.scanner_password(site)
         self.datamanager()
-        self.admin_account()
+        self.admin_account(site)
         done = self.lock_down()
         self.start_hyperwheel()
         return self.finish(site, done)
@@ -657,7 +621,7 @@ class Setup:
 
     # ---- 7. the admin account ----
 
-    def admin_account(self) -> None:
+    def admin_account(self, site: SiteConfig) -> None:
         self.step(7, f"the {ADMIN} account")
         accounts = Accounts.read(self.layout)
         if not accounts.exists(ADMIN):
@@ -669,11 +633,16 @@ class Setup:
             self.say(f"Account {ADMIN}: added to the {ADMIN_GROUP} group.")
         else:
             self.say(f"Account {ADMIN}: already there.")
+        self.progress("admin_account_at")
+        self.say(f"Getting the {ADMIN} password (the same on every Pi) from the update channel ...")
+        try:
+            self.say(self.admin_password(site))
+        except AdminError as e:
+            self.say(f"It couldn't be fetched now: {e}.")
         if Accounts.read(self.layout).has_password(ADMIN):
             self.say(f"{ADMIN} has its password.")
         else:
-            self.say(f"{ADMIN} has no password yet. It's the same on every Pi and arrives through the signed "
-                     "update channel.")
+            self.say(f"{ADMIN} has no password yet. The Pi fetches it again at each update check (every 6 hours).")
 
     # ---- 8. password-free sudo removed ----
 
@@ -684,7 +653,8 @@ class Setup:
         if not others:
             self.say(f"Not yet: no account other than {DATA_MANAGER} can become root with a password ({ADMIN} has no "
                      f"password yet). So {DATA_MANAGER} keeps its administrator rights for now, and password-free "
-                     f"sudo stays. Run hyperwheel setup again once {ADMIN} has its password.")
+                     f"sudo stays. The Pi finishes this step by itself once {ADMIN}'s password arrives, at an update "
+                     "check.")
             return False
         if accounts.in_group(DATA_MANAGER, ADMIN_GROUP):
             self.run(["gpasswd", "--delete", DATA_MANAGER, ADMIN_GROUP])
@@ -740,6 +710,23 @@ class Setup:
         else:
             self.say("Not restarted. Restart it before the first scan.")
         return 0 if done else 3
+
+
+def finish_waiting_setup(layout: Layout, run: Callable[..., str] = run_command,
+                         say: Callable[[str], None] = print) -> bool:
+    """Setup's last step, run by the updater: when setup got as far as the admin account and stopped only
+    because no other account could become root with a password, finish it once one can. True if it did."""
+    if is_set_up(layout.etc) or not (layout.etc / SETUP_PROGRESS).exists():
+        return False
+    try:
+        if "admin_account_at" not in json.loads((layout.etc / SETUP_PROGRESS).read_text()):
+            return False
+    except (OSError, ValueError, TypeError):
+        return False
+    if not Accounts.read(layout).admins_with_password(besides=DATA_MANAGER):
+        return False
+    setup = Setup(layout=layout, console=Console(say=say), run=run, admin_password=lambda site: "")
+    return setup.lock_down()
 
 
 def main(args: list[str], *, is_root: Callable[[], bool] = lambda: os.geteuid() == 0) -> int:

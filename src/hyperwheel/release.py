@@ -130,7 +130,7 @@ def parse_manifest(text: str) -> Manifest:
     return Manifest(version, channel, built_at, min_image, dict(flags), dict(components), tuple(files))
 
 
-def verify_signature(data: Path, signature: Path, allowed_signers: Path) -> str:
+def verify_signature(data: Path, signature: Path, allowed_signers: Path, namespace: str = NAMESPACE) -> str:
     """Check an OpenSSH signature over a file; returns the signer's name. Raises ReleaseError."""
     for p in (data, signature, allowed_signers):
         if not p.is_file():
@@ -142,9 +142,9 @@ def verify_signature(data: Path, signature: Path, allowed_signers: Path) -> str:
         raise ReleaseError("the signature is not by an allowed signer")
     with open(data, "rb") as fh:
         checked = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", str(allowed_signers), "-I", principals[0],
-                                  "-n", NAMESPACE, "-s", str(signature)], stdin=fh, capture_output=True, timeout=30)
+                                  "-n", namespace, "-s", str(signature)], stdin=fh, capture_output=True, timeout=30)
     if checked.returncode != 0:
-        raise ReleaseError("the signature does not match the manifest (or is not for Hyperwheel releases)")
+        raise ReleaseError(f"the signature does not match {data.name} (or is not signed as {namespace})")
     return principals[0]
 
 
@@ -241,6 +241,59 @@ def verify_channel(folder: Path, allowed_signers: Path, expected: str | None = N
     if expected is not None and channel.channel != expected:
         raise ReleaseError(f"this is the {channel.channel} channel's file, not {expected}'s")
     return channel, signer
+
+
+# ---- the admin password file ----------------------------------------------------------
+#
+# The admin password is the same on every Pi. Only its hash is published, in one file
+# that every channel reads: ``admin.json`` + ``admin.json.sig`` on the GitHub release
+# tagged ``admin-password``. It is signed like a manifest (same namespace, same allowed
+# signers: each Pi's list allows the release key for that namespace only). Its "name"
+# field, checked here, keeps a signed manifest or channel file from passing for it.
+# Its serial only goes up: a Pi never takes a file older than the one it has.
+
+ADMIN_FILE = "admin.json"
+ADMIN_SIGNATURE = "admin.json.sig"
+ADMIN_TAG = "admin-password"
+ADMIN_USER = "admin"
+_ADMIN_HASH = re.compile(r"\$6\$rounds=\d{4,9}\$[./0-9A-Za-z]{8,16}\$[./0-9A-Za-z]{86}")
+
+
+@dataclass(frozen=True)
+class AdminFile:
+    serial: int
+    hash: str
+    published_at: str
+
+    def to_json(self) -> str:
+        return json.dumps({"format": FORMAT, "name": "hyperwheel-admin", "user": ADMIN_USER, "serial": self.serial,
+                           "hash": self.hash, "published_at": self.published_at}, indent=2, sort_keys=True) + "\n"
+
+
+def parse_admin(text: str) -> AdminFile:
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ReleaseError("the admin password file is not valid JSON") from None
+    if not isinstance(data, dict) or data.get("format") != FORMAT or data.get("name") != "hyperwheel-admin":
+        raise ReleaseError(f"not a Hyperwheel admin password file of format {FORMAT}")
+    if data.get("user") != ADMIN_USER:
+        raise ReleaseError(f"the admin password file is for {data.get('user')!r}, not {ADMIN_USER}")
+    serial = data.get("serial")
+    if not isinstance(serial, int) or isinstance(serial, bool) or serial < 1:
+        raise ReleaseError("the admin password file needs a serial of 1 or more")
+    hashed = data.get("hash")
+    if not isinstance(hashed, str) or not _ADMIN_HASH.fullmatch(hashed):
+        raise ReleaseError("the admin password file's hash isn't a SHA-512 crypt hash with rounds")
+    published = data.get("published_at") if isinstance(data.get("published_at"), str) else ""
+    return AdminFile(serial, hashed, published)
+
+
+def verify_admin(folder: Path, allowed_signers: Path) -> tuple[AdminFile, str]:
+    """Check a downloaded admin password file and its signature; returns it and who signed it."""
+    folder = Path(folder)
+    signer = verify_signature(folder / ADMIN_FILE, folder / ADMIN_SIGNATURE, allowed_signers)
+    return parse_admin((folder / ADMIN_FILE).read_text()), signer
 
 
 def main(argv: list[str] | None = None) -> int:

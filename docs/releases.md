@@ -144,17 +144,46 @@ up, setup refuses to run, and the sudo rule no longer lists it.
    `hyperwheel scanner password` does. It can be skipped and set later.
 6. **The datamanager password**, generated, shown once, and set only after it
    has been typed back. Then the screen is cleared.
-7. **The admin account**, in the `sudo` group, with its password from the
-   update channel.
+7. **The admin account**, in the `sudo` group. Setup fetches the admin
+   password file (below) straight away and sets its hash.
 8. **Password-free sudo removed** (Raspberry Pi OS's `010_pi-nopasswd`) and
    `datamanager` taken out of the `sudo` group, but only once another account
-   can still become root with a password. Until then setup says so and the
-   Pi isn't marked set up.
+   can still become root with a password. If the admin password couldn't be
+   fetched, setup says so, and the updater finishes this step by itself once
+   it arrives, at an update check.
 
 Then Hyperwheel starts, and setup offers to restart the Pi, which the scanner
 cable address and the Wi-Fi country need. If setup stops half way, running it
 again carries on: what's done stays done, and nothing is redone without
 asking.
+
+## The admin password
+
+The `admin` password is the same on every Pi. Only its hash leaves the release
+signer's Mac, in one signed file that every channel reads: `admin.json` and its
+signature on the GitHub release `admin-password`. Publishing a release never
+touches it, and changing the password is one new file and one signature.
+
+```
+.venv/bin/python tools/release/publish.py admin-file
+ssh-keygen -Y sign -f ~/.ssh/hyperwheel-release -n hyperwheel-release dist/admin/admin.json
+.venv/bin/python tools/release/publish.py admin dist/admin
+```
+
+- `admin-file` shows generated passwords (three five-letter chunks) until one
+  is taken, asks for it to be typed back, clears the screen, and writes only
+  its hash. The password is never written anywhere: keep it in the password
+  manager.
+- The hash is SHA-512 crypt (`$6$`) with a random salt and 1,000,000 rounds:
+  about 0.6 s per admin login on a Pi, and very slow to guess from the
+  published hash.
+- The file is signed like a release (same key and namespace). Its own type
+  field keeps a signed manifest or channel file from passing for it.
+- Its version only goes up. A Pi never takes a file older than the one it
+  has, so an old password can't come back.
+- Each Pi checks for it at every update check (every 6 hours, on hold or
+  not, and with `hyperwheel update now`) and sets it with `chpasswd -e`.
+  `hyperwheel update status`, typed by admin, shows which version it has.
 
 ## Switch-over checklist (per Pi)
 
