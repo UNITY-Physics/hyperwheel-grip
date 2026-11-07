@@ -369,3 +369,12 @@ def test_typing_back_ignores_case_and_spaces_around_the_dashes():
     assert passwords.same(" Borak - kefim-TUMOS ", "borak-kefim-tumos")
     assert not passwords.same("borak-kefim-tumo", "borak-kefim-tumos")
     assert not passwords.same("bórak-kefim-tumos", "borak-kefim-tumos")
+
+
+def test_a_missing_system_command_stops_setup_with_one_plain_line():
+    from hyperwheel.sitesetup import run_command
+    with pytest.raises(SetupError, match="no-such-command-here isn't on this Pi"):
+        run_command(["no-such-command-here", "x"])
+    with pytest.raises(SetupError) as e:
+        run_command(["sh", "-c", "exit 3"], input="datamanager:not-shown\n")
+    assert "not-shown" not in str(e.value) and "exit 3" in str(e.value)

@@ -327,7 +327,10 @@ class Accounts:
 
 def run_command(cmd: Sequence[str], input: str | None = None) -> str:
     """Run a system command. What goes to its stdin (a password) is never in the error message."""
-    out = subprocess.run(list(cmd), input=input, capture_output=True, text=True)
+    try:
+        out = subprocess.run(list(cmd), input=input, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise SetupError(f"{cmd[0]} isn't on this Pi") from None
     if out.returncode != 0:
         raise SetupError(f"{' '.join(cmd[:2])} didn't work (exit {out.returncode}): {out.stderr.strip()[-300:]}")
     return out.stdout
