@@ -185,10 +185,12 @@ class FakeScannerSsh(paramiko.ServerInterface):
         return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
     def check_channel_exec_request(self, channel, command):
+        # Paramiko sends the reply to this request after it returns, so the answer only ends with
+        # end-of-file: closing the channel here could beat the reply and fail the client's exec.
         def answer():
             channel.sendall(b"rrdf_20261027_132802/\n")
             channel.send_exit_status(0)
-            channel.close()
+            channel.shutdown_write()
         threading.Thread(target=answer, daemon=True).start()
         return True
 
