@@ -28,7 +28,7 @@ watch_days = 7
 host = "10.42.0.1"           # set at install from the network found (older scanner software: 10.0.0.41)
 port = 25125
 username = "rrdf"
-known_hosts = "/etc/hyperwheel/scanner_known_hosts"
+known_hosts = "/etc/hyperwheel/scanner_known_hosts"  # optional: keys taken as already seen
 interface = "eth0"           # the Pi's port on the scanner cable
 # The scanner password is in /etc/hyperwheel/scanner.json (root-only), never here.
 

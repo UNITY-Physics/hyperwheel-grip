@@ -49,9 +49,19 @@ separate read-only service (`hyperwheel dashboard`):
   DICOM is copied into the staging area unchanged and hashed, the checks run,
   and the study is ready to upload.
 - **Raw-data pull** (`rawpull.py`) reads the scanner's RRDF folders over SSH
-  (host key pinned at install) and applies the rule below. The scanner
-  doesn't offer SFTP, so it lists folders with `ls` and downloads with the
-  SCP protocol (`scp -f`), as the old pipeline did. It only reads.
+  and applies the rule below. The scanner doesn't offer SFTP, so it lists
+  folders with `ls` and downloads with the SCP protocol (`scp -f`), as the old
+  pipeline did. It only reads.
+- **Scanner keys** (`hostkeys.py`): a scanner SSH key the Pi hasn't seen is
+  accepted and remembered, never refused. The key changes when the scanner's
+  software is upgraded, and a site with two scanners and one Pi moves the Pi to
+  the other scanner when one breaks down; both must just work. The Pi keeps
+  every key it has seen, matched by fingerprint rather than address (both
+  scanners answer on the same address), so moving back and forth is quiet after
+  the first time. `hyperwheel status` and the Upload Monitor show a notice for
+  24 hours after a new key appears; the Pi's first scanner raises none. What
+  this gives up: a device plugged into the scanner cable could pose as the
+  scanner.
 - **Uploader** (`uploader.py`) sends staged files to GRIP.
 - **Upload Monitor** (`dashboard.py`) shows the state store on the hotspot.
 - **Reachability** (`reach.py`): each round the service checks whether the

@@ -340,12 +340,18 @@ class SshScanner:
     The scanner doesn't offer SFTP (it closes the connection when SFTP starts),
     so this does what the old pipeline did: run ``ls`` and ``scp -f`` on the
     scanner. Only reads; nothing on the scanner is changed. Folder and file names
-    are checked before they go into a command, and quoted. The host key must
-    already be known; the password is never logged.
+    are checked before they go into a command, and quoted. The password is never
+    logged.
+
+    Any host key is accepted (see hostkeys.py): ``host_key(host, key type, key
+    bytes)`` is called with the key the scanner presented, before the password
+    is sent. No keys are loaded into paramiko, which keeps only one key per
+    address and would refuse the second of two scanners on the same address.
     """
 
-    def __init__(self, host: str, port: int, username: str, password: Callable[[], str], known_hosts: Path,
-                 rrdf_dir: str = "RRDF", timeout_s: float = 20.0, sock=None):
+    def __init__(self, host: str, port: int, username: str, password: Callable[[], str],
+                 host_key: Callable[[str, str, bytes], None], rrdf_dir: str = "RRDF", timeout_s: float = 20.0,
+                 sock=None):
         import paramiko
 
         if not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", rrdf_dir) or ".." in rrdf_dir.split("/"):
@@ -354,9 +360,18 @@ class SshScanner:
         self.rrdf_dir = rrdf_dir
         self.timeout_s = timeout_s
         self._client = paramiko.SSHClient()
+
+        class Remember(paramiko.MissingHostKeyPolicy):
+            def missing_host_key(self, client, hostname, key):
+                try:
+                    host_key(hostname, key.get_name(), key.asbytes())
+                except Exception as e:  # e.g. the state database is busy: try again next round
+                    log.warning("scanner key could not be recorded (%s); not connecting this time",
+                                type(e).__name__)
+                    raise paramiko.SSHException("scanner key not recorded") from None
+
         try:
-            self._client.load_host_keys(str(known_hosts))
-            self._client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            self._client.set_missing_host_key_policy(Remember())
             self._client.connect(host, port=port, username=username, password=password(), look_for_keys=False,
                                  allow_agent=False, timeout=timeout_s, banner_timeout=timeout_s,
                                  auth_timeout=timeout_s, sock=sock)

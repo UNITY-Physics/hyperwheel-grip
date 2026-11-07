@@ -26,6 +26,7 @@ from .dashboard import HEARTBEAT, clock_synced
 from .keys import KeyStore, read_secret_json
 from .orthanc import Orthanc, OrthancClient, OrthancError
 from .organiser import Organiser
+from .hostkeys import HostKeyBook
 from .rawpull import RawPuller, ScannerFiles, SshScanner
 from .state import StateError, Store
 from .uploader import Uploader
@@ -46,7 +47,7 @@ class Service:
         self.site, self.routing, self.clock, self.synced = site, routing, clock, synced
         self.scanner_probe, self.internet_probe = scanner_probe, internet_probe
         self.orthanc_factory = orthanc or self._orthanc
-        self.scanner_factory = scanner or self._scanner
+        self.scanner_factory = scanner  # None: the real scanner over SSH
         self.keys = keys or KeyStore.for_process(site.keys_dir)
         self.local_every_s, self.upload_every_s = local_every_s, upload_every_s
         self.housekeeping_every_s = housekeeping_every_s
@@ -66,10 +67,10 @@ class Service:
         return OrthancClient(self.site.orthanc.url, auth=(login["username"], login["password"]),
                              timeout_s=self.site.orthanc.timeout_s)
 
-    def _scanner(self) -> ScannerFiles:
+    def _scanner(self, book: HostKeyBook) -> ScannerFiles:
         s = self.site.scanner
         return SshScanner(s.host, s.port, s.username, lambda: read_secret_json("scanner", ETC / "scanner.json")["password"],
-                          Path(s.known_hosts), s.rrdf_dir, s.timeout_s)
+                          book.seen, s.rrdf_dir, s.timeout_s)
 
     # ---- one round of each loop (also used by tests) -----------------------------------
 
@@ -98,7 +99,11 @@ class Service:
         store = Store(self.site.state_db, clock=self.clock)
         orthanc = self.orthanc_factory()
         organiser = Organiser(store, self.site, self.routing, orthanc, clock=self.clock)
-        puller = RawPuller(store, self.site, self.scanner_factory, clock=self.clock)
+        connect = self.scanner_factory
+        if connect is None:
+            book = HostKeyBook(store, Path(self.site.scanner.known_hosts), clock=self.clock)
+            connect = lambda: self._scanner(book)  # noqa: E731
+        puller = RawPuller(store, self.site, connect, clock=self.clock)
         self._loop("local", self.local_every_s, lambda: self.local_round(store, organiser, puller))
         store.close()
 

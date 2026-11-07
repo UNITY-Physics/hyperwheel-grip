@@ -75,7 +75,8 @@ class ScannerSettings:
     port: int = 25125
     username: str = "rrdf"
     rrdf_dir: str = "RRDF"
-    # The scanner's SSH host key, recorded at install. Unknown keys are refused.
+    # Optional: scanner SSH keys to take as already seen (OpenSSH known_hosts format). Read only
+    # while the Pi's list of seen keys is empty; new keys are accepted and remembered (hostkeys.py).
     known_hosts: str = "/etc/hyperwheel/scanner_known_hosts"
     timeout_s: float = 20.0
     # The Pi's network interface on the scanner cable, to tell "no link" from "no answer".
