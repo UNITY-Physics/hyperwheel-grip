@@ -9,7 +9,7 @@ import pytest
 from hyperwheel import __main__ as entry
 from hyperwheel import unexpected
 
-DATA_MANAGER_END = "Run hyperwheel doctor, and if that doesn't help, send this message to support."
+DATA_MANAGER_END = "Run hyperwheel doctor, and if that doesn't help, send this message to your Hyperwheel admin."
 
 
 @pytest.fixture
@@ -73,8 +73,9 @@ def test_a_file_that_cannot_be_opened_says_so():
     def denied(argv):
         raise PermissionError(13, "Permission denied", "/var/lib/hyperwheel/state.db")
     code, said, _ = run(denied, ["doctor"])
+    # no "run hyperwheel doctor" when doctor is what stopped
     assert said == ["'hyperwheel doctor' stopped: a file it needs can't be opened (Permission denied). "
-                    "Send this message to support."]  # no "run hyperwheel doctor" when doctor is what stopped
+                    "Send this message to your Hyperwheel admin."]
 
 
 def test_ctrl_c_says_stopped():

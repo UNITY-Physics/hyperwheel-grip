@@ -37,7 +37,7 @@ from .rawpull import LoginRefused, ScannerError, SshScanner
 PASSWORD_FILE = Path("/etc/hyperwheel/scanner.json")
 MAX_LENGTH = 1024
 ENTITLEMENT = ("If you're sure the password is right, the scanner may be missing the RRDF entitlement. "
-               "Tell support.")
+               "Tell your Hyperwheel admin.")
 
 
 class Cancelled(Exception):
@@ -129,10 +129,10 @@ def set_password(site: SiteConfig, console: Console | None = None, *, path: Path
         return 2
     s = site.scanner
     if not s.host:
-        c.say("This Pi has no scanner address in its site settings yet. Ask the maintainer.")
+        c.say("This Pi has no scanner address in its site settings yet. Ask your Hyperwheel admin.")
         return 1
     c.say("Set the scanner's raw-data password on this Pi. It changes when the scanner's software is upgraded; "
-          "Hyperfine or support can tell you the new one.")
+          "Your Hyperwheel admin can tell you the new one.")
     c.say(f"Scanner: {s.host}, login {s.username}")
     c.say("")
     try:
@@ -172,7 +172,7 @@ def set_password(site: SiteConfig, console: Console | None = None, *, path: Path
         c.say(restart())
     except Exception as e:  # noqa: BLE001 - the password is saved; say so plainly
         c.say(f"Hyperwheel couldn't be restarted ({e}), so it uses the new password only when it next starts. "
-              "Ask the maintainer.")
+              "Ask your Hyperwheel admin.")
         return 1
     c.say("Raw data waiting on the scanner is fetched within a minute. To check, type: hyperwheel status")
     return 0

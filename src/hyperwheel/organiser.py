@@ -107,7 +107,7 @@ class Organiser:
             return True
         self.store.raise_flag(
             "BAD_UID", "An image has an invalid StudyInstanceUID, SeriesInstanceUID or SOP Instance UID. It is "
-            "kept in Orthanc and not uploaded; please contact the Hyperwheel team.", level="hold", ref=instance_id)
+            "kept in Orthanc and not uploaded; please contact your Hyperwheel admin.", level="hold", ref=instance_id)
         log.error("Orthanc instance %s: invalid UID; kept in Orthanc, not uploaded", instance_id)
         return False
 

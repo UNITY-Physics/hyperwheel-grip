@@ -77,7 +77,7 @@ def test_a_refused_password_is_never_saved_and_mentions_the_entitlement(site, st
             "unchanged.") in typed.shown
     assert typed.shown[-1] == "Check the password and try again. " + ENTITLEMENT
     assert ENTITLEMENT == ("If you're sure the password is right, the scanner may be missing the RRDF "
-                           "entitlement. Tell support.")
+                           "entitlement. Tell your Hyperwheel admin.")
     secret_free(typed)
 
 
@@ -183,3 +183,9 @@ def test_the_command_says_why_the_scanner_cannot_be_reached(site, monkeypatch):
     assert "no link" in scannercmd.why_unreachable(site)
     monkeypatch.setattr(reach, "scanner_state", lambda site: reach.SCANNER_NO_ANSWER)
     assert "doesn't answer" in scannercmd.why_unreachable(site)
+
+
+def test_it_says_who_can_give_the_new_password(site, stored):
+    typed = Scripted(hidden=[""])
+    run(site, stored, typed)
+    assert typed.shown[0].endswith("Your Hyperwheel admin can tell you the new one.")

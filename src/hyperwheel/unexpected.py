@@ -61,9 +61,9 @@ def person_is_admin() -> bool:
 def user_line(words: str, e: BaseException, admin: bool) -> str:
     line = f"'hyperwheel {words}' stopped: {what_went_wrong(e)}."
     if words.split()[:1] == ["doctor"]:
-        line += " Send this message to support."
+        line += " Send this message to your Hyperwheel admin."
     else:
-        line += " Run hyperwheel doctor, and if that doesn't help, send this message to support."
+        line += " Run hyperwheel doctor, and if that doesn't help, send this message to your Hyperwheel admin."
     if admin:
         line += " Details: journalctl -t hyperwheel"
     return line

@@ -95,4 +95,4 @@ def notice(k: HostKey) -> str:
     when = f"{t.tm_hour:02d}:{t.tm_min:02d} on {t.tm_mday} {time.strftime('%b', t)}"
     return (f"At {when} this Pi connected to a scanner it hadn't seen before, or the scanner's software was "
             f"upgraded (scanner key {k.fingerprint[:19]}…). The Pi remembers this scanner now. If no one "
-            "upgraded or swapped the scanner, tell support.")
+            "upgraded or swapped the scanner, tell your Hyperwheel admin.")
