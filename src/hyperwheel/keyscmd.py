@@ -107,9 +107,9 @@ def describe(routing: Routing, keys: KeyStore, store: Store | None) -> list[tupl
             out.append((name, "no key stored"))
             continue
         except KeyProblem as e:
-            out.append((name, f"the key file can't be used ({e})"))
+            out.append((name, f"the key file can't be used: {e}"))
             continue
-        out.append((name, f"key stored ({_ending(creds.client_id)}), {_status(store, name)}"))
+        out.append((name, f"key stored, {_ending(creds.client_id)}, {_status(store, name)}"))
     return out
 
 
@@ -137,7 +137,7 @@ def _pick_project(routing: Routing, lines: dict[str, str], c: Console) -> Projec
     names = list(routing.projects)
     c.say("Projects on this Pi:")
     for i, name in enumerate(names, 1):
-        c.say(f"  {i}. {name}  ({lines[name]})")
+        c.say(f"  {i}. {name}: {lines[name]}")
     for _ in range(3):
         answer = c.ask("Which project? Type its number (or press Enter to stop): ").strip()
         if not answer:
