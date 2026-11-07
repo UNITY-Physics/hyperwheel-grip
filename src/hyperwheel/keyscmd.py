@@ -1,8 +1,9 @@
 """``hyperwheel keys list`` and ``hyperwheel keys set``: the data managers' key commands.
 
-Both run as root: through sudo from the data-manager account, which may run only
-these and the status commands (``/etc/sudoers.d/hyperwheel``, written by the
-installer), or by an administrator.
+Both run as root. A data manager types just ``hyperwheel keys set``: Hyperwheel
+runs itself again through sudo (see ``cli``), and the sudo rule
+(``/etc/sudoers.d/hyperwheel``, written by the installer) lets the data-manager
+account run only these and the status commands.
 
 ``set`` asks which project, then its client ID and secret. It asks GRIP for a
 token with them **before** saving anything. A key GRIP refuses, or one that can't
@@ -116,7 +117,7 @@ def list_keys(site: SiteConfig, routing: Routing, console: Console | None = None
               keys: KeyStore | None = None, is_root: Callable[[], bool] = _is_root) -> int:
     c = console or Console()
     if not is_root():
-        c.say("This needs administrator rights. Run: sudo hyperwheel keys list")
+        c.say("'hyperwheel keys list' needs administrator rights. Run it as root.")
         return 2
     if not routing.projects:
         c.say("There are no projects in this Pi's routing settings, so no keys are used.")
@@ -178,7 +179,7 @@ def set_key(site: SiteConfig, routing: Routing, console: Console | None = None, 
             restart: Callable[[], str] = restart_service, is_root: Callable[[], bool] = _is_root) -> int:
     c = console or Console()
     if not is_root():
-        c.say("This needs administrator rights. Run: sudo hyperwheel keys set")
+        c.say("'hyperwheel keys set' needs administrator rights. Run it as root.")
         return 2
     if not routing.projects:
         c.say("There are no projects in this Pi's routing settings, so there's no key to set. "
@@ -218,7 +219,7 @@ def set_key(site: SiteConfig, routing: Routing, console: Console | None = None, 
         return 1
     except (GripError, KeyProblem) as e:
         c.say(f"GRIP couldn't be reached to check the key ({e}). Nothing was saved. {kept}")
-        c.say("Check the Pi's connection with: sudo hyperwheel doctor. Then try again.")
+        c.say("Check the Pi's connection with: hyperwheel doctor. Then try again.")
         return 1
     c.say(f"GRIP accepted the key for {project.name}.")
 
@@ -237,7 +238,7 @@ def set_key(site: SiteConfig, routing: Routing, console: Console | None = None, 
         c.say(f"Hyperwheel couldn't be restarted ({e}), so it still uses the old key until it next starts. "
               "Ask the maintainer.")
         return 1
-    c.say("In a minute, check it shows as working with: sudo hyperwheel keys list")
+    c.say("In a minute, check it shows as working with: hyperwheel keys list")
     return 0
 
 

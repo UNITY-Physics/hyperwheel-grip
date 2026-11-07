@@ -87,6 +87,12 @@ again.
     `hyperwheel keys list` and `hyperwheel update status` without a password,
     and `hyperwheel keys set` with its own password. The screen locks after 15
     minutes idle and unlocks with that Pi's `datamanager` password.
+  - Data managers never type `sudo`. `hyperwheel help` lists what they can
+    run, one command per line. A command that needs root runs itself again
+    through sudo with the same words, so the sudo rule above still decides
+    what's allowed; anything it doesn't allow gets one plain line saying so.
+    `sudo hyperwheel ...` works too. Typed by `admin`, `hyperwheel help` also
+    lists the admin commands.
   - `admin` never has a desktop session. It is reached over SSH, or with
     `su - admin` from Connect's remote shell, and uses `sudo` with its own
     password. Screen sharing alone never gives admin rights.
@@ -111,7 +117,7 @@ their keys and set them through the **data-manager account**, which can run
 only the key and status commands. The SOP has a page for each step, with
 screenshots.
 
-`sudo hyperwheel keys list` shows each project on the Pi, whether it has a key
+`hyperwheel keys list` shows each project on the Pi, whether it has a key
 (with only the last four characters of the client ID) and whether it last
 worked. It never shows a secret.
 
@@ -119,8 +125,9 @@ worked. It never shows a secret.
 
 1. Get the project's client ID and secret from GRIP.
 2. On the Pi, open the "GRIP keys" launcher on the desktop (or log in over
-   SSH as the data-manager user) and run `sudo hyperwheel keys set`. It asks
-   for the data-manager password.
+   SSH as the data-manager user) and type `hyperwheel keys set`. It asks
+   for the data-manager password. (`hyperwheel help` lists everything the
+   data-manager account can run.)
 3. Pick the project from the list by its number, then paste the client ID
    and the secret. The secret is typed hidden and never shown, logged or put
    on a command line. Pressing Enter at any question stops, and nothing is
@@ -131,7 +138,7 @@ worked. It never shows a secret.
 5. The key is saved root-only (mode 600), and the upload service is
    restarted so it picks the key up. Uploads continue where they stopped.
 6. The service checks every key when it starts, so a minute later
-   `sudo hyperwheel keys list` and the Upload Monitor show the project's key
+   `hyperwheel keys list` and the Upload Monitor show the project's key
    as working.
 
 **Rotating a key** (on a schedule, e.g. once a year; at once if a key may
@@ -256,10 +263,10 @@ signer is accepted.
 - Each Pi's channel is a site setting (`[updates] channel` in `site.toml`):
   the dev Pi on `dev`, the pilot site on `pilot`, every other Pi on
   `stable`.
-- **Holding a Pi:** `sudo hyperwheel update hold --reason "..."` (admin, over
-  Connect or SSH) writes `/etc/hyperwheel/update-hold`. A held Pi keeps its
-  version, and downloads nothing, until `sudo hyperwheel update
-  release-hold`. The Upload Monitor and `hyperwheel doctor` show the hold.
+- **Holding a Pi:** `hyperwheel update hold --reason "..."` (admin, over
+  Connect or SSH; it asks for the admin password) writes
+  `/etc/hyperwheel/update-hold`. A held Pi keeps its version, and downloads
+  nothing, until `hyperwheel update release-hold`. The Upload Monitor and `hyperwheel doctor` show the hold.
 - `hyperwheel update status` shows the release and the last check's result.
 - A Pi never moves backwards because a channel file names an older version,
   except through a rollback (below).
@@ -276,7 +283,7 @@ signer is accepted.
   (the last also covers a Pi whose service is down). It waits up to 5 hours;
   if the Pi is never idle that long, the next check tries again, with the
   download kept.
-- The maintainer can start it at once over Connect: `sudo hyperwheel update now`.
+- The maintainer can start it at once over Connect: `hyperwheel update now`.
   It runs the same check in `hyperwheel-update.service` (so a dropped
   connection can't cut an install short), with a one-minute quiet spell
   instead of 30, and it also applies releases marked `manual_only` or

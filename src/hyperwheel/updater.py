@@ -615,7 +615,7 @@ def main(argv: list[str], paths: Paths | None = None) -> int:
         print(f"Last check: {s.get('checked_at', '-')}, channel {s.get('channel', '-')}: {s['result']}")
         return 0
     if os.geteuid() != 0 and paths.layout.root == Path("/"):
-        print("Please run as root (sudo).", file=sys.stderr)
+        print(f"'hyperwheel update {args.action}' needs administrator rights. Run it as root.", file=sys.stderr)
         return 1
     if args.action == "hold":
         _write(paths.hold, json.dumps({"reason": args.reason, "since": time.strftime("%Y-%m-%d %H:%M")}) + "\n")

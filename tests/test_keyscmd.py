@@ -82,7 +82,7 @@ def test_nothing_is_saved_when_grip_cannot_be_reached(env):
     assert code == 1 and restarts == []
     assert env.keys.read(PROJECT).client_secret == OLD_SECRET
     assert "GRIP couldn't be reached to check the key" in typed.text
-    assert "sudo hyperwheel doctor" in typed.text
+    assert "hyperwheel doctor" in typed.text and "sudo" not in typed.text
 
 
 def test_grip_busy_is_not_taken_as_a_refusal(env):
@@ -148,10 +148,10 @@ def test_a_failed_restart_is_reported_and_the_key_is_kept(env):
 
 def test_both_commands_need_root(env):
     typed = Scripted()
-    assert run_set(env, typed, root=False)[0] == 2 and "sudo hyperwheel keys set" in typed.text
+    assert run_set(env, typed, root=False)[0] == 2 and "'hyperwheel keys set' needs administrator rights" in typed.text
     typed = Scripted()
     assert list_keys(env.site, env.routing, typed.console(), keys=env.keys, is_root=lambda: False) == 2
-    assert "sudo hyperwheel keys list" in typed.text and typed.prompts == []
+    assert "'hyperwheel keys list' needs administrator rights" in typed.text and typed.prompts == []
 
 
 def test_list_shows_each_project_and_its_status_but_never_the_secret(env):

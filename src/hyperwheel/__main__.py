@@ -1,13 +1,16 @@
-"""Command line: ``hyperwheel run``, ``dashboard``, ``status``, ``doctor``, ``keys`` and ``update``."""
+"""Command line: ``hyperwheel help``, ``status``, ``doctor``, ``keys``, ``update``, and the services' ``run``
+and ``dashboard``. See ``cli`` for the help and for how root commands go through sudo."""
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
 
+from . import cli
 from .config import ConfigError, load_routing, load_site
 from .dashboard import clock_synced, serve, snapshot
 from .state import Store
@@ -15,6 +18,17 @@ from .state import Store
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if not argv or argv[0] in ("help", "-h", "--help"):
+        print(cli.help_text(cli.is_admin()))
+        return 0
+    wrong = cli.problem(argv)
+    if wrong:
+        print(wrong)
+        print()
+        print(cli.help_text(cli.is_admin()))
+        return 2
+    if cli.needs_root(argv) and os.geteuid() != 0:
+        return cli.run_as_root(argv)
     if argv[:1] == ["update"]:  # runs as root, also on a Pi that isn't set up yet
         from . import updater
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
