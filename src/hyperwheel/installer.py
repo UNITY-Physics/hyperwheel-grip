@@ -47,16 +47,35 @@ DATA_MANAGER = "datamanager"
 
 # What the data-manager account may run as root: exactly these command lines and nothing else
 # (sudo allows no other arguments when a rule lists them). Setting a key or the scanner password
-# asks for the data manager's own password; looking at the status doesn't.
-SUDO_RULE = f"""\
-# Written by Hyperwheel's installer, and written again by every release: changes made here are lost.
+# asks for the data manager's own password; looking at the status doesn't. Until the Pi is set up,
+# it may also run ``hyperwheel setup`` without a password (there's no admin yet to ask).
+SETUP_DONE = "setup-done"
+SETUP_PROGRESS = "setup.json"
+
+
+def sudo_rule(set_up: bool = True) -> str:
+    setup = "" if set_up else (f"# Only until this Pi is set up: setup removes this line.\n"
+                               f"{DATA_MANAGER} ALL = (root) NOPASSWD: /usr/local/bin/hyperwheel setup\n")
+    return f"""\
+# Written by Hyperwheel (installer and setup), and written again by every release: changes made here are lost.
 # The {DATA_MANAGER} account may run only these Hyperwheel commands as root, with exactly these words.
 Cmnd_Alias HYPERWHEEL_LOOK = /usr/local/bin/hyperwheel status, /usr/local/bin/hyperwheel doctor, \\
     /usr/local/bin/hyperwheel keys list, /usr/local/bin/hyperwheel update status
 Cmnd_Alias HYPERWHEEL_KEYS = /usr/local/bin/hyperwheel keys set, /usr/local/bin/hyperwheel scanner password
 {DATA_MANAGER} ALL = (root) NOPASSWD: HYPERWHEEL_LOOK
 {DATA_MANAGER} ALL = (root) HYPERWHEEL_KEYS
-"""
+{setup}"""
+
+
+SUDO_RULE = sudo_rule()
+
+
+def is_set_up(etc: Path) -> bool:
+    """Set up by ``hyperwheel setup`` (its marker), or by hand before setup existed (site settings there,
+    and setup never started on it). Only a Pi that isn't lets the data manager run setup."""
+    if (etc / SETUP_DONE).exists():
+        return True
+    return (etc / "site.toml").exists() and not (etc / SETUP_PROGRESS).exists()
 
 
 class InstallError(Exception):
@@ -232,25 +251,13 @@ class Installer:
             _atomic_link(command, "/opt/hyperwheel/current/venv/bin/hyperwheel")
 
     def sudo_rule(self) -> None:
-        folder = self.layout.p("/etc/sudoers.d")
-        path = folder / "hyperwheel"
-        if path.is_file() and not path.is_symlink() and path.read_text() == SUDO_RULE:
+        set_up = is_set_up(self.layout.etc)
+        if write_sudo_rule(self.layout, set_up, self.run):
+            self.say(f"Data-manager commands: sudo rule written ({DATA_MANAGER} may run only keys, the scanner "
+                     "password, status, doctor and update status as root"
+                     + (")." if set_up else ", and setup until this Pi is set up)."))
+        else:
             self.say("Data-manager commands: sudo rule already there.")
-            return
-        folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / ".hyperwheel.new"  # sudo skips files with a dot in the name
-        tmp.unlink(missing_ok=True)
-        tmp.write_text(SUDO_RULE)
-        tmp.chmod(0o440)
-        try:
-            self.run(["visudo", "-c", "-q", "-f", str(tmp)])
-        except InstallError as e:
-            tmp.unlink(missing_ok=True)
-            raise InstallError(f"the data-manager sudo rule didn't pass visudo's check, so sudo was left as it "
-                               f"was ({e})") from None
-        os.replace(tmp, path)
-        self.say(f"Data-manager commands: sudo rule written ({DATA_MANAGER} may run only keys, status, doctor "
-                 "and update status as root).")
 
     # ---- 6. site settings and secrets: add what's missing, never overwrite ----------
 
@@ -351,6 +358,28 @@ class Installer:
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.run(["systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.say("Hyperwheel and the Upload Monitor: started.")
+
+
+def write_sudo_rule(layout: Layout, set_up: bool, run: Callable[..., str]) -> bool:
+    """Put the data-manager sudo rule in place, checked by visudo first. Returns False if it was already there."""
+    text = sudo_rule(set_up)
+    folder = layout.p("/etc/sudoers.d")
+    path = folder / "hyperwheel"
+    if path.is_file() and not path.is_symlink() and path.read_text() == text:
+        return False
+    folder.mkdir(parents=True, exist_ok=True)
+    tmp = folder / ".hyperwheel.new"  # sudo skips files with a dot in the name
+    tmp.unlink(missing_ok=True)
+    tmp.write_text(text)
+    tmp.chmod(0o440)
+    try:
+        run(["visudo", "-c", "-q", "-f", str(tmp)])
+    except InstallError as e:
+        tmp.unlink(missing_ok=True)
+        raise InstallError(f"the data-manager sudo rule didn't pass visudo's check, so sudo was left as it "
+                           f"was ({e})") from None
+    os.replace(tmp, path)
+    return True
 
 
 def _atomic_link(link: Path, target: str) -> None:

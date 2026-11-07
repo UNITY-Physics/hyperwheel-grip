@@ -256,7 +256,7 @@ def test_install_script_runs_the_installer_from_the_release_wheel():
 def test_the_data_manager_sudo_rule_is_checked_by_visudo_then_put_in_place(tmp_path, key, signers, pi):
     from hyperwheel.installer import SUDO_RULE
     root, fake = pi
-    installer(make_release(tmp_path, key), signers, pi).install()
+    installer(make_release(tmp_path, key), signers, pi, site_setup=site_setup(tmp_path)).install()
     rule = root / "etc/sudoers.d/hyperwheel"
     assert rule.read_text() == SUDO_RULE and mode(rule) == 0o440
     check = fake.ran("visudo")[0]
@@ -284,3 +284,28 @@ def test_a_sudo_rule_visudo_rejects_is_never_put_in_place(tmp_path, key, signers
     assert not (root / "etc/sudoers.d/hyperwheel").exists()
     assert not (root / "etc/sudoers.d/.hyperwheel.new").exists()
     assert not (root / "opt/hyperwheel/current").exists()  # stopped before the switch
+
+
+SETUP_LINE = "datamanager ALL = (root) NOPASSWD: /usr/local/bin/hyperwheel setup"
+
+
+def test_a_pi_that_is_not_set_up_lets_the_data_manager_run_setup_without_a_password(tmp_path, key, signers, pi):
+    root, _ = pi
+    installer(make_release(tmp_path, key), signers, pi).install()
+    rule = (root / "etc/sudoers.d/hyperwheel").read_text()
+    assert SETUP_LINE in rule.splitlines()
+    # half way through setup (site settings written, not finished), it still may
+    (root / "etc/hyperwheel/setup.json").write_text("{}")
+    (root / "etc/hyperwheel/site.toml").write_text("")
+    installer(make_release(tmp_path, key, "0.2.0"), signers, pi).install()
+    assert SETUP_LINE in (root / "etc/sudoers.d/hyperwheel").read_text().splitlines()
+    # once setup has finished, an update leaves the line out
+    (root / "etc/hyperwheel/setup-done").write_text("")
+    installer(make_release(tmp_path, key, "0.3.0"), signers, pi).install()
+    assert SETUP_LINE not in (root / "etc/sudoers.d/hyperwheel").read_text()
+
+
+def test_a_pi_set_up_before_setup_existed_never_gets_the_setup_line(tmp_path, key, signers, pi):
+    root, _ = pi
+    installer(make_release(tmp_path, key), signers, pi, site_setup=site_setup(tmp_path)).install()
+    assert SETUP_LINE not in (root / "etc/sudoers.d/hyperwheel").read_text()

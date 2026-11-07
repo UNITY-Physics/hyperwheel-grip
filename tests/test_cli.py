@@ -142,3 +142,22 @@ def test_update_status_works_without_root(monkeypatch, capsys):
     from hyperwheel import updater
     monkeypatch.setattr(updater, "main", lambda argv: print("Release: 0.1.9") or 0)
     assert entry.main(["update", "status"]) == 0 and "Release: 0.1.9" in capsys.readouterr().out
+
+
+def test_until_the_pi_is_set_up_the_data_manager_also_sees_setup(capsys, monkeypatch):
+    from hyperwheel.installer import sudo_rule
+    text = cli.help_text(admin=False, setup=True)
+    assert text.splitlines()[1].split("   ")[0].strip() == "hyperwheel setup"
+    allowed = set(re.findall(r"/usr/local/bin/hyperwheel ([a-z][a-z -]*[a-z])", sudo_rule(False)))
+    assert allowed == {words for words, _ in cli.DATA_MANAGER} | {"setup"}
+    monkeypatch.setattr(cli, "is_admin", lambda: False)
+    monkeypatch.setattr(cli, "setup_pending", lambda: True)
+    assert entry.main(["help"]) == 0
+    assert "hyperwheel setup" in capsys.readouterr().out
+
+
+def test_setup_needs_root_and_on_a_set_up_pi_is_not_in_the_help(tmp_path):
+    assert cli.needs_root(["setup"]) and cli.problem(["setup"]) is None
+    assert "hyperwheel setup" not in cli.help_text(admin=False)
+    (tmp_path / "setup-done").write_text("")
+    assert not cli.setup_pending(str(tmp_path))
