@@ -45,12 +45,16 @@ def test_a_state_database_that_cannot_be_opened_gives_one_plain_line_and_no_trac
     assert any("state.py" in line for line in logged)
 
 
-def test_the_admin_is_also_told_where_the_details_are(tmp_path, capsys, logged, monkeypatch):
+def test_the_admin_is_told_only_where_the_details_are(tmp_path, capsys, logged, monkeypatch):
     monkeypatch.setattr(unexpected, "person_is_admin", lambda: True)
     assert entry.main([*broken_site(tmp_path), "status"]) == 1
     err = capsys.readouterr().err
-    assert err.strip().endswith(f"{DATA_MANAGER_END} Details: journalctl -t hyperwheel")
-    assert len(err.splitlines()) == 1
+    assert err.splitlines() == ["'hyperwheel status' stopped: the state database can't be used (unable to open "
+                                "database file). Details: journalctl -t hyperwheel"]
+    assert "Hyperwheel admin" not in err and "doctor" not in err
+    for words in ("doctor", "keys list"):
+        line = unexpected.user_line(words, ValueError("x"), admin=True)
+        assert line.endswith(" Details: journalctl -t hyperwheel") and "Hyperwheel admin" not in line
 
 
 def run(body, argv=("status",), admin=False):
