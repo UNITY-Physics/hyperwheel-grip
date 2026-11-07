@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hyperwheel"
-version = "0.1.8"
+version = "0.1.9"
 description = "Upload pipeline from Hyperfine Swoop scanners to GRIP, running on a Raspberry Pi"
 license = { text = "PolyForm-Noncommercial-1.0.0" }
 requires-python = ">=3.11"
