@@ -156,6 +156,21 @@ cable address and the Wi-Fi country need. If setup stops half way, running it
 again carries on: what's done stays done, and nothing is redone without
 asking.
 
+## Switch-over checklist (per Pi)
+
+Each Pi moves from the old Hyperwheel (uploading to Flywheel) to this one on a
+freshly flashed card. The SOP will give each step with pictures. So far:
+
+1. Before the card is wiped: the old Flywheel backlog has finished (or is
+   copied off), and the site's scanner logins are noted for its site file.
+2. Flash the card, run `hyperwheel setup`, and store each project's key with
+   `hyperwheel keys set`.
+3. **Check each scanner's DICOM destination** in the scanner's settings: IP
+   address 10.42.0.88, port 4242, AE title HYPERWHEEL. The Pi is always
+   10.42.0.88 on the scanner cable, so a scanner sending anywhere else is
+   changed to it.
+4. Send a test exam and check it on GRIP and on the Upload Monitor.
+
 ## GRIP keys (SOP outline)
 
 One API key per project (a GRIP dataset), agreed with GRIP. Keys don't
