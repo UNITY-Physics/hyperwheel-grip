@@ -251,3 +251,33 @@ def test_install_script_runs_the_installer_from_the_release_wheel():
     script = (Path(__file__).resolve().parents[1] / "tools" / "release" / "install.sh").read_text()
     assert "PYTHONPATH=\"$whl\"" in script and "-m hyperwheel.installer" in script
     assert subprocess.run(["sh", "-n", str(Path(__file__).resolve().parents[1] / "tools/release/install.sh")]).returncode == 0
+
+
+def test_the_data_manager_sudo_rule_is_checked_by_visudo_then_put_in_place(tmp_path, key, signers, pi):
+    from hyperwheel.installer import SUDO_RULE
+    root, fake = pi
+    installer(make_release(tmp_path, key), signers, pi).install()
+    rule = root / "etc/sudoers.d/hyperwheel"
+    assert rule.read_text() == SUDO_RULE and mode(rule) == 0o440
+    check = fake.ran("visudo")[0]
+    assert check[:4] == ["visudo", "-c", "-q", "-f"] and check[4].endswith("/etc/sudoers.d/.hyperwheel.new")
+    assert not (root / "etc/sudoers.d/.hyperwheel.new").exists()
+    lines = [line for line in SUDO_RULE.splitlines() if line.startswith("datamanager")]
+    assert lines == ["datamanager ALL = (root) NOPASSWD: HYPERWHEEL_LOOK", "datamanager ALL = (root) HYPERWHEEL_KEYS"]
+    assert "ALL = (root) ALL" not in SUDO_RULE and "*" not in SUDO_RULE
+
+
+def test_a_sudo_rule_visudo_rejects_is_never_put_in_place(tmp_path, key, signers, pi):
+    root, fake = pi
+    real_run = fake.run
+
+    def run(cmd, env=None):
+        if cmd[0] == "visudo":
+            raise InstallError("visudo failed (exit 1): syntax error")
+        return real_run(cmd, env)
+    fake.run = run
+    with pytest.raises(InstallError, match="sudo was left as it was"):
+        installer(make_release(tmp_path, key), signers, pi).install()
+    assert not (root / "etc/sudoers.d/hyperwheel").exists()
+    assert not (root / "etc/sudoers.d/.hyperwheel.new").exists()
+    assert not (root / "opt/hyperwheel/current").exists()  # stopped before the switch
