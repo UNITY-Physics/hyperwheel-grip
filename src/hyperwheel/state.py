@@ -176,6 +176,17 @@ _SCHEMA = [
     ALTER TABLE flags ADD COLUMN ref TEXT;
     CREATE TABLE cursors (name TEXT PRIMARY KEY, value INTEGER NOT NULL)
     """,
+    # version 3: every scanner SSH key this Pi has seen (see hostkeys.py)
+    """
+    CREATE TABLE scanner_host_keys (
+        fingerprint TEXT PRIMARY KEY,
+        key_type TEXT NOT NULL,
+        host TEXT NOT NULL,
+        first_seen REAL NOT NULL,
+        last_seen REAL NOT NULL,
+        quiet INTEGER NOT NULL DEFAULT 0
+    )
+    """,
 ]
 
 
@@ -257,6 +268,16 @@ class Flag:
     cleared_at: float | None
     level: str = "flag"  # "hold" (stops something until a person acts), "alert" or "flag"
     ref: str | None = None
+
+
+@dataclass(frozen=True)
+class HostKey:
+    fingerprint: str  # "SHA256:..." as OpenSSH shows it
+    key_type: str
+    host: str  # where it was last seen
+    first_seen: float
+    last_seen: float
+    quiet: int = 0  # 1: taken as known without a notice (the first scanner, or the setup's known_hosts)
 
 
 FLAG_LEVELS = ("hold", "alert", "flag")
@@ -554,6 +575,29 @@ class Store:
         row = self._db.execute("SELECT max(t) AS t FROM (SELECT max(created_at) AS t FROM files "
                                "UNION ALL SELECT max(created_at) FROM studies)").fetchone()
         return row["t"]
+
+    # ---- scanner host keys ---------------------------------------------------
+
+    # last_seen is written at most this often, not on every connection.
+    HOST_KEY_TOUCH_S = 3600
+
+    def remember_host_key(self, fingerprint: str, key_type: str, host: str, *, quiet: bool = False) -> bool:
+        """Record a scanner key. True if this Pi had never seen it before."""
+        now = self.clock()
+        with self.transaction() as db:
+            cur = db.execute("INSERT INTO scanner_host_keys (fingerprint, key_type, host, first_seen, last_seen, "
+                             "quiet) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(fingerprint) DO NOTHING",
+                             (fingerprint, key_type, host, now, now, int(quiet)))
+            if cur.rowcount:
+                return True
+            db.execute("UPDATE scanner_host_keys SET last_seen = ?, host = ? WHERE fingerprint = ? "
+                       "AND (last_seen < ? OR host != ?)",
+                       (now, host, fingerprint, now - self.HOST_KEY_TOUCH_S, host))
+            return False
+
+    def host_keys(self) -> list[HostKey]:
+        rows = self._db.execute("SELECT * FROM scanner_host_keys ORDER BY first_seen, fingerprint").fetchall()
+        return [_make(HostKey, r) for r in rows]
 
     # ---- key status ---------------------------------------------------------
 

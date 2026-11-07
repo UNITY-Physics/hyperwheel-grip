@@ -17,7 +17,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import reach
+from . import hostkeys, reach
 from .config import Routing, SiteConfig
 from .state import PENDING_FILE_STATES, Store
 
@@ -89,6 +89,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         general[:0] = reach.messages(links, now)
     if clock_synced is False:
         general.append({"level": "flag", "text": "The Pi's clock isn't set yet. Uploads wait until it is."})
+    general += [{"level": "notice", "text": text} for text in hostkeys.new_key_notices(store, now)]
     try:
         free_gb = free_bytes(site.staging_dir if site.staging_dir.exists() else Path("/")) / 1024 ** 3
     except OSError:
@@ -230,6 +231,7 @@ PAGE = """<!doctype html>
   h2 { font-size:15px; text-transform:uppercase; letter-spacing:.4px; color:var(--sub); margin:24px 4px 8px; }
   .flag { padding:10px 12px; border-radius:8px; margin-top:8px; background:#f5f5f7; }
   .flag.hold, .flag.alert { background:#ffeceb; color:#8a1010; }
+  .flag.notice { background:#eef4ff; }
   .study-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:baseline; }
   .study-title { font-weight:600; font-size:19px; }
   .meta { color:var(--sub); font-size:15px; }

@@ -17,7 +17,7 @@ def test_schema_created_and_reopened(tmp_path):
     study = s.add_study(UID, project="P")
     s.close()
     s = Store(tmp_path / "state.db")
-    assert s.schema_version == 2
+    assert s.schema_version == 3
     assert s.study_by_uid(UID).id == study.id
     s.close()
 
@@ -123,7 +123,7 @@ def test_upgrade_from_version_1_keeps_data(tmp_path):
     db.execute("INSERT INTO studies (study_uid, state, created_at, updated_at) VALUES (?, 'ready', 0, 0)", (UID,))
     db.close()
     s = Store(tmp_path / "v1.db")
-    assert s.schema_version == 2 and s.study_by_uid(UID).state == "ready"
+    assert s.schema_version == 3 and s.study_by_uid(UID).state == "ready"
     s.close()
 
 
