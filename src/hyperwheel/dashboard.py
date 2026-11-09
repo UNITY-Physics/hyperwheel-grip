@@ -40,6 +40,21 @@ KEY_TEXT = {
 }
 
 
+def _on_grip(files: list) -> int:
+    return sum(f.state in ("confirmed", "deleted") for f in files)
+
+
+def _count_texts(state: str, dicom: list, rrdf: list, raw_pending: bool) -> tuple[str, str]:
+    """What to say about a study's files. A count of 0/0 only means they aren't listed yet, so it isn't shown."""
+    arriving = state in ("receiving", "stable", "checking")
+    dicom_text = "DICOM receiving" if arriving and not dicom else f"DICOM {_on_grip(dicom)}/{len(dicom)} on GRIP"
+    if not rrdf:
+        raw_text = "Raw data still to come" if arriving or raw_pending else "No raw data"
+    else:
+        raw_text = f"Raw data {_on_grip(rrdf)}/{len(rrdf)} on GRIP" + (" (still fetching)" if raw_pending else "")
+    return dicom_text, raw_text
+
+
 def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
              free_bytes: Callable[[Path], int] | None = None, clock_synced: bool | None = None,
              update_hold: Callable[[], str | None] | None = None) -> dict:
@@ -62,14 +77,16 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         elif raw_pending and s.state != "held":
             fetching = True
         flags = store.open_flags(study_id=s.id)
+        dicom_text, raw_text = _count_texts(s.state, dicom, rrdf, raw_pending)
         cards.append({
             "session": _label(s.study_date, s.study_time),
             "project": s.project or "",
             "patient_id": s.patient_id if s.patient_id is not None else "",
             "state": _STATE_TEXT.get(s.state, s.state),
-            "dicom": {"total": len(dicom), "on_grip": sum(f.state in ("confirmed", "deleted") for f in dicom)},
-            "raw": {"total": len(rrdf), "on_grip": sum(f.state in ("confirmed", "deleted") for f in rrdf),
-                    "still_fetching": raw_pending},
+            "dicom": {"total": len(dicom), "on_grip": _on_grip(dicom),
+                      "text": dicom_text},
+            "raw": {"total": len(rrdf), "on_grip": _on_grip(rrdf),
+                    "still_fetching": raw_pending, "text": raw_text},
             "flags": [{"level": f.level, "text": f.detail} for f in flags],
         })
 
@@ -104,15 +121,15 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     files = f"{pending} file{'s' if pending != 1 else ''}"
     leave_on = False
     if not running:
-        headline, sub = "Hyperwheel is not running", "Please keep the scanner on and contact your Hyperwheel admin."
+        headline, sub = "Hyperwheel is not running", "Contact your Hyperwheel admin."
     elif scanner_down and (receiving or fetching):
         headline = "Can't reach the scanner"
         sub = ("Images or raw data are still to come from the scanner. Please check that the scanner is on and "
                "the cable is connected.")
     elif receiving:
-        headline, sub = "Receiving images from the scanner", "Please keep the scanner on."
+        headline, sub = "Receiving images from the scanner", ""  # the badge says to keep the scanner on
     elif fetching:
-        headline, sub = "Fetching raw data from the scanner", "Please keep the scanner on."
+        headline, sub = "Fetching raw data from the scanner", ""
     elif pending:
         offline = scanner_down or links.internet_down(now)
         headline = "Waiting to upload to GRIP" if offline else "Uploading to GRIP"
@@ -120,8 +137,8 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         if leave_on:
             why = (f"some have waited more than {site.dashboard.leave_on_after_hours:g} hours" if long_wait
                    else "the Pi's disk is getting full")
-            sub = (f"Everything from the scanner is on the Pi. {files} still to upload, and {why}. Please leave "
-                   "the scanner on to finish uploading. The Pi's internet goes through it.")
+            sub = (f"Everything from the scanner is on the Pi. {files} still to upload, and {why}. The Pi's "
+                   "internet goes through the scanner.")
         else:
             sub = (f"Everything from the scanner is on the Pi. {files} still to upload. You can switch the scanner "
                    "off: the Pi keeps the files and uploads them next time the scanner is on.")
@@ -297,11 +314,9 @@ function render(s) {
     card.appendChild(el("div", "meta", "Patient ID: " + (st.patient_id.trim() ? st.patient_id : "(blank)")));
     const counts = el("div", "counts");
     const d = st.dicom, r = st.raw;
-    counts.appendChild(el("span", "pill" + (d.total && d.on_grip === d.total ? " done" : ""),
-                          "DICOM " + d.on_grip + "/" + d.total + " on GRIP"));
+    counts.appendChild(el("span", "pill" + (d.total && d.on_grip === d.total ? " done" : ""), d.text));
     counts.appendChild(el("span", "pill" + (r.total && r.on_grip === r.total && !r.still_fetching ? " done" : ""),
-                          "Raw data " + r.on_grip + "/" + r.total + " on GRIP" +
-                          (r.still_fetching ? " (still fetching)" : "")));
+                          r.text));
     card.appendChild(counts);
     flags(card, st.flags);
     studies.appendChild(card);

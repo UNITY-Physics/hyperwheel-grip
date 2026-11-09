@@ -93,15 +93,15 @@ def _main(argv: list[str]) -> int:
     finally:
         store.close()
     print(s["headline"])
-    print(f"  {s['subline']}")
+    if s["subline"]:
+        print(f"  {s['subline']}")
     print(f"  {s['badge']}")
     for f in s["general"]:
         print(f"  [{f['level']}] {f['text']}")
     for st in s["studies"]:
         print(f"\n{st['session']}  {st['project']}  {st['state']}")
-        print(f"  DICOM {st['dicom']['on_grip']}/{st['dicom']['total']} on GRIP, "
-              f"raw data {st['raw']['on_grip']}/{st['raw']['total']} on GRIP"
-              + (" (still fetching)" if st["raw"]["still_fetching"] else ""))
+        raw = st["raw"]["text"]
+        print(f"  {st['dicom']['text']}, {raw[0].lower()}{raw[1:]}")
         for f in st["flags"]:
             print(f"  [{f['level']}] {f['text']}")
     print("\nGRIP keys:")
