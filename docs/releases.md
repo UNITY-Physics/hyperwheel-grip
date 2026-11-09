@@ -27,7 +27,7 @@ It contains (`image/customise.sh`):
   admin password file as it was at build time, so admin works before the Pi has
   ever been online;
 - **two accounts and no others:** `datamanager` (uid 1000, logged in to the
-  desktop automatically, able to read the logs, its password locked until setup gives it one, lingering
+  desktop automatically, able to read the Pi's logs, its password locked until setup gives it one, lingering
   on so Connect runs with nobody logged in) and `admin` (in `sudo`). The official
   image's `pi` placeholder and its first-boot wizard are removed;
 - **no other way in:** cloud-init and the user-renaming service are switched
@@ -111,7 +111,7 @@ plugin file in `"Plugins"` (not Debian's whole plugin folder):
 
 | Plugin | Loaded | Why |
 |---|---|---|
-| Orthanc Explorer 2 | yes | The web interface the maintainer uses over Connect. |
+| Orthanc Explorer 2 | yes | The web interface the admin uses over Connect. |
 | Legacy Orthanc Explorer (built in) | no (`"OrthancExplorerEnabled": false`) | OE2 replaces it; one interface to keep safe. |
 | Delayed deletion | no | Deletes files in the background. Hyperwheel deletes one instance at a time after GRIP confirms it, which is quick on its own; this adds a queue that could outlive a crash. |
 | Housekeeper | no | Rewrites the database and files after settings change. It loads the SD card for nothing on a Pi whose settings are fixed by the release. |
@@ -253,7 +253,8 @@ up, setup refuses to run, and the sudo rule no longer lists it.
    has been typed back. Then the screen is cleared.
 7. **The admin account**, in the `sudo` group. Setup fetches the admin
    password file (below) straight away and sets its hash.
-8. **Password-free sudo removed** (Raspberry Pi OS's `010_pi-nopasswd`) and
+8. **Password-free sudo removed** (Raspberry Pi OS's `010_pi-nopasswd`, which
+   the Hyperwheel image already leaves out) and
    `datamanager` taken out of the `sudo` group, but only once another account
    can still become root with a password. If the admin password couldn't be
    fetched, setup says so, and the updater finishes this step by itself once

@@ -26,9 +26,9 @@ for f in "$root"/etc/sudoers.d/*; do
 done
 in_image userdel --remove rpi-first-boot-wizard 2>/dev/null || true
 in_image userdel --remove pi
-# systemd-journal: data managers read Hyperwheel's logs (journalctl -t hyperwheel), which hold no patient data.
+# systemd-journal: data managers read the Pi's logs (journalctl), which hold no patient data.
 in_image useradd --create-home --shell /bin/bash --user-group --uid 1000 \
-  --groups audio,video,plugdev,users,input,render,netdev,gpio,i2c,spi,lpadmin,systemd-journal \
+  --groups audio,video,plugdev,users,input,render,netdev,gpio,i2c,spi,systemd-journal \
   --comment "Data manager" datamanager
 in_image useradd --create-home --shell /bin/bash --user-group --groups sudo --comment "Hyperwheel admin" admin
 say "datamanager (desktop, locked until setup gives it a password) and admin (in sudo)"

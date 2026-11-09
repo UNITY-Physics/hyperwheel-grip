@@ -37,7 +37,12 @@ cleanup() {
     umount -R "$mnt" 2>/dev/null
   fi
   [ -n "$loop" ] && losetup -d "$loop"
-  rm -rf "$work"
+  # Never through a mount that's still there (the image, or /dev, /proc and /sys bound into it).
+  if mountpoint -q "$mnt" 2>/dev/null; then
+    echo "The image is still mounted at $mnt, so $work is left for a person to clean up." >&2
+  else
+    rm -rf --one-file-system "$work"
+  fi
 }
 trap cleanup EXIT
 fail() { echo "Stopped: $*" >&2; exit 1; }
@@ -114,11 +119,12 @@ check python3 "$repo/tools/image/find-private-keys.py" "$mnt/etc/hyperwheel" "$m
   "$mnt/opt/hyperwheel" "$mnt/var/lib/hyperwheel" "$mnt/etc/NetworkManager" "$mnt/etc/ssh" "$mnt/boot/firmware"
 label="Hyperwheel's services are on, and what must not run is off"
 for unit in hyperwheel-firstboot.service hyperwheel-firewall.service hyperwheel-connect.service \
-            hyperwheel-dashboard.service hyperwheel-viewer.service hyperwheel-update.timer ssh.service; do
+            hyperwheel-dashboard.service hyperwheel-viewer.service hyperwheel-update.timer ssh.service \
+            regenerate_ssh_host_keys.service; do
   check [ "$(in_image systemctl is-enabled "$unit")" = enabled ]
 done
-for unit in apt-daily.timer apt-daily-upgrade.timer packagekit.service rpi-eeprom-update.service \
-            userconfig.service; do
+for unit in apt-daily.timer apt-daily-upgrade.timer packagekit.service packagekit-offline-update.service \
+            rpi-eeprom-update.service userconfig.service; do
   check [ "$(in_image systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
 done
 check [ -e "$mnt/etc/cloud/cloud-init.disabled" ]
@@ -143,6 +149,7 @@ check sh -c "chroot '$mnt' runuser -u datamanager -- /usr/local/bin/hyperwheel h
 label="the Wi-Fi country is GB, and Wi-Fi is on"
 check grep -q "cfg80211.ieee80211_regdom=GB" "$mnt/boot/firmware/cmdline.txt"
 check grep -qx "WirelessEnabled=true" "$mnt/var/lib/NetworkManager/NetworkManager.state"
+check sh -c "! grep -qsx 1 '$mnt'/var/lib/systemd/rfkill/*:wlan"  # no saved soft block for Wi-Fi
 label="the image's version, then its commit"
 check [ "$(head -1 "$mnt/etc/hyperwheel-image")" = "$version" ]
 

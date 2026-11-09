@@ -10,7 +10,7 @@ boot=${2:-/boot/firmware}
 if [ -f "$cmdline" ]; then
     cleaned=$(sed -E -e 's/[[:space:]]+systemd\.run(_success_action|_failure_action)?=[^[:space:]]*//g' \
                      -e 's/[[:space:]]+systemd\.unit=kernel-command-line\.target//g' "$cmdline")
-    printf '%s\n' "$cleaned" > "$cmdline"
+    printf '%s\n' "$cleaned" > "$cmdline.new" && sync && mv "$cmdline.new" "$cmdline"  # a power cut leaves one or the other
 fi
 rm -f "$boot/firstrun.sh"
 sync

@@ -36,7 +36,12 @@ cleanup() {
     umount -R "$mnt" 2>/dev/null
   fi
   [ -n "$loop" ] && losetup -d "$loop"
-  rm -rf "$work"
+  # Never through a mount that's still there (the image, or /dev, /proc and /sys bound into it).
+  if mountpoint -q "$mnt" 2>/dev/null; then
+    echo "The image is still mounted at $mnt, so $work is left for a person to clean up." >&2
+  else
+    rm -rf --one-file-system "$work"
+  fi
 }
 trap cleanup EXIT
 
