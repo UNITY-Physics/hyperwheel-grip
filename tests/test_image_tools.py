@@ -110,3 +110,37 @@ def test_it_refuses_a_private_copy_an_existing_output_and_three_unusable_passwor
     assert bad.returncode == 1 and "Nothing was written" in bad.stderr
     assert "can't start or end with a space" in bad.stdout and "symbols on a keyboard" in bad.stdout
     assert not private.exists()
+
+
+FIND_KEYS = Path(__file__).resolve().parents[1] / "tools" / "image" / "find-private-keys.py"
+
+
+def test_the_key_check_finds_real_keys_and_not_code_that_mentions_them(tmp_path):
+    import sys
+    (tmp_path / "code.py").write_text('HEADER = "-----BEGIN OPENSSH PRIVATE KEY-----"\nFOOTER = "-----END"\n')
+    (tmp_path / "notes.txt").write_text("Never put a PRIVATE KEY in the image.\n")
+    clean = subprocess.run([sys.executable, str(FIND_KEYS), str(tmp_path)], capture_output=True, text=True)
+    assert clean.returncode == 0 and clean.stdout == ""
+    (tmp_path / "id_test").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n" + "b3BlbnNzaC1rZXktdjEAAAAA" * 3
+                                      + "\n-----END OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / "key.pem").write_text("-----BEGIN EC PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+                                      "DEK-Info: AES-128-CBC,0\n\n" + "MHcCAQEEIA" * 6 + "\n-----END EC PRIVATE KEY-----\n")
+    found = subprocess.run([sys.executable, str(FIND_KEYS), str(tmp_path)], capture_output=True, text=True)
+    assert found.returncode == 1
+    assert sorted(Path(p).name for p in found.stdout.split()) == ["id_test", "key.pem"]
+
+
+IGNORE_FIRST_RUN = Path(__file__).resolve().parents[1] / "image" / "files" / "usr" / "local" / "lib" / "hyperwheel" / \
+    "ignore-first-run.sh"
+
+
+def test_imagers_first_run_options_and_script_are_removed_and_nothing_else(tmp_path):
+    base = "console=serial0,115200 console=tty1 root=PARTUUID=9586d7bf-02 rootwait resize cfg80211.ieee80211_regdom=GB"
+    cmdline = tmp_path / "cmdline.txt"
+    cmdline.write_text(base + " systemd.run=/boot/firmware/firstrun.sh systemd.run_success_action=reboot "
+                              "systemd.unit=kernel-command-line.target\n")
+    (tmp_path / "firstrun.sh").write_text("#!/bin/bash\nuseradd someone\n")
+    assert subprocess.run(["sh", str(IGNORE_FIRST_RUN), str(cmdline), str(tmp_path)]).returncode == 0
+    assert cmdline.read_text() == base + "\n" and not (tmp_path / "firstrun.sh").exists()
+    assert subprocess.run(["sh", str(IGNORE_FIRST_RUN), str(cmdline), str(tmp_path)]).returncode == 0  # twice: fine
+    assert cmdline.read_text() == base + "\n"

@@ -380,3 +380,8 @@ def test_https_with_the_pis_certificate_and_its_fingerprint(tmp_path, shadow):
     expected = hashlib.sha256(der).hexdigest().upper()
     assert viewer.fingerprint(cert).replace(":", "") == expected
     assert viewer.fingerprint(tmp_path / "missing.pem") is None
+
+
+def test_plain_http_only_on_the_pi_itself():
+    assert viewer.listeners() == [("127.0.0.1", 8443, True), ("192.168.99.1", 8443, True), ("127.0.0.1", 8442, False)]
+    assert all(address == "127.0.0.1" for address, _, tls in viewer.listeners() if not tls)

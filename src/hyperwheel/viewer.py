@@ -1,7 +1,9 @@
 """Orthanc Explorer 2 over HTTPS, signed in with the Pi's own accounts. Runs as ``hyperwheel-viewer.service``.
 
-People reach OE2 only through this proxy, on the Pi itself (``https://127.0.0.1:8443``) and from the hotspot
-(``https://192.168.99.1:8443``). It:
+People reach OE2 only through this proxy: from the hotspot at ``https://192.168.99.1:8443``, and on the Pi
+itself at ``https://127.0.0.1:8443``, or ``http://127.0.0.1:8442`` for Chromium on the Pi's desktop. Traffic
+on 127.0.0.1 never leaves the Pi, so it needs no encryption, and the browser shows no certificate warning there.
+It:
 
 - **signs people in** as ``datamanager`` or ``admin``, checking the password against the system's own hash
   (``/etc/shadow``, which the service may read through the ``shadow`` group), so no password is stored a second
@@ -53,6 +55,8 @@ log = logging.getLogger("hyperwheel.viewer")
 
 PORT = 8443
 ADDRESSES = ("127.0.0.1", "192.168.99.1")
+# Plain HTTP for the Pi's own browser, on the Pi only: 127.0.0.1 can't be reached from anywhere else.
+LOCAL_PORT = 8442
 ORTHANC = ("127.0.0.1", 8042)
 ACCOUNTS = (DATA_MANAGER, ADMIN_USER)
 SESSION_S = 8 * 3600
@@ -428,11 +432,16 @@ class Server(ThreadingHTTPServer):
 
 
 def make_server(viewer: Viewer, address: str, port: int, context: ssl.SSLContext | None) -> Server:
-    """``context`` None is plain HTTP, for tests only: the service always passes one."""
+    """``context`` None is plain HTTP: only for 127.0.0.1 (``listeners``) and tests."""
     server = Server((address, port), viewer.handler())
     if context is not None:
         server.socket = context.wrap_socket(server.socket, server_side=True)
     return server
+
+
+def listeners() -> list[tuple[str, int, bool]]:
+    """Where the service listens, as (address, port, HTTPS). Plain HTTP only on 127.0.0.1, which never leaves the Pi."""
+    return [*((address, PORT, True) for address in ADDRESSES), ("127.0.0.1", LOCAL_PORT, False)]
 
 
 def tls_context(cert: Path, key: Path) -> ssl.SSLContext:
@@ -467,10 +476,11 @@ def main(args: list[str]) -> int:
     except (OSError, ssl.SSLError, KeyProblem, KeyError, ValueError) as e:
         log.error("Viewer: can't start (%s).", e)
         return 1
-    servers = [make_server(viewer, address, PORT, context) for address in ADDRESSES]
+    servers = [make_server(viewer, address, port, context if tls else None) for address, port, tls in listeners()]
     for server in servers[1:]:
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    log.info("Viewer: Orthanc Explorer 2 is at https://%s:%d.", ADDRESSES[-1], PORT)
+    log.info("Viewer: Orthanc Explorer 2 is at https://%s:%d, and at http://127.0.0.1:%d on the Pi itself.",
+             ADDRESSES[-1], PORT, LOCAL_PORT)
     servers[0].serve_forever()
     return 0
 

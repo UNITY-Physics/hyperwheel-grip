@@ -2,7 +2,7 @@
 
 Status: built so far: the release format with signing and checking, OE2 and its proxy, the
 installer, the updater, setup, the admin password, first boot, Connect's sign-in and the firewall.
-Not built yet: the image itself.
+The image workflow is built, and the first image is still to be made and tested.
 
 Every Pi runs the same software: one pinned **image** that carries the OS,
 and one tested **release** that carries Orthanc, Orthanc Explorer 2 (OE2) and
@@ -17,35 +17,65 @@ the base is byte for byte what was tested. The result is a dated file with its
 own SHA-256 and a list of every package in it. Only the hash and the list are
 published on GitHub. The file itself is the pin.
 
-It contains:
+It contains (`image/customise.sh`):
 
-- the desktop, with Chromium bookmarks for the scanner interface
-  (`https://<scanner>:8080/`), OE2 and the Upload Monitor, and no keyring
-  prompt;
-- **Raspberry Pi Connect** (`rpi-connect`), for screen sharing and a remote
-  shell;
+- **release 1, already installed**, by the same offline installer an update
+  uses (`--image`, which starts nothing and leaves what differs on each Pi to
+  first boot). A freshly flashed Pi works without downloading anything. Until
+  it's set up, the Upload Monitor shows the page where it joins Connect;
+- the release-signing public keys, and **admin's password** set from the signed
+  admin password file as it was at build time, so admin works before the Pi has
+  ever been online;
+- **two accounts and no others:** `datamanager` (uid 1000, logged in to the
+  desktop automatically, able to read the Pi's logs, its password locked until setup gives it one, lingering
+  on so Connect runs with nobody logged in) and `admin` (in `sudo`). The official
+  image's `pi` placeholder and its first-boot wizard are removed;
+- **no other way in:** cloud-init and the user-renaming service are switched
+  off, and a first-run script that Raspberry Pi Imager puts on the card is
+  replaced by one that only removes Imager's boot options and restarts. So a
+  site that answers Yes to Imager's customisation by mistake gets no extra user,
+  Wi-Fi or password;
+- the desktop, with Chromium bookmarks for the scanner (`https://10.42.0.1:8080/`),
+  the Upload Monitor (`http://192.168.99.1:5000/`) and OE2
+  (`http://127.0.0.1:8442/ui/app/`, which only the Pi itself can open), and no
+  keyring prompt (`--password-store=basic`);
+- **Raspberry Pi Connect** (`rpi-connect`), signed out;
+- the **scanner cable** connection (10.42.0.88), so a new Pi reaches the
+  internet through the scanner before it's set up;
 - the **EEE fix**: a NetworkManager dispatcher script that turns
   Energy-Efficient Ethernet off on `eth0` each time it comes up (EEE made the
   scanner's PACS checks fail);
-- a default **Wi-Fi country**, so the hotspot can start at first boot, on a
-  2.4 GHz channel allowed everywhere (1, 6 or 11). Setup then switches to the
-  site's country;
-- the **firewall** (below), SSH, and the user accounts without passwords;
+- **Wi-Fi country GB**, so the hotspot starts at first boot, on channel 6, which
+  every country allows. Setup then switches to the site's country;
+- the **firewall** (below) and SSH;
 - the first-boot service, which runs once, before the network and Orthanc
-  start. It makes this Pi's own Orthanc login, moves the shared hotspot password
-  from the card into the site settings and the hotspot's connection (root-only),
-  and deletes it from the card with the folder and any hidden files macOS left.
-  NetworkManager then starts the hotspot `Hyperwheel` by itself. A card with no
-  password waits for setup, which asks;
-- the release-signing public keys;
-- **release 1, already installed**, by the same offline installer an update
-  uses (`--image`, which starts nothing and leaves Orthanc's login to first boot). A freshly flashed Pi works without downloading anything. Until the
-  site's settings and keys are added, the service waits as "not set up yet"
-  and the Upload Monitor says so.
+  start. It makes this Pi's own Orthanc login and certificate, moves the shared
+  hotspot password from the card into the site settings and the hotspot's
+  connection (root-only), and deletes it from the card with the folder and any
+  hidden files macOS left. NetworkManager then starts the hotspot `Hyperwheel`
+  by itself. A card with no password waits for setup, which asks;
+- **nothing that changes by itself:** apt's daily timers, PackageKit (and so the
+  desktop's update notifier) and `rpi-eeprom-update` are masked.
 
-Nothing site-specific or secret is in the published image. CI installs a release
-on the pinned official image with no network, on every change to the installer
-(`tools/image/test-offline-install.sh`).
+Nothing site-specific or secret is in the image, and nothing in it differs from
+one Pi to the next: SSH host keys, the machine ID, Orthanc's login and the
+certificate are all made at first boot.
+
+**Building it.** `image-build.yml`, run by hand with a published release (such
+as `0.1.13`), downloads the official image and stops unless its SHA-256 matches
+`image/base.lock`. It installs the release offline in a chroot, as a Pi would
+(signature and every file checked), applies `image/customise.sh`, then checks the
+result: only admin has a password hash, no per-Pi file is there, the right
+services are on and off, `visudo`, `sshd -t` and `nft -c` accept what's there,
+and `hyperwheel help` runs. It's kept as a workflow artifact for 30 days:
+`hyperwheel-<date>.img.zip`, its SHA-256, and the list of every package in it.
+The admin downloads it, checks the SHA-256, and publishes only the SHA-256 and the
+package list, on a GitHub release `image-<date>`. On a pull request that changes
+the image, the same build runs with a release from that commit, signed with a
+throwaway key, and nothing is kept.
+
+CI also installs a release on the pinned official image with no network, on
+every change to the installer (`tools/image/test-offline-install.sh`).
 
 **The private copy.** The sites flash a private copy of the image that also
 holds the shared hotspot password, so nobody types it at setup. The admin makes
@@ -65,7 +95,7 @@ hidden files macOS leaves on the partition, and prints the private copy's
 SHA-256 for the sites. Share the private copy only with the sites, privately:
 anyone who has it can read the password from it.
 
-Sites download the private copy (about 1.5 GB, an estimate) **the day before**,
+Sites download the private copy (about 2.1 GB) **the day before**,
 in a browser, which can resume a broken download. They check its SHA-256 and
 flash it with Raspberry Pi Imager ("Use custom"). The SOP gives the exact steps:
 
@@ -81,7 +111,7 @@ plugin file in `"Plugins"` (not Debian's whole plugin folder):
 
 | Plugin | Loaded | Why |
 |---|---|---|
-| Orthanc Explorer 2 | yes | The web interface the maintainer uses over Connect. |
+| Orthanc Explorer 2 | yes | The web interface the admin uses over Connect. |
 | Legacy Orthanc Explorer (built in) | no (`"OrthancExplorerEnabled": false`) | OE2 replaces it; one interface to keep safe. |
 | Delayed deletion | no | Deletes files in the background. Hyperwheel deletes one instance at a time after GRIP confirms it, which is quick on its own; this adds a queue that could outlive a crash. |
 | Housekeeper | no | Rewrites the database and files after settings change. It loads the SD card for nothing on a Pi whose settings are fixed by the release. |
@@ -169,8 +199,9 @@ settings, it keeps a pasted key for this service. It accepts only organisation k
   little longer each time, up to a minute (`PerSourcePenalties`). The firewall
   also holds back an address that opens more than about 20 new SSH connections a
   minute.
-- OE2 is at `https://192.168.99.1:8443` (and `https://127.0.0.1:8443` on the
-  Pi itself), behind a small proxy, `hyperwheel-viewer.service`:
+- OE2 is at `https://192.168.99.1:8443` (and on the Pi itself at
+  `http://127.0.0.1:8442`, which never leaves the Pi, so its Chromium shows no
+  certificate warning), behind a small proxy, `hyperwheel-viewer.service`:
   - People sign in with `datamanager` or `admin`, checked against the system's
     own password hashes, so no password is stored a second time. A sign-in lasts
     8 hours, or until the service restarts.
@@ -222,7 +253,8 @@ up, setup refuses to run, and the sudo rule no longer lists it.
    has been typed back. Then the screen is cleared.
 7. **The admin account**, in the `sudo` group. Setup fetches the admin
    password file (below) straight away and sets its hash.
-8. **Password-free sudo removed** (Raspberry Pi OS's `010_pi-nopasswd`) and
+8. **Password-free sudo removed** (Raspberry Pi OS's `010_pi-nopasswd`, which
+   the Hyperwheel image already leaves out) and
    `datamanager` taken out of the `sudo` group, but only once another account
    can still become root with a password. If the admin password couldn't be
    fetched, setup says so, and the updater finishes this step by itself once

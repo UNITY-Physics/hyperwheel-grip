@@ -1,0 +1,2 @@
+# Hyperwheel: keep saved passwords in Chromium's own store, so the desktop never asks for a keyring password.
+export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --password-store=basic"

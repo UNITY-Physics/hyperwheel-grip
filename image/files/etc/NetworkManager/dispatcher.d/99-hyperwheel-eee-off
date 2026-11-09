@@ -1,0 +1,6 @@
+#!/bin/sh
+# Hyperwheel: keep Energy-Efficient Ethernet off on the scanner cable (eth0). It made the scanner's PACS checks fail.
+if [ "$1" = "eth0" ] && [ "$2" = "up" ]; then
+    /usr/sbin/ethtool --set-eee eth0 eee off
+fi
+exit 0
