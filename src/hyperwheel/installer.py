@@ -9,8 +9,8 @@ by the updater:
 1. Check the release: signature and every file (``hyperwheel.release``).
 2. The service account: created as a system account if missing. An existing
    account of that name that isn't a system account is never taken over.
-3. Orthanc and its libraries from the release's ``.deb`` files, from local
-   files only, and only if a version differs.
+3. Orthanc and its libraries from the release's ``.deb`` files, with apt shown
+   no other source, and only if a version differs.
 4. The release copied to ``/opt/hyperwheel/releases/<version>/`` (read-only),
    with a venv built offline from its wheels.
 5. Orthanc's settings, the systemd units and the data-manager sudo rule
@@ -34,6 +34,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -185,8 +186,9 @@ class Installer:
         if not wanted:
             self.say("Orthanc packages: already the release's versions.")
             return
-        self.run(["apt-get", "install", "-y", "-q", "--no-download", "--no-install-recommends", *wanted],
-                 env={"DEBIAN_FRONTEND": "noninteractive"})
+        with tempfile.TemporaryDirectory(prefix="hyperwheel-apt.") as scratch:
+            self.run(["apt-get", "install", "-y", "-q", "--no-install-recommends", *apt_with_no_sources(Path(scratch)),
+                      *wanted], env={"DEBIAN_FRONTEND": "noninteractive"})
         self.say(f"Orthanc packages: installed {len(wanted)} from the release (nothing downloaded).")
 
     # ---- 4. the release and its venv --------------------------------------------------
@@ -358,6 +360,22 @@ class Installer:
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.run(["systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.say("Hyperwheel and the Upload Monitor: started.")
+
+
+def apt_with_no_sources(scratch: Path) -> list[str]:
+    """Options that make apt see only the Pi's installed packages and the files named on its command line.
+
+    When a repository in apt's lists offers the same version as a local ``.deb``, apt prefers the
+    repository's copy, and then has nothing to install without the network. With no sources and empty
+    lists, the release's files are the only candidates, so nothing can be downloaded (and ``--no-download``
+    must not be added: apt then stops with an internal error). A dependency that's neither installed nor in
+    the release stops apt before it changes anything. The Pi's own lists and cache aren't touched.
+    """
+    (scratch / "lists" / "partial").mkdir(parents=True)
+    (scratch / "cache" / "archives" / "partial").mkdir(parents=True)
+    return ["-o", "Dir::Etc::sourcelist=/dev/null", "-o", "Dir::Etc::sourceparts=/dev/null",
+            "-o", f"Dir::State::lists={scratch}/lists", "-o", f"Dir::Cache={scratch}/cache",
+            "-o", "APT::Sandbox::User=root"]
 
 
 def write_sudo_rule(layout: Layout, set_up: bool, run: Callable[..., str]) -> bool:

@@ -125,7 +125,12 @@ def test_first_install_on_a_fresh_pi(tmp_path, key, signers, pi):
     installer(make_release(tmp_path, key), signers, pi, said).install()
     assert fake.ran("useradd")[0][-1] == "hyperwheel" and "--system" in fake.ran("useradd")[0]
     apt = fake.ran("apt-get")[0]
-    assert "--no-download" in apt and sum(a.endswith(".deb") for a in apt) == 2
+    assert sum(a.endswith(".deb") for a in apt) == 2
+    # apt sees no repository, or it would prefer a repository's copy of the same version and need the network
+    assert {"Dir::Etc::sourcelist=/dev/null", "Dir::Etc::sourceparts=/dev/null"} <= set(apt)
+    assert any(a.startswith("Dir::State::lists=") and "/var/lib/apt" not in a for a in apt)
+    assert any(a.startswith("Dir::Cache=") and "/var/cache/apt" not in a for a in apt)
+    assert "--no-download" not in apt  # apt stops with an internal error when it's combined with no sources
     rel = root / "opt/hyperwheel/releases/0.1.0"
     assert (rel / "release" / "manifest.json").exists() and mode(rel / "release" / "debs") == 0o755
     assert os.readlink(root / "opt/hyperwheel/current") == "releases/0.1.0"
