@@ -162,10 +162,11 @@ again for late files for 7 days.
 File modification times on the scanner are not used: they are shown in a
 different time zone from the names.
 
-After each pull, a series that should have raw data (ORIGINAL images, not a
-localizer) but has no raw file with its exact acquisition time is flagged,
-and so is a study whose scanner folder can't be found 10 minutes after it
-became stable. A site that saves no raw data sets `rrdf.enabled = false`.
+Raw files aren't matched to series, and the Pi never flags missing raw data.
+Timestamps between series and raw files don't always line up, and DICOM and
+raw data go to GRIP separately. Whatever raw data the study's folder holds is
+uploaded, and a data manager sees on GRIP if something is missing. A site that
+saves no raw data sets `rrdf.enabled = false`.
 
 ## Checks
 
@@ -180,8 +181,8 @@ Everything else is flagged only, and the data goes to GRIP unchanged: a
 blank, padded or unexpected Patient ID (`patient_id_pattern` per project in
 the routing file), a Patient ID that differs from an ID in the patient name,
 a phantom not under the site's phantom ID or a participant under it, the
-same ID twice in one day, a different sex or birth date for the same ID,
-and series without raw data. The phantom check uses the site's
+same ID twice in one day, and a different sex or birth date for the same
+ID. Missing raw data is never flagged. The phantom check uses the site's
 `phantom_patient_id`; a site without one skips it.
 
 Patient data in the state store (Patient ID, name, sex, birth date) is

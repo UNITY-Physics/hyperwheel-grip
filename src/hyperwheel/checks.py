@@ -16,8 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .config import Project, SiteConfig
-from .dicominfo import InstanceInfo, parse_datetime
-from .ids import rrdf_timestamp
+from .dicominfo import InstanceInfo
 from .state import Store, Study
 
 # Every code a check can raise, so a re-run clears the ones that no longer apply.
@@ -25,10 +24,12 @@ STUDY_CHECK_CODES = (
     "MIXED_LOGINS", "BLANK_PATIENT_ID", "PATIENT_ID_SPACES", "PATIENT_ID_PATTERN", "PATIENT_ID_NAME_DIFFER",
     "PHANTOM_UNDER_PARTICIPANT_ID", "PARTICIPANT_UNDER_PHANTOM_ID", "SAME_ID_SAME_DAY", "DEMOGRAPHICS_DIFFER",
 )
-RAW_CHECK_CODES = ("RAW_MISSING_FOR_SERIES", "RAW_FOLDER_NOT_FOUND")
+# Flags about missing raw data, which the Pi no longer raises: DICOM and raw data go to GRIP separately and
+# aren't coupled there, and timestamps between series and raw files don't always line up. Whatever raw data
+# is there uploads, and a data manager sees on GRIP if something is missing. Any still open are cleared.
+RETIRED_RAW_CODES = ("RAW_MISSING_FOR_SERIES", "RAW_FOLDER_NOT_FOUND")
 
 PHANTOM_SERIES = "temperature vial"
-NO_RAW_SERIES = ("localizer", "localiser")
 
 
 @dataclass(frozen=True)
@@ -103,24 +104,17 @@ def study_issues(store: Store, study: Study, instances: list[InstanceInfo], site
     return _dedupe(issues)
 
 
-def raw_issues(store: Store, study: Study, folder_found: bool) -> list[Issue]:
-    """Series that should have raw data but don't. Flags only; run after a raw-data pull."""
-    if not folder_found:
-        return [Issue("RAW_FOLDER_NOT_FOUND", "No raw-data folder for this study was found on the scanner. "
-                      "Check that raw data saving is on for this protocol.")]
-    raw_times = {rrdf_timestamp(f.name) for f in store.files(study.id, kind="rrdf") if f.state != "seen"}
-    missing = []
-    for f in store.files(study.id, kind="dicom"):
-        description = (f.series_description or "").lower()
-        if "ORIGINAL" not in (f.image_type or "") or any(s in description for s in NO_RAW_SERIES):
-            continue
-        when = parse_datetime(f.acquisition_time)
-        if when is not None and when not in raw_times:
-            missing.append(f.series_description or f.series_uid or "?")
-    if missing:
-        names = ", ".join(sorted(set(missing)))
-        return [Issue("RAW_MISSING_FOR_SERIES", f"No raw data found for: {names}.")]
-    return []
+def clear_retired_flags(store: Store) -> int:
+    """Clear any raw-data flags raised by an earlier release. Returns how many were cleared."""
+    cleared = 0
+    for flag in store.open_flags():
+        if flag.code in RETIRED_RAW_CODES:
+            if flag.study_id is not None:
+                store.clear_study_flags(flag.study_id, [flag.code])
+            else:
+                store.clear_flags(flag.code, file_id=flag.file_id, project=flag.project, ref=flag.ref)
+            cleared += 1
+    return cleared
 
 
 def apply(store: Store, study: Study, issues: list[Issue], codes: Iterable[str]) -> None:
