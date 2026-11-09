@@ -126,7 +126,7 @@ def test_recent_grip_answer_beats_a_timed_out_quick_check(env):
 
     site = replace(env.site, scanner=replace(env.site.scanner, host="10.42.0.1"))
     results, code = doctor.run(site, env.routing, Probes(link=lambda i: True, answers=lambda h, p: False,
-                                                         lookup=lambda name: 0.01,
+                                                         lookup=lambda name: 0.01, viewer_answers=lambda: True,
                                                          orthanc_answers=lambda u: True, synced=lambda: True,
                                                          free_bytes=lambda p: 50 * 1024 ** 3, now=env.clock))
     by = {w: (r, d) for r, w, d in results}

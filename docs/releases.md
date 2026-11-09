@@ -1,8 +1,8 @@
 # Image, releases and updates
 
-Status: built so far: the release format with signing and checking, OE2, the installer, the
-updater, setup, the admin password and first boot. Not built yet: the image itself, the firewall,
-the hotspot limit and OE2's proxy.
+Status: built so far: the release format with signing and checking, OE2 and its proxy, the
+installer, the updater, setup, the admin password, first boot and Connect's sign-in. Not built yet:
+the image itself, the firewall and the hotspot limit.
 
 Every Pi runs the same software: one pinned **image** that carries the OS,
 and one tested **release** that carries Orthanc, Orthanc Explorer 2 (OE2) and
@@ -154,11 +154,26 @@ settings, it keeps a pasted key for this service. It accepts only organisation k
   per-site setting to turn routing off. While the Pi has uploads waiting,
   hotspot devices are limited (4 Mbit/s each way by default, a site setting), so
   the Pi's uploads come first. Otherwise they run at full speed.
-- OE2 sits behind a small proxy on HTTPS, with a certificate made on each Pi.
-  People sign in with `datamanager` or `admin`, checked against the system's
-  password hashes. Orthanc's own login stays internal and root-only. Wrong
-  passwords are slowed down. Nobody can delete, modify or upload through OE2,
-  which is blocked in the proxy as well as hidden. Downloads stay on for both.
+- OE2 is at `https://192.168.99.1:8443` (and `https://127.0.0.1:8443` on the
+  Pi itself), behind a small proxy, `hyperwheel-viewer.service`:
+  - People sign in with `datamanager` or `admin`, checked against the system's
+    own password hashes, so no password is stored a second time. A sign-in lasts
+    8 hours, or until the service restarts.
+  - Wrong passwords from an address wait 1, 2, 4 ... up to 30 seconds before the
+    next try, and one password is checked at a time. Never a lockout. Failed
+    sign-ins are logged with the account and address, never what was typed.
+  - Nobody can delete, modify or upload through OE2. Those buttons are hidden,
+    and the proxy refuses the requests too: only reads go through, plus OE2's
+    three searches. Downloads (zip and DICOM files) stay on for both accounts,
+    and each one is logged.
+  - Orthanc's own login stays internal and root-only. The proxy adds it.
+  - The service runs as a user systemd makes for it, in the `shadow` group so
+    it can check passwords. It can't read the staged files or the GRIP keys.
+  - The certificate is made once on each Pi (first boot, or the installer on a
+    Pi that has none) and never replaced. No public authority signs one for
+    192.168.99.1, so a laptop's browser warns on its first visit to each Pi.
+    `hyperwheel status` shows the certificate's fingerprint, to compare with the
+    browser's.
 - On the scanner cable: SSH, DICOM (port 4242) and ping.
 - The release-signing key is only for signing releases, never for logins.
 

@@ -570,7 +570,7 @@ class LivePi(Pi):
 
     def health_problem(self, since: float) -> str | None:
         from .dashboard import HEARTBEAT
-        units = {"orthanc": "Orthanc"}
+        units = {"orthanc": "Orthanc", "hyperwheel-viewer.service": "Orthanc Explorer 2"}
         if self.routing:
             units |= {"hyperwheel.service": "Hyperwheel's service", "hyperwheel-dashboard.service": "the Upload Monitor"}
         for unit, name in units.items():

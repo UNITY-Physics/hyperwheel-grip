@@ -1,7 +1,8 @@
 """The first start of a newly flashed Pi, before the network and Orthanc start. Run as root by
 ``hyperwheel-firstboot.service``, which only an image enables.
 
-1. Orthanc's login. Every Pi has its own, so it can't be in the image.
+1. Orthanc's login and the certificate Orthanc Explorer 2 is served with. Every Pi has its own, so they can't
+   be in the image.
 2. The hotspot's password, from the private copy of the image: moved into the site settings
    (root-only) and into the hotspot's NetworkManager connection, then deleted from the boot
    partition, which every account on the Pi can read. NetworkManager starts afterwards and brings
@@ -58,6 +59,8 @@ def first_boot(layout: Layout, *, say: Callable[[str], None] = print, setup: Set
     try:
         if installer.orthanc_login():
             say("Orthanc's login: made for this Pi.")
+        if installer.viewer_certificate():
+            say("Orthanc Explorer 2's certificate: made for this Pi.")
         hotspot_from_card(setup, say)
     except (InstallError, SetupError, OSError) as e:
         say(f"First boot stopped, and the next start tries again: {e}")

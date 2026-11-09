@@ -57,8 +57,10 @@ def test_with_a_password_on_the_card_the_hotspot_is_ready_and_the_card_is_clean(
     assert PASSWORD not in said
 
 
-def test_every_pi_makes_its_own_orthanc_login(pi, tmp_path):
-    assert boot(pi)[0] == 0
+def test_every_pi_makes_its_own_orthanc_login_and_certificate(pi, tmp_path):
+    code, said = boot(pi)
+    assert code == 0 and "Orthanc Explorer 2's certificate: made for this Pi." in said
+    assert mode(pi.p("/etc/hyperwheel/viewer/key.pem")) == 0o600
     login = json.loads((pi.etc / "orthanc.json").read_text())
     assert mode(pi.etc / "orthanc.json") == 0o600
     assert mode(pi.orthanc_conf / "users.json") == 0o640

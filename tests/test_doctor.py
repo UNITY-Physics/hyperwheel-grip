@@ -12,11 +12,11 @@ from hyperwheel.doctor import NOTE, OK, PROBLEM, Probes
 
 
 def run(env, *, scanner=True, link=True, grip=True, orthanc=True, beat=True, lookup=lambda name: 0.01,
-        connect_state=None):
+        connect_state=None, viewer=True):
     site = replace(env.site, scanner=replace(env.site.scanner, host="10.42.0.1"))
     if beat:
         env.store.set_cursor(HEARTBEAT, int(env.clock()))
-    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip, lookup=lookup, connect_state=lambda: connect_state,
+    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip, lookup=lookup, connect_state=lambda: connect_state, viewer_answers=lambda: viewer,
                     etc=site.state_db.parent,
                     orthanc_answers=lambda url: orthanc, synced=lambda: True,
                     free_bytes=lambda p: 50 * 1024 ** 3, now=env.clock)
@@ -79,6 +79,11 @@ def test_lookup_counts_no_such_name_as_an_answer_and_a_hang_as_none(monkeypatch)
 
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: time.sleep(1))
     assert reach.lookup_seconds("x.example.org", timeout_s=0.01) is None
+
+
+def test_viewer_not_answering(env):
+    r, code = run(env, viewer=False)
+    assert code == 1 and r["Orthanc Explorer 2"] == (PROBLEM, "not answering. Uploads aren't affected.")
 
 
 def test_connect_signed_in_and_not_signed_in(env):

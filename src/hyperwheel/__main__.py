@@ -39,6 +39,9 @@ def _main(argv: list[str]) -> int:
     if argv[:1] == ["first-boot"]:  # the unit that runs once on a newly flashed Pi
         from . import firstboot
         return firstboot.main(argv[1:])
+    if argv[:1] == ["viewer"]:  # the service that serves Orthanc Explorer 2, also before setup
+        from . import viewer
+        return viewer.main(argv[1:])
     if argv[:1] == ["connect-watch"]:  # the unit that looks after Raspberry Pi Connect, also before setup
         from . import connect
         return connect.main(argv[1:])
@@ -117,6 +120,11 @@ def _main(argv: list[str]) -> int:
     for k in s["keys"]:
         print(f"  {k['project']}: {k['status']}")
     print(f"\nRaspberry Pi Connect: {s['connect']['text']}")
+    from .installer import VIEWER_CERT
+    from .viewer import fingerprint
+    print("Orthanc Explorer 2: https://192.168.99.1:8443")
+    if print_fingerprint := fingerprint(Path(VIEWER_CERT)):
+        print(f"  Its certificate's SHA-256 fingerprint, to compare with the browser's: {print_fingerprint}")
     return 0
 
 
