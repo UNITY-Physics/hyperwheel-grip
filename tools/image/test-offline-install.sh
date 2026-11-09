@@ -122,12 +122,18 @@ if [ "$mode" = image ]; then
   printf 'x' > "$card/._hotspot-password"
   offline /usr/local/bin/hyperwheel first-boot
   [ ! -e "$card" ] || { echo "First boot left the password's folder on the card." >&2; ls -la "$card" >&2; exit 1; }
-  [ "$(stat -c '%a %U' "$mnt/etc/hyperwheel/hotspot.json")" = "600 root" ]
-  [ "$(stat -c '%a %U' "$mnt/etc/NetworkManager/system-connections/Hyperwheel.nmconnection")" = "600 root" ]
-  [ "$(stat -c '%a %U' "$mnt/etc/hyperwheel/orthanc.json")" = "600 root" ]
-  [ "$(stat -c '%a %G' "$mnt/etc/hyperwheel/orthanc.d/users.json")" = "640 orthanc" ]
-  [ -e "$mnt/etc/hyperwheel/first-boot-done" ]
-  offline /usr/local/bin/hyperwheel first-boot | grep -q "already done"
+  # Asked inside the image: the orthanc group doesn't exist on the machine running this.
+  has_mode() {
+    have=$(in_image stat -c '%a %U %G' "$1")
+    [ "$have" = "$2" ] || { echo "$1: expected $2, found $have." >&2; exit 1; }
+  }
+  has_mode /etc/hyperwheel/hotspot.json "600 root root"
+  has_mode /etc/NetworkManager/system-connections/Hyperwheel.nmconnection "600 root root"
+  has_mode /etc/hyperwheel/orthanc.json "600 root root"
+  has_mode /etc/hyperwheel/orthanc.d/users.json "640 root orthanc"
+  [ -e "$mnt/etc/hyperwheel/first-boot-done" ] || { echo "First boot left no marker." >&2; exit 1; }
+  again=$(offline /usr/local/bin/hyperwheel first-boot)
+  case "$again" in *"already done"*) ;; *) echo "First boot ran twice: $again" >&2; exit 1 ;; esac
 fi
 
 echo "Offline install on the official image passed ($mode)."
