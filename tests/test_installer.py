@@ -178,7 +178,7 @@ def test_update_checks_are_switched_on_and_the_release_signers_kept_for_the_upda
     assert "ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel update check" in \
         (units / "hyperwheel-update.service").read_text()
     assert "OnUnitInactiveSec=6h" in (units / "hyperwheel-update.timer").read_text()
-    assert ["systemctl", "enable", "--now", "hyperwheel-update.timer"] in fake.commands
+    assert ["systemctl", "enable", "--now", "hyperwheel-update.timer", "hyperwheel-connect.service"] in fake.commands
     assert os.readlink(root / "usr/local/bin/hyperwheel") == "/opt/hyperwheel/current/venv/bin/hyperwheel"
     trusted = root / "etc/hyperwheel/release_allowed_signers"
     assert trusted.read_bytes() == signers.read_bytes() and mode(trusted) == 0o644
@@ -322,7 +322,8 @@ def test_image_mode_starts_nothing_and_leaves_the_login_to_first_boot(tmp_path, 
     installer(make_release(tmp_path, key), signers, pi, said, image=True, start=False).install()
     assert fake.ran("apt-get") and fake.ran("pip")  # the same install
     systemctl = fake.ran("systemctl")
-    assert systemctl == [["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer"]]
+    assert systemctl == [["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer",
+                          "hyperwheel-connect.service", "hyperwheel-dashboard.service"]]
     assert not (root / "etc/hyperwheel/orthanc.json").exists()
     assert not (root / "etc/hyperwheel/orthanc.d/users.json").exists()
     assert (root / "etc/hyperwheel/orthanc.d/hyperwheel.json").is_symlink()
@@ -336,3 +337,12 @@ def test_a_normal_install_never_enables_first_boot(tmp_path, key, signers, pi):
     installer(make_release(tmp_path, key), signers, pi, []).install()
     assert not any("hyperwheel-firstboot.service" in c for c in fake.ran("systemctl"))
     assert (root / "etc/hyperwheel/orthanc.json").exists()
+
+
+def test_the_upload_monitor_may_write_only_to_connects_inbox(tmp_path, key, signers, pi):
+    root, _ = pi
+    installer(make_release(tmp_path, key), signers, pi, []).install()
+    var = root / "var/lib/hyperwheel"
+    assert mode(var / "connect") == 0o755 and mode(var / "connect" / "inbox") == 0o730
+    unit = (root / "etc/systemd/system/hyperwheel-dashboard.service").read_text()
+    assert "ReadWritePaths=/var/lib/hyperwheel/connect/inbox\n" in unit and "ProtectSystem=strict" in unit

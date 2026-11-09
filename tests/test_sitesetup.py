@@ -175,7 +175,8 @@ def test_a_fresh_pi_is_set_up_from_the_pasted_site_file(pi):
     assert not (pi.root / "etc/sudoers.d/010_pi-nopasswd").exists()
     assert (etc / "setup-done").exists()
     assert (pi.root / "etc/sudoers.d/hyperwheel").read_text() == sudo_rule(True)
-    assert pi.ran_any("systemctl", "enable", "--now", "hyperwheel.service", "hyperwheel-dashboard.service")
+    assert pi.ran_any("systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service")
+    assert pi.ran_any("systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service")
     assert not pi.ran_any("systemctl", "reboot")
 
     # no password is written anywhere, except the hotspot's and the scanner's own root-only files

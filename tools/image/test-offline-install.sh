@@ -112,7 +112,9 @@ if [ "$mode" = image ]; then
   for f in orthanc.json orthanc.d/users.json hotspot.json first-boot-done setup-done; do
     [ ! -e "$mnt/etc/hyperwheel/$f" ] || { echo "$f shouldn't be in the image." >&2; exit 1; }
   done
-  [ "$(in_image systemctl is-enabled hyperwheel-firstboot.service)" = enabled ]
+  for unit in hyperwheel-firstboot.service hyperwheel-connect.service hyperwheel-dashboard.service; do
+    [ "$(in_image systemctl is-enabled "$unit")" = enabled ] || { echo "$unit isn't enabled." >&2; exit 1; }
+  done
   grep -q "hyperwheel setup" "$mnt/etc/sudoers.d/hyperwheel"
 
   echo "== First boot, with a password on the card as written on a Mac"

@@ -16,9 +16,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, reach
+from . import __version__, connect, reach
 from .config import Routing, SiteConfig
 from .dashboard import HEARTBEAT, KEY_TEXT, clock_synced
+from .installer import is_set_up
 from .state import Store
 
 OK, PROBLEM, NOTE = "OK", "PROBLEM", "NOTE"
@@ -43,6 +44,8 @@ class Probes:
     synced: Callable[[], bool] = clock_synced
     free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free
     now: Callable[[], float] = time.time
+    connect_state: Callable[[], dict | None] = connect.read_state
+    etc: Path = Path("/etc/hyperwheel")
 
 
 def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tuple[list[tuple[str, str, str]], int]:
@@ -145,6 +148,9 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
             else:
                 out.append((PROBLEM, f"GRIP key for {name}", KEY_TEXT.get(status[0], status[0])))
         store.close()
+
+    result, text = connect.describe(p.connect_state(), now, set_up=is_set_up(p.etc))
+    out.append((result, "Raspberry Pi Connect", text))
 
     from .updater import Paths, summary
     out.append((NOTE, "Updates", summary(Paths())))
