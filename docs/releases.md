@@ -37,15 +37,33 @@ It contains:
   site's settings and keys are added, the service waits as "not set up yet"
   and the Upload Monitor says so.
 
-Nothing site-specific or secret is in the image.
+Nothing site-specific or secret is in the published image.
 
-Sites download the image (about 1.5 GB, an estimate) **the day before**, in a
-browser, which can resume a broken download. They check its SHA-256 and flash
-it with Raspberry Pi Imager ("Use custom"). The SOP gives the exact steps:
+**The private copy.** The sites flash a private copy of the image that also
+holds the shared hotspot password, so nobody types it at setup. The admin makes
+it on their Mac:
 
-- Windows (PowerShell): `Get-FileHash .\hyperwheel-<date>.img.xz` and compare
-  with the published value;
-- Mac (Terminal): `shasum -a 256 ~/Downloads/hyperwheel-<date>.img.xz`.
+```
+tools/image/add-hotspot-password.sh ~/Downloads/hyperwheel-<date>.img.zip
+```
+
+It asks for the password twice, hidden, checks it as setup does (8 to 63
+characters a keyboard can type, no space at the start or end), and writes
+`hyperwheel-<date>-private.img.zip` beside the original (mode 600), with the
+password in `hyperwheel/hotspot-password` on the boot partition. The original
+stays as it was. The password is handled only by the shell's own commands, so it
+never appears on a command line, and it's never printed. The script removes the
+hidden files macOS leaves on the partition, and prints the private copy's
+SHA-256 for the sites. Share the private copy only with the sites, privately:
+anyone who has it can read the password from it.
+
+Sites download the private copy (about 1.5 GB, an estimate) **the day before**,
+in a browser, which can resume a broken download. They check its SHA-256 and
+flash it with Raspberry Pi Imager ("Use custom"). The SOP gives the exact steps:
+
+- Windows (PowerShell): `Get-FileHash .\hyperwheel-<date>-private.img.zip` and
+  compare with the value from the admin;
+- Mac (Terminal): `shasum -a 256 ~/Downloads/hyperwheel-<date>-private.img.zip`.
 
 ## Orthanc in the release
 
