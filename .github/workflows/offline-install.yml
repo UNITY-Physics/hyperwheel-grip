@@ -1,0 +1,46 @@
+# Install a release on the pinned official Raspberry Pi OS image with no network, the way a
+# Pi does it. The release here is signed with a throwaway key made for this run, and it's
+# used for nothing else. No secrets.
+name: Offline install
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/offline-install.yml"
+      - "image/base.lock"
+      - "release/debs.*"
+      - "src/hyperwheel/installer.py"
+      - "tools/image/test-offline-install.sh"
+      - "tools/release/install.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [as-shipped, lists-refreshed]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --no-deps -r requirements/dev.lock
+          python -m pip install --no-deps -e .
+      - name: Fetch Orthanc's packages (checked against release/debs.lock)
+        run: tools/release/fetch_debs.sh build/debs
+      - name: Build a release folder and sign it with a throwaway key
+        run: |
+          python tools/release/build_release.py build --debs build/debs --out build/releases
+          ssh-keygen -q -t ed25519 -N '' -f build/throwaway
+          printf 'offline-test namespaces="hyperwheel-release" %s\n' "$(cut -d' ' -f1,2 build/throwaway.pub)" > build/signers
+          ssh-keygen -q -Y sign -f build/throwaway -n hyperwheel-release build/releases/hyperwheel-*/manifest.json
+      - name: Install it on the official image, offline
+        run: sudo tools/image/test-offline-install.sh build/releases/hyperwheel-* build/signers ${{ matrix.mode }}
