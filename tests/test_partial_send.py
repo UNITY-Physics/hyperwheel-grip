@@ -93,7 +93,7 @@ def test_second_part_fetches_and_uploads_only_the_new_raw_files(env, scanner):
     env.store.set_cursor(HEARTBEAT, int(env.clock()))
     cards = snapshot(env.store, env.site, env.routing, now=env.clock(), free_bytes=lambda p: 50 * 1024 ** 3)["studies"]
     assert len(cards) == 1
-    assert cards[0]["dicom"] == {"total": 7, "on_grip": 7}
+    assert (cards[0]["dicom"]["total"], cards[0]["dicom"]["on_grip"]) == (7, 7)
     assert cards[0]["raw"]["total"] == 10 and cards[0]["raw"]["on_grip"] == 10
 
 

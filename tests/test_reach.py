@@ -150,3 +150,18 @@ def test_service_records_both(env):
     r = reach.read(env.store)
     assert r.scanner == SCANNER_NO_ANSWER and r.scanner_since == env.clock()
     assert calls == ["internet", "scanner"]
+
+
+def test_keep_the_scanner_on_shows_once(env):
+    env.store.add_study("1.2.3", state="receiving", project=None)
+    s = snap(env)
+    assert s["headline"] == "Receiving images from the scanner" and s["subline"] == ""
+    assert s["badge"] == "Please keep the scanner on"
+
+
+def test_leave_the_scanner_on_shows_once(env):
+    staged(env)
+    env.advance(48 * 3600)
+    s = snap(env)
+    assert s["badge"] == "Please leave the scanner on to finish uploading"
+    assert "leave the scanner on" not in s["subline"]

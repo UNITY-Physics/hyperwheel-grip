@@ -53,7 +53,7 @@ def test_states_an_operator_sees(env, scanner):
     assert s["headline"] == "Fetching raw data from the scanner" and not s["on_pi_complete"]
     card = s["studies"][0]
     assert card["session"] == "2026-10-27 13:28" and card["project"] == PROJECT
-    assert card["patient_id"] == PATIENT_ID and card["dicom"] == {"total": 11, "on_grip": 0}
+    assert card["patient_id"] == PATIENT_ID and card["dicom"]["text"] == "DICOM 0/11 on GRIP"
 
     svc.local_round(env.store, organiser, puller)
     svc.local_round(env.store, organiser, puller)
@@ -63,10 +63,24 @@ def test_states_an_operator_sees(env, scanner):
     svc.upload_round(env.uploader())
     s = snap(env)
     assert s["headline"] == "Everything is on GRIP"
-    assert s["studies"][0]["dicom"] == {"total": 11, "on_grip": 11}
+    assert s["studies"][0]["dicom"]["text"] == "DICOM 11/11 on GRIP"
     assert s["studies"][0]["raw"]["on_grip"] == 9 and s["studies"][0]["state"] == "On GRIP"
     assert s["keys"] == [{"project": PROJECT, "status": "Working", "ok": True}]
     assert env.store.study_by_uid(uid).state == "uploaded"
+
+
+def test_counts_say_receiving_until_they_mean_something(env):
+    study = env.store.add_study("1.2.3", state="receiving", project=None)
+    card = snap(env)["studies"][0]
+    assert card["dicom"]["text"] == "DICOM receiving" and card["raw"]["text"] == "Raw data still to come"
+    # More images arriving for a study already counted: the count still means something.
+    env.store.add_file(kind="dicom", name="a.dcm", state="staged", study_id=study.id, sop_uid="1.2.3.4")
+    assert snap(env)["studies"][0]["dicom"]["text"] == "DICOM 0/1 on GRIP"
+
+
+def test_a_study_with_no_raw_data_says_so(env):
+    env.store.add_study("1.2.4", state="ready", project=PROJECT, raw_checked_at=env.clock())
+    assert snap(env)["studies"][0]["raw"]["text"] == "No raw data"
 
 
 def test_unrouted_studies_are_never_shown(env):
