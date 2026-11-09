@@ -634,7 +634,7 @@ InaccessiblePaths=-/var/lib/hyperwheel -/etc/hyperwheel/keys
 WantedBy=multi-user.target
 """,
     "hyperwheel-dashboard.service": """[Unit]
-Description=Hyperwheel Upload Monitor (read-only web page on the hotspot)
+Description=Hyperwheel Upload Monitor (read-only web page on the hotspot and on the Pi itself)
 After=network-online.target hyperwheel.service
 
 [Service]

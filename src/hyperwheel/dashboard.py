@@ -1,4 +1,4 @@
-"""The Upload Monitor: a small read-only web page on the Pi's hotspot.
+"""The Upload Monitor: a small read-only web page on the Pi's hotspot, and on the Pi itself.
 
 Operators use it (often on an iPad) to see when everything from the scanner is
 on the Pi; data managers use it to see what reached GRIP and what needs
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import shutil
-import socket
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -28,6 +28,8 @@ from pathlib import Path
 from . import connect, hostkeys, reach
 from .config import DashboardSettings, Routing, SiteConfig
 from .state import PENDING_FILE_STATES, Store
+
+log = logging.getLogger("hyperwheel.dashboard")
 
 HEARTBEAT = "service_heartbeat"
 _HIDDEN = ("unrouted", "purged", "archived")
@@ -205,21 +207,30 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
 
     def server_bind(self):
-        # The hotspot's address may not be up yet when the service starts. Linux lets it be bound anyway.
-        if hasattr(socket, "IP_FREEBIND"):
-            self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_FREEBIND, 1)
+        reach.allow_unassigned_address(self.socket)  # the hotspot's address may not be up yet
         super().server_bind()
+
+
+# Binds that already include the Pi itself: a second listener on 127.0.0.1 would clash with them.
+_COVERS_LOOPBACK = {LOOPBACK, "localhost", "0.0.0.0", ""}
 
 
 def addresses(bind: str) -> list[str]:
     """Where the Upload Monitor listens: the hotspot address, and the Pi itself."""
-    return [bind] if bind == LOOPBACK else [bind, LOOPBACK]
+    return [bind] if bind in _COVERS_LOOPBACK or bind.startswith("127.") else [bind, LOOPBACK]
 
 
 def _serve_all(servers: list[ThreadingHTTPServer]) -> None:
     for server in servers[1:]:
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        threading.Thread(target=_serve_logged, args=(server,), daemon=True).start()
     servers[0].serve_forever()
+
+
+def _serve_logged(server: ThreadingHTTPServer) -> None:
+    try:
+        server.serve_forever()
+    except Exception:  # noqa: BLE001 - the other address keeps working, so say so and carry on
+        log.exception("Upload Monitor: stopped answering on %s", server.server_address[0])
 
 
 def serve(site: SiteConfig, routing: Routing, *, bind: str | None = None, port: int | None = None) -> None:

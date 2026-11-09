@@ -63,7 +63,7 @@ separate read-only service (`hyperwheel dashboard`):
   this gives up: a device plugged into the scanner cable could pose as the
   scanner.
 - **Uploader** (`uploader.py`) sends staged files to GRIP.
-- **Upload Monitor** (`dashboard.py`) shows the state store on the hotspot.
+- **Upload Monitor** (`dashboard.py`) shows the state store on the hotspot, and on 127.0.0.1 for the Pi's own browser.
 - **Reachability** (`reach.py`): each round the service checks whether the
   scanner answers (and, if not, whether the cable has a link) and whether
   GRIP answers. The Pi's internet goes through the scanner, so "the scanner
