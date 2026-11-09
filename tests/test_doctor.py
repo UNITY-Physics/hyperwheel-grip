@@ -11,11 +11,13 @@ from hyperwheel.dashboard import HEARTBEAT
 from hyperwheel.doctor import NOTE, OK, PROBLEM, Probes
 
 
-def run(env, *, scanner=True, link=True, grip=True, orthanc=True, beat=True, lookup=lambda name: 0.01):
+def run(env, *, scanner=True, link=True, grip=True, orthanc=True, beat=True, lookup=lambda name: 0.01,
+        connect_state=None):
     site = replace(env.site, scanner=replace(env.site.scanner, host="10.42.0.1"))
     if beat:
         env.store.set_cursor(HEARTBEAT, int(env.clock()))
-    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip, lookup=lookup,
+    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip, lookup=lookup, connect_state=lambda: connect_state,
+                    etc=site.state_db.parent,
                     orthanc_answers=lambda url: orthanc, synced=lambda: True,
                     free_bytes=lambda p: 50 * 1024 ** 3, now=env.clock)
     results, code = doctor.run(site, env.routing, probes)
@@ -77,6 +79,18 @@ def test_lookup_counts_no_such_name_as_an_answer_and_a_hang_as_none(monkeypatch)
 
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: time.sleep(1))
     assert reach.lookup_seconds("x.example.org", timeout_s=0.01) is None
+
+
+def test_connect_signed_in_and_not_signed_in(env):
+    (env.site.state_db.parent / "site.toml").write_text("")  # set up
+    now = env.clock()
+    r, code = run(env, connect_state={"signed_in": True, "checked_at": now})
+    assert code == 0 and r["Raspberry Pi Connect"] == (OK, "signed in")
+    r, code = run(env, connect_state={"signed_in": False, "checked_at": now})
+    assert code == 1 and r["Raspberry Pi Connect"][0] == PROBLEM
+    assert "Your Hyperwheel admin can't reach this Pi" in r["Raspberry Pi Connect"][1]
+    r, code = run(env, connect_state=None)
+    assert code == 0 and r["Raspberry Pi Connect"] == (NOTE, "not checked yet")
 
 
 def test_scanner_not_answering_with_cable_connected(env):

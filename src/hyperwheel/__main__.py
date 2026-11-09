@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import cli, unexpected
 from .config import ConfigError, load_routing, load_site
-from .dashboard import clock_synced, serve, snapshot
+from .dashboard import clock_synced, serve, serve_not_set_up, snapshot
 from .state import Store
 
 
@@ -39,6 +39,9 @@ def _main(argv: list[str]) -> int:
     if argv[:1] == ["first-boot"]:  # the unit that runs once on a newly flashed Pi
         from . import firstboot
         return firstboot.main(argv[1:])
+    if argv[:1] == ["connect-watch"]:  # the unit that looks after Raspberry Pi Connect, also before setup
+        from . import connect
+        return connect.main(argv[1:])
     if argv[:1] == ["update"]:  # runs as root, also on a Pi that isn't set up yet
         from . import updater
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
@@ -59,6 +62,9 @@ def _main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
+    if args.command == "dashboard" and not args.site.exists():
+        serve_not_set_up()  # a newly flashed Pi: the page where it signs in to Connect
+        return 0
     try:
         site = load_site(args.site)
         routing = load_routing(args.routing, test_mode=site.test_mode)
@@ -110,6 +116,7 @@ def _main(argv: list[str]) -> int:
     print("\nGRIP keys:")
     for k in s["keys"]:
         print(f"  {k['project']}: {k['status']}")
+    print(f"\nRaspberry Pi Connect: {s['connect']['text']}")
     return 0
 
 

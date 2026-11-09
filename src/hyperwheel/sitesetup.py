@@ -710,7 +710,9 @@ class Setup:
 
     def start_hyperwheel(self) -> None:
         self.say("")
-        self.run(["systemctl", "enable", "--now", "hyperwheel.service", "hyperwheel-dashboard.service"])
+        self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
+        # A restart, because a newly flashed Pi's Upload Monitor is already running, showing its page for signing in.
+        self.run(["systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.say("Hyperwheel and the Upload Monitor: started.")
 
     def finish(self, site: SiteConfig, done: bool) -> int:

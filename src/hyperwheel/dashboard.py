@@ -6,6 +6,11 @@ attention. It reads the state store, never the logs, and changes nothing.
 
 It runs as its own unprivileged service and listens on the hotspot address
 only. Studies from logins with no routing entry are never shown.
+
+On a newly flashed Pi (no site settings yet) it serves one other page instead,
+where the Pi joins Raspberry Pi Connect: a box for the one-use key the admin sent,
+and the sign-in link as the fallback. Pasting a key is the only thing this service
+ever changes, and only until there are site settings.
 """
 
 from __future__ import annotations
@@ -17,8 +22,8 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import hostkeys, reach
-from .config import Routing, SiteConfig
+from . import connect, hostkeys, reach
+from .config import DashboardSettings, Routing, SiteConfig
 from .state import PENDING_FILE_STATES, Store
 
 HEARTBEAT = "service_heartbeat"
@@ -57,7 +62,8 @@ def _count_texts(state: str, dicom: list, rrdf: list, raw_pending: bool) -> tupl
 
 def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
              free_bytes: Callable[[Path], int] | None = None, clock_synced: bool | None = None,
-             update_hold: Callable[[], str | None] | None = None) -> dict:
+             update_hold: Callable[[], str | None] | None = None,
+             connect_state: Callable[[], dict | None] = connect.read_state) -> dict:
     """Everything the page shows, as plain data."""
     if update_hold is None:
         from .updater import Paths, hold_text
@@ -158,9 +164,12 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         keys.append({"project": name, "status": KEY_TEXT.get(status[0], status[0]) if status else "Not checked yet",
                      "ok": bool(status and status[0] == "working")})
 
+    connect_result, connect_text = connect.describe(connect_state(), now, set_up=True)
     return {
         "site": site.site,
         "headline": headline,
+        "connect": {"ok": connect_result == connect.OK, "problem": connect_result == connect.PROBLEM,
+                    "text": connect_text},
         "subline": sub,
         "on_pi_complete": on_pi_complete,
         "safe_to_switch_off": on_pi_complete and not leave_on,
@@ -191,6 +200,85 @@ def serve(site: SiteConfig, routing: Routing, *, bind: str | None = None, port: 
     server.serve_forever()
 
 
+# ---- a newly flashed Pi ----------------------------------------------------------------------------------
+
+
+def not_set_up_status(state: dict | None, now: float) -> dict:
+    """What the page on a newly flashed Pi shows. The key itself is never in it."""
+    signed_in = connect.describe(state, now, set_up=False)[0] == connect.OK
+    key = (state or {}).get("key", "none")
+    return {"signed_in": signed_in, "link": None if signed_in else (state or {}).get("link"),
+            "key_refused": key == "refused" and not signed_in, "key_trying": key == "trying" and not signed_in}
+
+
+def make_not_set_up_server(*, bind: str, port: int, folder: Path = Path(connect.FOLDER),
+                           site_toml: Path = Path("/etc/hyperwheel/site.toml"),
+                           now: Callable[[], float] = time.time) -> ThreadingHTTPServer:
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path == "/":
+                return _send(self, 200, NOT_SET_UP_PAGE.encode(), "text/html; charset=utf-8")
+            if self.path == "/setup.js":
+                return _send(self, 200, NOT_SET_UP_SCRIPT.encode(), "text/javascript; charset=utf-8")
+            if self.path == "/api/status":
+                body = not_set_up_status(connect.read_state(folder), now())
+                return _send(self, 200, json.dumps(body).encode(), "application/json")
+            return _send(self, 404, b"Not found", "text/plain")
+
+        def do_POST(self):
+            # JSON only: a page on another site can't send that to this Pi without the Pi agreeing first.
+            if self.path != "/api/connect-key" or self.headers.get("Content-Type") != "application/json":
+                return _send(self, 404, b"Not found", "text/plain")
+            if site_toml.exists():
+                return _answer(self, 403, "This Pi is set up already.")
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return _answer(self, 400, "That didn't arrive. Please try again.")
+            if not 0 < length <= 1024:
+                return _answer(self, 400, connect.key_problem(""))
+            try:
+                key = json.loads(self.rfile.read(length))["key"]
+            except (ValueError, KeyError, TypeError):
+                return _answer(self, 400, "That didn't arrive. Please try again.")
+            if not isinstance(key, str):
+                return _answer(self, 400, connect.key_problem(""))
+            try:
+                problem = connect.accept_key(key, folder)
+            except OSError:
+                return _answer(self, 500, "The Pi couldn't keep the key. Tell your Hyperwheel admin.")
+            if problem:
+                return _answer(self, 400, problem)
+            return _answer(self, 200, "The Pi has the key and is signing in.")
+
+    server = ThreadingHTTPServer((bind, port), Handler)
+    server.daemon_threads = True
+    return server
+
+
+def serve_not_set_up(*, bind: str | None = None, port: int | None = None) -> None:
+    defaults = DashboardSettings()
+    make_not_set_up_server(bind=bind or defaults.bind, port=port or defaults.port).serve_forever()
+
+
+def _answer(handler: BaseHTTPRequestHandler, status: int, message: str) -> None:
+    _send(handler, status, json.dumps({"message": message}).encode(), "application/json")
+
+
+def _send(handler: BaseHTTPRequestHandler, status: int, body: bytes, ctype: str) -> None:
+    handler.send_response(status)
+    handler.send_header("Content-Type", ctype)
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'")
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 def make_server(site: SiteConfig, routing: Routing, *, bind: str, port: int,
                 now: Callable[[], float] = time.time, synced: Callable[[], bool] = clock_synced) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
@@ -199,27 +287,17 @@ def make_server(site: SiteConfig, routing: Routing, *, bind: str, port: int,
 
         def do_GET(self):
             if self.path == "/":
-                return self._send(200, PAGE.encode(), "text/html; charset=utf-8")
+                return _send(self, 200, PAGE.encode(), "text/html; charset=utf-8")
             if self.path == "/app.js":
-                return self._send(200, SCRIPT.encode(), "text/javascript; charset=utf-8")
+                return _send(self, 200, SCRIPT.encode(), "text/javascript; charset=utf-8")
             if self.path == "/api/status":
                 store = Store(site.state_db, readonly=True)
                 try:
                     body = snapshot(store, site, routing, now=now(), clock_synced=synced())
                 finally:
                     store.close()
-                return self._send(200, json.dumps(body).encode(), "application/json")
-            return self._send(404, b"Not found", "text/plain")
-
-        def _send(self, status: int, body: bytes, ctype: str) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.end_headers()
-            self.wfile.write(body)
+                return _send(self, 200, json.dumps(body).encode(), "application/json")
+            return _send(self, 404, b"Not found", "text/plain")
 
     server = ThreadingHTTPServer((bind, port), Handler)
     server.daemon_threads = True
@@ -273,6 +351,8 @@ PAGE = """<!doctype html>
   <div id="studies"></div>
   <h2>GRIP keys</h2>
   <section class="card keys" id="keys"></section>
+  <h2>Raspberry Pi Connect</h2>
+  <section class="card keys"><div class="key"><span>Remote access</span><span id="connect"></span></div></section>
   <footer id="footer"></footer>
 </main>
 <script src="/app.js"></script>
@@ -331,6 +411,9 @@ function render(s) {
     row.appendChild(el("span", k.ok ? "ok" : "bad", k.status));
     keys.appendChild(row);
   }
+  const connect = document.getElementById("connect");
+  connect.textContent = s.connect.text;
+  connect.className = s.connect.ok ? "ok" : (s.connect.problem ? "bad" : "");
   document.getElementById("footer").textContent =
     s.site + " · updated " + s.updated + (s.free_gb !== null ? " · " + s.free_gb + " GB free" : "");
 }
@@ -342,6 +425,111 @@ async function refresh() {
     document.getElementById("headline").textContent = "Can't reach the Pi";
   }
 }
+refresh();
+setInterval(refresh, 5000);
+"""
+
+NOT_SET_UP_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload Monitor</title>
+<style>
+  :root { --bg:#f2f2f7; --card:#fff; --text:#111; --sub:#6e6e73; --ok:#248a3d; --bad:#d70015; --blue:#0066cc; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--text);
+         font: 17px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 700px; margin: 0 auto; }
+  .card { background:var(--card); border-radius:12px; padding:20px; margin-bottom:16px;
+          box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  h1 { font-size:28px; margin:0 0 6px; }
+  h2 { font-size:19px; margin:0 0 8px; }
+  p { margin:0 0 10px; }
+  .sub { color:var(--sub); }
+  input { width:100%; font-size:17px; padding:10px; border:1px solid #c7c7cc; border-radius:8px; margin-bottom:10px; }
+  button { font-size:17px; padding:10px 18px; border:0; border-radius:8px; background:var(--blue); color:#fff; }
+  .link { overflow-wrap:anywhere; font-weight:600; }
+  #key-message { margin:10px 0 0; }
+  .ok { color:var(--ok); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>This Pi isn't set up yet</h1>
+    <p class="sub">Your Hyperwheel admin sets it up over Raspberry Pi Connect, so the Pi has to sign in first.</p>
+    <p id="state"></p>
+  </section>
+  <section class="card" id="key-card" hidden>
+    <h2>Paste the key</h2>
+    <p>Paste the key your Hyperwheel admin sent you. It works once.</p>
+    <form id="key-form">
+      <input id="key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Key">
+      <button type="submit">Sign in</button>
+    </form>
+    <p id="key-message"></p>
+  </section>
+  <section class="card" id="link-card" hidden>
+    <h2>No key?</h2>
+    <p>Send this link to your Hyperwheel admin. Don't open it yourself.</p>
+    <p class="link" id="link"></p>
+  </section>
+</main>
+<script src="/setup.js"></script>
+</body>
+</html>
+"""
+
+NOT_SET_UP_SCRIPT = """
+"use strict";
+const $ = id => document.getElementById(id);
+let answer = "";
+function render(s) {
+  const state = $("state");
+  if (s.signed_in) {
+    state.className = "ok";
+    state.textContent = "Raspberry Pi Connect: signed in. Your Hyperwheel admin can set up this Pi now.";
+  } else {
+    state.className = "";
+    state.textContent = "Raspberry Pi Connect: not signed in yet. The Pi needs the scanner cable for the internet.";
+  }
+  $("key-card").hidden = s.signed_in;
+  $("link-card").hidden = s.signed_in;
+  const message = $("key-message");
+  if (s.key_refused) {
+    message.className = "bad";
+    message.textContent = "That key wasn't accepted. It may be used or out of date. " +
+                          "Ask your Hyperwheel admin for a new one.";
+  } else if (s.key_trying) {
+    message.className = "";
+    message.textContent = "The Pi is trying the key, and keeps trying until it has the internet.";
+  } else {
+    message.className = "";
+    message.textContent = answer;
+  }
+  $("link").textContent = s.link || "The link shows here once the Pi has the internet.";
+}
+async function refresh() {
+  try {
+    const r = await fetch("/api/status", {cache: "no-store"});
+    if (r.ok) render(await r.json());
+  } catch (e) {
+    $("state").textContent = "Can't reach the Pi";
+  }
+}
+$("key-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const r = await fetch("/api/connect-key", {method: "POST", headers: {"Content-Type": "application/json"},
+                                               body: JSON.stringify({key: $("key").value})});
+    answer = (await r.json()).message;
+    if (r.ok) $("key").value = "";
+  } catch (e) {
+    answer = "Can't reach the Pi";
+  }
+  $("key-message").textContent = answer;
+});
 refresh();
 setInterval(refresh, 5000);
 """

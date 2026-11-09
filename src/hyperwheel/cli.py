@@ -38,8 +38,9 @@ ADMIN = (
     ("update release-hold", "Let this Pi take updates again"),
 )
 
-# run and dashboard are the services, and first-boot runs once on a newly flashed Pi
-COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "setup", "run", "dashboard", "first-boot"}
+# run, dashboard and connect-watch are the services, and first-boot runs once on a newly flashed Pi
+COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "setup", "run", "dashboard", "first-boot",
+            "connect-watch"}
 KEYS_ACTIONS = {"list", "set"}
 SCANNER_ACTIONS = {"password"}
 UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status"}
@@ -111,7 +112,7 @@ def needs_root(argv: Sequence[str]) -> bool:
     (started by systemd under their own account), and ``update status`` reads only public files."""
     if not argv or "-h" in argv or "--help" in argv:
         return False
-    if argv[0] in ("status", "doctor", "keys", "scanner", "setup", "first-boot"):
+    if argv[0] in ("status", "doctor", "keys", "scanner", "setup", "first-boot", "connect-watch"):
         return True
     return argv[0] == "update" and argv[1:2] != ["status"]
 

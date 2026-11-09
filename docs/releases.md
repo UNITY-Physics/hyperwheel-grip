@@ -2,7 +2,7 @@
 
 Status: built so far: the release format with signing and checking, OE2, the installer, the
 updater, setup, the admin password and first boot. Not built yet: the image itself, the firewall,
-the hotspot limit, OE2's proxy and Connect's key box.
+the hotspot limit and OE2's proxy.
 
 Every Pi runs the same software: one pinned **image** that carries the OS,
 and one tested **release** that carries Orthanc, Orthanc Explorer 2 (OE2) and
@@ -103,7 +103,18 @@ one-use organisation key the admin sends (`rpoak_...`, a personal key is
 refused), with the sign-in link as the fallback, which the site sends to the
 admin to open. Connect starts at every boot with nobody logged in (lingering is
 on) and keeps retrying until it's signed in. Its state shows on the Upload
-Monitor and in `hyperwheel doctor`.
+Monitor, in `hyperwheel status` and in `hyperwheel doctor`.
+
+`hyperwheel-connect.service` does this. Before setup, it signs in with a pasted key
+or keeps a sign-in link ready. A key is kept while the Pi has no internet, and is
+deleted once it has worked, or after it's been refused three times with the internet
+working, when the page asks for a new one. Once the Pi is set up, the service only
+reads the state, and nothing signs the Pi in or out. An organisation key works
+once, so a reflashed Pi needs a new key or the link.
+
+The Upload Monitor changes nothing, with one exception: until the Pi has site
+settings, it keeps a pasted key for this service. It accepts only organisation keys
+(`rpoak_...`), never logs one and never sends one back.
 
 ## Logins, SSH and the firewall
 

@@ -249,8 +249,8 @@ class Installer:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text.replace("@USER@", self.service_user))
             path.chmod(0o644)
-        self.say("Systemd units: written (hyperwheel, hyperwheel-dashboard, hyperwheel-update and its timer, "
-                 "Orthanc's settings drop-in).")
+        self.say("Systemd units: written (hyperwheel, hyperwheel-dashboard, hyperwheel-connect, hyperwheel-update "
+                 "and its timer, Orthanc's settings drop-in).")
         # The hyperwheel command (status, doctor, update ...), always the current release's.
         command = self.layout.p("/usr/local/bin/hyperwheel")
         command.parent.mkdir(parents=True, exist_ok=True)
@@ -275,6 +275,13 @@ class Installer:
         self.layout.var.mkdir(parents=True, exist_ok=True)
         self.layout.var.chmod(0o750)
         self.chown(self.layout.var, self.service_user, self.service_user)
+        # Connect's state is written by root. The Upload Monitor reads it, and leaves a pasted key in the inbox.
+        connect, inbox = self.layout.var / "connect", self.layout.var / "connect" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        connect.chmod(0o755)
+        self.chown(connect, "root", "root")
+        inbox.chmod(0o730)
+        self.chown(inbox, "root", self.service_user)
         self.layout.orthanc_conf.mkdir(exist_ok=True)
         self.layout.orthanc_conf.chmod(0o750)
         self.chown(self.layout.orthanc_conf, "root", ORTHANC_USER)
@@ -361,15 +368,17 @@ class Installer:
 
     def restart(self, configured: bool) -> None:
         if self.image:
-            self.run(["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer"])
-            self.say("In the image: first boot and update checks are on, and nothing was started.")
+            self.run(["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer",
+                      "hyperwheel-connect.service", "hyperwheel-dashboard.service"])
+            self.say("In the image: first boot, update checks, Connect's sign-in and the Upload Monitor are on, "
+                     "and nothing was started.")
             return
         self.run(["systemctl", "daemon-reload"])
         self.run(["systemctl", "restart", "orthanc"])
         self.say("Orthanc: restarted with the release's settings.")
         if self.start:
-            self.run(["systemctl", "enable", "--now", "hyperwheel-update.timer"])
-            self.say("Update checks: on (every 6 hours).")
+            self.run(["systemctl", "enable", "--now", "hyperwheel-update.timer", "hyperwheel-connect.service"])
+            self.say("Update checks: on (every 6 hours). Connect's state: watched.")
         if not (configured and self.start):
             return
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
@@ -483,6 +492,21 @@ ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel first-boot
 [Install]
 WantedBy=multi-user.target
 """,
+    # As root, because Connect belongs to a person's account and may need turning on for it.
+    "hyperwheel-connect.service": """[Unit]
+Description=Hyperwheel: Raspberry Pi Connect's sign-in and state
+After=systemd-logind.service hyperwheel-firstboot.service
+
+[Service]
+ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel connect-watch
+Restart=always
+RestartSec=30
+ProtectSystem=full
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+""",
     "hyperwheel-dashboard.service": """[Unit]
 Description=Hyperwheel Upload Monitor (read-only web page on the hotspot)
 After=network-online.target hyperwheel.service
@@ -495,6 +519,8 @@ Restart=always
 RestartSec=10
 NoNewPrivileges=yes
 ProtectSystem=strict
+# The one place it writes: a Connect key pasted before setup.
+ReadWritePaths=/var/lib/hyperwheel/connect/inbox
 ProtectHome=yes
 PrivateTmp=yes
 

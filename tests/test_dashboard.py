@@ -83,6 +83,15 @@ def test_a_study_with_no_raw_data_says_so(env):
     assert snap(env)["studies"][0]["raw"]["text"] == "No raw data"
 
 
+def test_connect_state_is_shown(env):
+    now = env.clock()
+    s = snap(env, connect_state=lambda: {"signed_in": True, "checked_at": now})
+    assert s["connect"] == {"ok": True, "problem": False, "text": "signed in"}
+    s = snap(env, connect_state=lambda: {"signed_in": False, "checked_at": now})
+    assert s["connect"]["problem"] and "not signed in" in s["connect"]["text"]
+    assert snap(env, connect_state=lambda: None)["connect"]["text"] == "not checked yet"
+
+
 def test_unrouted_studies_are_never_shown(env):
     phantom_study(env, operators="hospital/clinical")
     assert snap(env)["studies"] == []
