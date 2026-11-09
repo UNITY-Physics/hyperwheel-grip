@@ -314,3 +314,25 @@ def test_a_pi_set_up_before_setup_existed_never_gets_the_setup_line(tmp_path, ke
     root, _ = pi
     installer(make_release(tmp_path, key), signers, pi, site_setup=site_setup(tmp_path)).install()
     assert SETUP_LINE not in (root / "etc/sudoers.d/hyperwheel").read_text()
+
+
+def test_image_mode_starts_nothing_and_leaves_the_login_to_first_boot(tmp_path, key, signers, pi):
+    root, fake = pi
+    said = []
+    installer(make_release(tmp_path, key), signers, pi, said, image=True, start=False).install()
+    assert fake.ran("apt-get") and fake.ran("pip")  # the same install
+    systemctl = fake.ran("systemctl")
+    assert systemctl == [["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer"]]
+    assert not (root / "etc/hyperwheel/orthanc.json").exists()
+    assert not (root / "etc/hyperwheel/orthanc.d/users.json").exists()
+    assert (root / "etc/hyperwheel/orthanc.d/hyperwheel.json").is_symlink()
+    assert (root / "etc/hyperwheel/release_allowed_signers").exists()
+    assert (root / "etc/systemd/system/hyperwheel-firstboot.service").exists()
+    assert "hyperwheel setup" in (root / "etc/sudoers.d/hyperwheel").read_text()  # not set up yet
+
+
+def test_a_normal_install_never_enables_first_boot(tmp_path, key, signers, pi):
+    root, fake = pi
+    installer(make_release(tmp_path, key), signers, pi, []).install()
+    assert not any("hyperwheel-firstboot.service" in c for c in fake.ran("systemctl"))
+    assert (root / "etc/hyperwheel/orthanc.json").exists()

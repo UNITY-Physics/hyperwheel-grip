@@ -72,6 +72,9 @@ HOTSPOT_SSID = "Hyperwheel"
 HOTSPOT_ADDRESS = "192.168.99.1/24"
 HOTSPOT_CHANNEL = 6  # 2.4 GHz channels 1, 6 and 11 are allowed everywhere
 BOOT_HOTSPOT = "/boot/firmware/hyperwheel/hotspot-password"
+SCREEN_LOCK_MINUTES = 15
+SCREEN_LOCK = (f"swayidle -w timeout {SCREEN_LOCK_MINUTES * 60} 'swaylock -f -c 202020' "
+               "before-sleep 'swaylock -f -c 202020' &")
 NM_DIR = "/etc/NetworkManager/system-connections"
 HOTSPOT_FILE = "Hyperwheel.nmconnection"
 CABLE_FILE = "Hyperwheel-scanner-cable.nmconnection"
@@ -484,12 +487,10 @@ class Setup:
         copy = self.layout.p(BOOT_HOTSPOT)
         if stored.exists() and connection.exists():
             self.say(f"The hotspot {HOTSPOT_SSID} is already set up.")
-            self.remove_copy(copy)
+            self.remove_copy()
             return
-        password = self.hotspot_password(copy)
-        self.write(stored, json.dumps({"ssid": HOTSPOT_SSID, "password": password}) + "\n", 0o600)
-        self.write(connection, hotspot_connection(password), 0o600)
-        self.remove_copy(copy)
+        self.store_hotspot(self.hotspot_password(copy))
+        self.remove_copy()
         self.run(["nmcli", "connection", "reload"])
         self.progress("hotspot_at")
         self.say(f"Hotspot {HOTSPOT_SSID}: set up, on 2.4 GHz channel {HOTSPOT_CHANNEL}, with the Upload Monitor at "
@@ -520,13 +521,12 @@ class Setup:
             return first
         raise SetupError("no hotspot password was set")
 
-    def remove_copy(self, copy: Path) -> None:
-        if copy.is_file() or copy.is_symlink():
-            copy.unlink()
-            try:
-                copy.parent.rmdir()
-            except OSError:
-                pass
+    def store_hotspot(self, password: str) -> None:
+        self.write(self.etc / "hotspot.json", json.dumps({"ssid": HOTSPOT_SSID, "password": password}) + "\n", 0o600)
+        self.write(self.layout.p(NM_DIR) / HOTSPOT_FILE, hotspot_connection(password), 0o600)
+
+    def remove_copy(self) -> None:
+        if remove_boot_copy(self.layout):
             self.say("The copy of the hotspot password on the card's boot folder was deleted.")
 
     def start_hotspot(self) -> None:
@@ -668,7 +668,24 @@ class Setup:
         except InstallError as e:
             raise SetupError(str(e)) from None
         self.say(f"Administrator rights: {', '.join(others)} (with a password). Password-free sudo is gone.")
+        self.screen_lock()
         return True
+
+    def screen_lock(self) -> None:
+        """Lock the desktop when idle, from now on: until setup, the account has no password to unlock with.
+        It takes effect at the next login, which the restart at the end of setup brings."""
+        home = self.layout.p(f"/home/{DATA_MANAGER}")
+        if not home.is_dir():
+            return
+        for folder in (home / ".config", home / ".config" / "labwc"):
+            if not folder.exists():
+                self.run(["install", "-d", "-o", DATA_MANAGER, "-g", DATA_MANAGER, str(folder)])
+        autostart = home / ".config" / "labwc" / "autostart"
+        text = autostart.read_text() if autostart.exists() else ""
+        if SCREEN_LOCK not in text:
+            self.write(autostart, text + SCREEN_LOCK + "\n", 0o644)
+        self.say(f"The screen locks after {SCREEN_LOCK_MINUTES} minutes idle and unlocks with the {DATA_MANAGER} "
+                 "password, from the next restart.")
 
     def remove_password_free_sudo(self) -> None:
         folder = self.layout.p("/etc/sudoers.d")
@@ -710,6 +727,26 @@ class Setup:
         else:
             self.say("Not restarted. Restart it before the first scan.")
         return 0 if done else 3
+
+
+def remove_boot_copy(layout: Layout) -> bool:
+    """Delete the hotspot password's copy on the boot partition, the hidden files macOS leaves beside it
+    (a card written on a Mac has them), and the folder. Returns True if the copy itself was there."""
+    copy = layout.p(BOOT_HOTSPOT)
+    folder = copy.parent
+    had_copy = copy.is_file() or copy.is_symlink()
+    if had_copy:
+        copy.unlink()
+    if folder.is_dir():
+        for path in folder.iterdir():
+            if path.name.startswith("._") or path.name == ".DS_Store":
+                path.unlink()
+        try:
+            folder.rmdir()
+        except OSError:  # something else is in it: not ours to delete
+            pass
+    (folder.parent / f"._{folder.name}").unlink(missing_ok=True)
+    return had_copy
 
 
 def finish_waiting_setup(layout: Layout, run: Callable[..., str] = run_command,

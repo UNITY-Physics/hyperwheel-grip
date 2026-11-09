@@ -1,10 +1,10 @@
 """Install a verified release on a Pi, offline. Run as root:
 
     python3 -m hyperwheel.installer <release-folder> [--signers FILE] [--site-setup DIR]
-                                    [--service-user NAME] [--no-start]
+                                    [--service-user NAME] [--no-start] [--image]
 
-The same steps are used to build the image (release 1 pre-loaded) and, later,
-by the updater:
+The same steps are used to build the image (release 1 pre-loaded, with
+``--image``) and, later, by the updater:
 
 1. Check the release: signature and every file (``hyperwheel.release``).
 2. The service account: created as a system account if missing. An existing
@@ -22,6 +22,10 @@ by the updater:
    restarted, and a health check.
 
 Nothing is downloaded. Paths are relative to ``--root`` (tests use a scratch folder).
+
+With ``--image`` it runs inside the image being built, so nothing can be started,
+and it leaves out what must differ on each Pi: Orthanc's login is made at first
+boot (``firstboot``), and units are only enabled.
 """
 
 from __future__ import annotations
@@ -123,6 +127,7 @@ class Installer:
     service_user: str = SERVICE_USER
     site_setup: Path | None = None
     start: bool = True
+    image: bool = False
     run: Callable[..., str] = run_command
     getpwnam: Callable[[str], pwd.struct_passwd] = pwd.getpwnam
     chown: Callable[[Path, str, str], None] = None  # type: ignore[assignment]
@@ -290,16 +295,9 @@ class Installer:
         if self.signers.resolve() != (etc / "release_allowed_signers").resolve():
             if self._add_if_missing(self.signers, etc / "release_allowed_signers", 0o644):
                 added.append("release_allowed_signers")
-        # Orthanc's login: made once, here, and never changed by an update.
-        login = etc / "orthanc.json"
-        if not login.exists():
-            self._write_secret(login, json.dumps({"username": self.service_user,
-                                                  "password": secrets.token_urlsafe(24)}) + "\n")
+        # An image goes to every Pi, so each Pi makes its own login at first boot.
+        if not self.image and self.orthanc_login():
             added.append("orthanc.json (new Orthanc login)")
-        users = json.loads(login.read_text())
-        users_file = self.layout.orthanc_conf / "users.json"
-        self._write_secret(users_file, json.dumps({"RegisteredUsers": {users["username"]: users["password"]}}) + "\n",
-                           group=ORTHANC_USER, mode=0o640)
         link = self.layout.orthanc_conf / "hyperwheel.json"
         if link.is_symlink() or link.exists():
             link.unlink()
@@ -317,6 +315,19 @@ class Installer:
         if not configured:
             self.say("This Pi isn't set up yet (no site.toml or routing.toml): Hyperwheel won't start until it is.")
         return configured
+
+    def orthanc_login(self) -> bool:
+        """Orthanc's login: made once and never changed by an update. Returns True if it was made now."""
+        login = self.layout.etc / "orthanc.json"
+        made = not login.exists()
+        if made:
+            self._write_secret(login, json.dumps({"username": self.service_user,
+                                                  "password": secrets.token_urlsafe(24)}) + "\n")
+        users = json.loads(login.read_text())
+        users_file = self.layout.orthanc_conf / "users.json"
+        self._write_secret(users_file, json.dumps({"RegisteredUsers": {users["username"]: users["password"]}}) + "\n",
+                           group=ORTHANC_USER, mode=0o640)
+        return made
 
     def _add_if_missing(self, src: Path, dest: Path, mode: int) -> bool:
         if not src.is_file() or dest.exists():
@@ -349,6 +360,10 @@ class Installer:
         self.say(f"Current release: now {target.name}.")
 
     def restart(self, configured: bool) -> None:
+        if self.image:
+            self.run(["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer"])
+            self.say("In the image: first boot and update checks are on, and nothing was started.")
+            return
         self.run(["systemctl", "daemon-reload"])
         self.run(["systemctl", "restart", "orthanc"])
         self.say("Orthanc: restarted with the release's settings.")
@@ -451,6 +466,23 @@ PrivateTmp=yes
 [Install]
 WantedBy=multi-user.target
 """,
+    # Before NetworkManager, which then finds the hotspot's connection and starts it by itself. Before
+    # Orthanc, which needs the login. Only an image enables it. It finishes once and never runs again.
+    "hyperwheel-firstboot.service": """[Unit]
+Description=Hyperwheel: first start of a newly flashed Pi
+DefaultDependencies=no
+After=local-fs.target systemd-remount-fs.service
+RequiresMountsFor=/boot/firmware /etc/hyperwheel
+Before=NetworkManager.service orthanc.service hyperwheel.service hyperwheel-dashboard.service multi-user.target
+ConditionPathExists=!/etc/hyperwheel/first-boot-done
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel first-boot
+
+[Install]
+WantedBy=multi-user.target
+""",
     "hyperwheel-dashboard.service": """[Unit]
 Description=Hyperwheel Upload Monitor (read-only web page on the hotspot)
 After=network-online.target hyperwheel.service
@@ -507,6 +539,8 @@ def main(argv: list[str] | None = None) -> int:
                                                      "(first setup: only missing files are added)")
     ap.add_argument("--service-user", default=SERVICE_USER)
     ap.add_argument("--no-start", action="store_true", help="install, but don't start Hyperwheel")
+    ap.add_argument("--image", action="store_true", help="install into the image being built: start nothing, and "
+                                                         "leave what differs on each Pi to first boot")
     ap.add_argument("--root", type=Path, default=Path("/"), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     if os.geteuid() != 0 and args.root == Path("/"):
@@ -515,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     try:
         manifest = Installer(args.release.resolve(), args.signers, Layout(args.root), args.service_user,
-                             args.site_setup, not args.no_start).install()
+                             args.site_setup, not (args.no_start or args.image), args.image).install()
     except InstallError as e:
         print(f"Install stopped: {e}", file=sys.stderr)
         return 1

@@ -2,11 +2,13 @@
 # Install a release on the pinned official image, with no network, the way a Pi does it.
 # Runs as root on an arm64 Linux machine (CI), since the image's programs run directly.
 #
-#     sudo tools/image/test-offline-install.sh <release-folder> <signers-file> as-shipped|lists-refreshed
+#     sudo tools/image/test-offline-install.sh <release-folder> <signers-file> as-shipped|lists-refreshed|image
 #
 # as-shipped       the image's own apt state.
 # lists-refreshed  `apt-get update` first, with the network. Then apt's repositories offer the
 #                  same package versions as the release, as on a Pi that has been online.
+# image            as the image build does it (--image), then first boot with a hotspot password
+#                  on the card, as written on a Mac.
 #
 # The install itself runs in an empty network namespace, so anything that tried to
 # download would fail.
@@ -16,8 +18,8 @@ export LC_ALL=C
 
 release=$(realpath "${1:?release folder}")
 signers=$(realpath "${2:?signers file}")
-mode=${3:?as-shipped or lists-refreshed}
-case "$mode" in as-shipped|lists-refreshed) ;; *) echo "Unknown mode: $mode" >&2; exit 2 ;; esac
+mode=${3:?as-shipped, lists-refreshed or image}
+case "$mode" in as-shipped|lists-refreshed|image) ;; *) echo "Unknown mode: $mode" >&2; exit 2 ;; esac
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 
 url=$(sed -n 's/^url=//p' "$repo/image/base.lock")
@@ -86,7 +88,11 @@ if offline /bin/sh -c 'getent hosts deb.debian.org || curl -fsS --max-time 5 -o 
 fi
 
 echo "== Installing the release, offline ($mode)"
-offline /bin/sh /test/install.sh --signers /root/allowed_signers --no-start
+if [ "$mode" = image ]; then
+  offline /bin/sh /test/install.sh --signers /root/allowed_signers --image
+else
+  offline /bin/sh /test/install.sh --signers /root/allowed_signers --no-start
+fi
 
 echo "== Checking the result"
 grep -vE '^(#|$)' "$repo/release/debs.list" | while IFS== read -r package version; do
@@ -100,4 +106,28 @@ in_image apt-get check -q
 in_image /usr/sbin/Orthanc --version | head -1
 offline /usr/local/bin/hyperwheel help >/dev/null
 in_image test -L /opt/hyperwheel/current
+
+if [ "$mode" = image ]; then
+  echo "== Checking the image holds nothing that differs on each Pi"
+  for f in orthanc.json orthanc.d/users.json hotspot.json first-boot-done setup-done; do
+    [ ! -e "$mnt/etc/hyperwheel/$f" ] || { echo "$f shouldn't be in the image." >&2; exit 1; }
+  done
+  [ "$(in_image systemctl is-enabled hyperwheel-firstboot.service)" = enabled ]
+  grep -q "hyperwheel setup" "$mnt/etc/sudoers.d/hyperwheel"
+
+  echo "== First boot, with a password on the card as written on a Mac"
+  card=$mnt/boot/firmware/hyperwheel
+  mkdir "$card"
+  printf 'test-hotspot-pw-1\n' > "$card/hotspot-password"
+  printf 'x' > "$card/._hotspot-password"
+  offline /usr/local/bin/hyperwheel first-boot
+  [ ! -e "$card" ] || { echo "First boot left the password's folder on the card." >&2; ls -la "$card" >&2; exit 1; }
+  [ "$(stat -c '%a %U' "$mnt/etc/hyperwheel/hotspot.json")" = "600 root" ]
+  [ "$(stat -c '%a %U' "$mnt/etc/NetworkManager/system-connections/Hyperwheel.nmconnection")" = "600 root" ]
+  [ "$(stat -c '%a %U' "$mnt/etc/hyperwheel/orthanc.json")" = "600 root" ]
+  [ "$(stat -c '%a %G' "$mnt/etc/hyperwheel/orthanc.d/users.json")" = "640 orthanc" ]
+  [ -e "$mnt/etc/hyperwheel/first-boot-done" ]
+  offline /usr/local/bin/hyperwheel first-boot | grep -q "already done"
+fi
+
 echo "Offline install on the official image passed ($mode)."

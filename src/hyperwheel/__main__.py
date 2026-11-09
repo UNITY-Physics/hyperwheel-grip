@@ -36,6 +36,9 @@ def _main(argv: list[str]) -> int:
     if argv[:1] == ["setup"]:  # runs as root, before there are site settings to read
         from . import sitesetup
         return sitesetup.main(argv[1:])
+    if argv[:1] == ["first-boot"]:  # the unit that runs once on a newly flashed Pi
+        from . import firstboot
+        return firstboot.main(argv[1:])
     if argv[:1] == ["update"]:  # runs as root, also on a Pi that isn't set up yet
         from . import updater
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
