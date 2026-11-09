@@ -329,7 +329,8 @@ def test_image_mode_starts_nothing_and_leaves_the_login_to_first_boot(tmp_path, 
     assert fake.ran("apt-get") and fake.ran("pip")  # the same install
     systemctl = fake.ran("systemctl")
     assert systemctl == [["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer",
-                          "hyperwheel-connect.service", "hyperwheel-dashboard.service", "hyperwheel-viewer.service"]]
+                          "hyperwheel-connect.service", "hyperwheel-dashboard.service", "hyperwheel-viewer.service",
+                          "hyperwheel-firewall.service"]]
     assert not (root / "etc/hyperwheel/viewer").exists()  # each Pi makes its own certificate at first boot
     assert not (root / "etc/hyperwheel/orthanc.json").exists()
     assert not (root / "etc/hyperwheel/orthanc.d/users.json").exists()
@@ -385,3 +386,33 @@ def test_the_real_certificate_is_for_the_hotspot_and_the_pi_itself(tmp_path):
     import ssl
     ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(tmp_path / "etc/hyperwheel/viewer/cert.pem",
                                                             tmp_path / "etc/hyperwheel/viewer/key.pem")
+
+
+def test_ssh_settings_go_in_only_if_sshd_accepts_them(tmp_path, key, signers, pi):
+    root, fake = pi
+    drop_in = root / "etc/ssh/sshd_config.d/05-hyperwheel.conf"
+    drop_in.parent.mkdir(parents=True)
+    installer(make_release(tmp_path, key), signers, pi, []).install()
+    assert "PerSourcePenalties" in drop_in.read_text() and mode(drop_in) == 0o644
+    assert fake.ran("sshd") == [["sshd", "-t"]] and ["systemctl", "reload", "ssh"] in fake.commands
+    assert ["systemctl", "reload-or-restart", "hyperwheel-firewall.service"] in fake.commands
+
+    drop_in.write_text("# an older version\n")
+    real_run = fake.run
+
+    def sshd_refuses(cmd, env=None):
+        if cmd[0] == "sshd":
+            raise InstallError("sshd failed (exit 255): bad option")
+        return real_run(cmd, env)
+
+    said = []
+    Installer(make_release(tmp_path, key, version="0.2.0"), signers, Layout(root), run=sshd_refuses,
+              getpwnam=fake.getpwnam, chown=lambda *a: None, say=said.append).install()
+    assert drop_in.read_text() == "# an older version\n"  # put back as it was
+    assert any("SSH settings: not changed" in s for s in said)
+
+
+def test_a_pi_with_no_ssh_server_is_left_alone(tmp_path, key, signers, pi):
+    root, fake = pi
+    installer(make_release(tmp_path, key), signers, pi, []).install()
+    assert not fake.ran("sshd") and not (root / "etc/ssh").exists()

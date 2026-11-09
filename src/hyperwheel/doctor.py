@@ -46,6 +46,7 @@ class Probes:
     now: Callable[[], float] = time.time
     connect_state: Callable[[], dict | None] = connect.read_state
     viewer_answers: Callable[[], bool] = lambda: reach.tcp_answers("127.0.0.1", 8443)
+    firewall_on: Callable[[], bool] = lambda: _unit_active("hyperwheel-firewall.service")
     etc: Path = Path("/etc/hyperwheel")
 
 
@@ -126,6 +127,11 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
         out.append((OK, "Orthanc (receives the scanner's DICOM)", "answering"))
     else:
         out.append((PROBLEM, "Orthanc (receives the scanner's DICOM)", f"not answering at {site.orthanc.url}"))
+    if p.firewall_on():
+        out.append((OK, "Firewall", "on"))
+    else:
+        out.append((PROBLEM, "Firewall", "not on. Restart the Pi, and if that doesn't help, tell your Hyperwheel "
+                                         "admin."))
     if p.viewer_answers():
         out.append((OK, "Orthanc Explorer 2", "answering at https://192.168.99.1:8443"))
     else:
@@ -185,6 +191,14 @@ def _name_lookups(routing: Routing, p: Probes, scanner_ok: bool | None, busy: st
         return (NOTE, what, f"slow ({times}). They go through the scanner. Connections and web pages that need a "
                             "lookup wait this long.")
     return OK, what, f"quick ({times})"
+
+
+def _unit_active(unit: str) -> bool:
+    import subprocess
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", unit], timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _os_name() -> str:

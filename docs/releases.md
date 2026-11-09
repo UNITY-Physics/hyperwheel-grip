@@ -1,8 +1,8 @@
 # Image, releases and updates
 
 Status: built so far: the release format with signing and checking, OE2 and its proxy, the
-installer, the updater, setup, the admin password, first boot and Connect's sign-in. Not built yet:
-the image itself, the firewall and the hotspot limit.
+installer, the updater, setup, the admin password, first boot, Connect's sign-in and the firewall.
+Not built yet: the image itself.
 
 Every Pi runs the same software: one pinned **image** that carries the OS,
 and one tested **release** that carries Orthanc, Orthanc Explorer 2 (OE2) and
@@ -146,14 +146,29 @@ settings, it keeps a pasted key for this service. It accepts only organisation k
   **different on each Pi**, made by setup. The `admin` password is the same on
   every Pi and reaches the Pis only as a hash through the signed update
   channel. Neither is ever in the image, the repo or the logs.
-- SSH is allowed only from the hotspot and the scanner cable.
-- On the Pi itself, hotspot devices reach only the Upload Monitor, SSH and OE2
-  (plus the DHCP and DNS the hotspot needs), never Orthanc's DICOM port or its
-  REST API. The hotspot routes through to the scanner and the internet beyond
-  it, so operators can use the scanner interface from their laptops, with a
-  per-site setting to turn routing off. While the Pi has uploads waiting,
-  hotspot devices are limited (4 Mbit/s each way by default, a site setting), so
-  the Pi's uploads come first. Otherwise they run at full speed.
+- **The firewall** is one nftables table, `inet hyperwheel`, loaded by
+  `hyperwheel-firewall.service` before the network comes up, and replaced in one
+  step when it's reloaded. NetworkManager keeps its own tables for the hotspot,
+  and a packet must get through both.
+  - From the hotspot, the Pi itself answers only SSH, the Upload Monitor (5000)
+    and OE2 (8443), plus the DHCP and DNS the hotspot needs, and ping.
+  - From the scanner cable, it answers SSH, and DICOM (4242) only from the
+    scanner (10.42.0.1).
+  - Everything else is dropped, including Orthanc's DICOM port and REST API from
+    the hotspot.
+  - Hotspot devices reach the scanner and the internet beyond it through the
+    Pi. A site can turn that off with `hotspot_routing = false` in its site
+    file (`[hotspot] routing = false` in `site.toml`, then
+    `sudo systemctl reload hyperwheel-firewall`). Nothing on the scanner side
+    can start a connection towards the hotspot.
+  - There's no speed limit on hotspot traffic.
+  - `tools/firewall/test-firewall.sh` loads the rules into a stand-in Pi and
+    tries each side, in CI on every change.
+- **SSH** slows down wrong passwords, never locking anyone out. sshd allows 3
+  tries per connection, and an address whose connections keep failing waits a
+  little longer each time, up to a minute (`PerSourcePenalties`). The firewall
+  also holds back an address that opens more than about 20 new SSH connections a
+  minute.
 - OE2 is at `https://192.168.99.1:8443` (and `https://127.0.0.1:8443` on the
   Pi itself), behind a small proxy, `hyperwheel-viewer.service`:
   - People sign in with `datamanager` or `admin`, checked against the system's
@@ -174,7 +189,6 @@ settings, it keeps a pasted key for this service. It accepts only organisation k
     192.168.99.1, so a laptop's browser warns on its first visit to each Pi.
     `hyperwheel status` shows the certificate's fingerprint, to compare with the
     browser's.
-- On the scanner cable: SSH, DICOM (port 4242) and ping.
 - The release-signing key is only for signing releases, never for logins.
 
 ## Setting up a Pi (`hyperwheel setup`)

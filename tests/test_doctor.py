@@ -16,7 +16,9 @@ def run(env, *, scanner=True, link=True, grip=True, orthanc=True, beat=True, loo
     site = replace(env.site, scanner=replace(env.site.scanner, host="10.42.0.1"))
     if beat:
         env.store.set_cursor(HEARTBEAT, int(env.clock()))
-    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip, lookup=lookup, connect_state=lambda: connect_state, viewer_answers=lambda: viewer,
+    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip, lookup=lookup,
+                    connect_state=lambda: connect_state, viewer_answers=lambda: viewer,
+                    firewall_on=lambda: True,
                     etc=site.state_db.parent,
                     orthanc_answers=lambda url: orthanc, synced=lambda: True,
                     free_bytes=lambda p: 50 * 1024 ** 3, now=env.clock)

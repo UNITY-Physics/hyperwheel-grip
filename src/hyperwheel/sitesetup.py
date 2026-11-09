@@ -80,7 +80,7 @@ HOTSPOT_FILE = "Hyperwheel.nmconnection"
 CABLE_FILE = "Hyperwheel-scanner-cable.nmconnection"
 END_OF_SITE_FILE = "# end of site file"
 SITE_FILE_KEYS = {"schema_version", "site", "time_zone", "wifi_country", "update_channel", "phantom_patient_id",
-                  "projects"}
+                  "hotspot_routing", "projects"}
 CLEAR_SCREEN = "\x1b[H\x1b[2J\x1b[3J"  # also clears the scroll-back
 STEPS = 8
 _SITE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
@@ -128,6 +128,11 @@ def render_site_toml(data: dict) -> str:
         "[updates]",
         f"channel = {_q(data.get('update_channel', 'stable'))}",
         "",
+        "[hotspot]",
+        "# Whether devices on the hotspot reach the scanner and the internet through this Pi. After a change:",
+        "# sudo systemctl reload hyperwheel-firewall",
+        f"routing = {'false' if data.get('hotspot_routing') is False else 'true'}",
+        "",
     ])
 
 
@@ -164,6 +169,8 @@ def parse_site_file(text: str, *, zoneinfo: Path) -> SiteFile:
     country = data.get("wifi_country")
     if not isinstance(country, str) or country not in known_countries(zoneinfo):
         raise SetupError(f"wifi_country {country!r} isn't a two-letter country code, such as \"GB\" or \"KE\"")
+    if "hotspot_routing" in data and not isinstance(data["hotspot_routing"], bool):
+        raise SetupError("hotspot_routing must be true or false, or left out")
     projects = data.get("projects")
     if not isinstance(projects, dict) or not projects:
         raise SetupError("the site file lists no projects. Add at least one [projects.<name>] with its logins")
@@ -205,6 +212,7 @@ def summary(site: SiteConfig, routing: Routing, now: float | None = None) -> lis
            f"  Wi-Fi country: {site.wifi_country or 'not set'}",
            f"  Updates: {site.updates.channel}",
            f"  Phantom Patient ID: {site.phantom_patient_id or 'none'}",
+           f"  Hotspot devices reach the scanner and the internet: {'yes' if site.hotspot.routing else 'no'}",
            "  Projects:"]
     for p in routing.projects.values():
         out.append(f"    {p.name}: login{'s' if len(p.logins) != 1 else ''} {', '.join(p.logins)}, "

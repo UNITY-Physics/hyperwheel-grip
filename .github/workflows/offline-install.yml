@@ -10,6 +10,7 @@ on:
       - ".github/workflows/offline-install.yml"
       - "image/base.lock"
       - "release/debs.*"
+      - "src/hyperwheel/firewall.py"
       - "src/hyperwheel/firstboot.py"
       - "src/hyperwheel/installer.py"
       - "tools/image/test-offline-install.sh"

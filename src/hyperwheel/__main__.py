@@ -39,6 +39,9 @@ def _main(argv: list[str]) -> int:
     if argv[:1] == ["first-boot"]:  # the unit that runs once on a newly flashed Pi
         from . import firstboot
         return firstboot.main(argv[1:])
+    if argv[:1] == ["firewall"]:  # the unit that loads the firewall, from early in the boot
+        from . import firewall
+        return firewall.main(argv[1:])
     if argv[:1] == ["viewer"]:  # the service that serves Orthanc Explorer 2, also before setup
         from . import viewer
         return viewer.main(argv[1:])

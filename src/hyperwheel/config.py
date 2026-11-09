@@ -92,6 +92,13 @@ class OrthancSettings:
 
 
 @dataclass(frozen=True)
+class HotspotSettings:
+    # Whether devices on the hotspot can reach the scanner and the internet beyond it, through the Pi.
+    # The Pi itself is reached the same way either way (the firewall, ``firewall.py``).
+    routing: bool = True
+
+
+@dataclass(frozen=True)
 class DashboardSettings:
     # The Upload Monitor listens on the hotspot address only.
     bind: str = "192.168.99.1"
@@ -135,6 +142,7 @@ class SiteConfig:
     orthanc: OrthancSettings = field(default_factory=OrthancSettings)
     dashboard: DashboardSettings = field(default_factory=DashboardSettings)
     updates: UpdateSettings = field(default_factory=UpdateSettings)
+    hotspot: HotspotSettings = field(default_factory=HotspotSettings)
 
 
 @dataclass(frozen=True)
@@ -221,6 +229,9 @@ def load_site(path: Path) -> SiteConfig:
     if urlsplit(orthanc.url).hostname not in _LOCAL_HOSTS:
         raise ConfigError(f"{where} [orthanc].url must point at this machine")
     dashboard = _section(DashboardSettings, data.get("dashboard", {}), f"{where} [dashboard]")
+    hotspot = _section(HotspotSettings, data.get("hotspot", {}), f"{where} [hotspot]")
+    if not isinstance(hotspot.routing, bool):
+        raise ConfigError(f"{where} [hotspot].routing must be true or false")
     updates = _section(UpdateSettings, data.get("updates", {}), f"{where} [updates]")
     if updates.channel not in ("dev", "pilot", "stable"):
         raise ConfigError(f"{where} [updates].channel must be dev, pilot or stable")
@@ -255,6 +266,7 @@ def load_site(path: Path) -> SiteConfig:
         dashboard=dashboard,
         updates=UpdateSettings(updates.channel, check_url(updates.url, f"{where} [updates].url",
                                                           test_mode=test_mode)),
+        hotspot=hotspot,
     )
 
 
