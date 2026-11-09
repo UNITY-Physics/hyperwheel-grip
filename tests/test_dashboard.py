@@ -187,3 +187,37 @@ def test_an_update_hold_is_shown(env):
     s = snap(env, update_hold=lambda: "Updates are on hold since 2026-11-06 15:00: site visit.")
     assert {"level": "flag", "text": "Updates are on hold since 2026-11-06 15:00: site visit."} in s["general"]
     assert not any("on hold" in g["text"] for g in snap(env, update_hold=lambda: None)["general"])
+
+
+def test_a_study_with_no_raw_data_on_the_scanner_is_complete_at_the_first_look(env, scanner):
+    """The scanner makes DICOM from raw data, so no folder when the DICOM is in means there's no raw data."""
+    from hyperwheel.organiser import Organiser
+    from hyperwheel.rawpull import RawPuller
+    svc = service(env, scanner)
+    organiser = Organiser(env.store, env.site, env.routing, env.orthanc, clock=env.clock)
+    puller = RawPuller(env.store, env.site, scanner.connect, clock=env.clock, free_bytes=lambda p: 10 ** 12)
+    uid = phantom_study(env)
+    svc.local_round(env.store, organiser, puller)
+    svc.upload_round(env.uploader())
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    s = snap(env)
+    assert env.store.study_by_uid(uid).state == "uploaded"
+    assert s["headline"] == "Everything is on GRIP" and s["safe_to_switch_off"]
+    assert s["studies"][0]["raw"]["text"] == "No raw data"
+
+
+def test_a_scanner_that_cant_be_read_doesnt_count_as_no_raw_data(env, scanner):
+    from hyperwheel.organiser import Organiser
+    from hyperwheel.rawpull import RawPuller
+
+    def unreachable():
+        raise OSError("no route to host")
+
+    svc = service(env, scanner)
+    organiser = Organiser(env.store, env.site, env.routing, env.orthanc, clock=env.clock)
+    puller = RawPuller(env.store, env.site, unreachable, clock=env.clock, free_bytes=lambda p: 10 ** 12)
+    phantom_study(env)
+    svc.local_round(env.store, organiser, puller)
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    s = snap(env)
+    assert s["studies"][0]["raw"]["text"] == "Raw data still to come" and not s["on_pi_complete"]
