@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import sys
 import threading
 import urllib.request
 
@@ -221,3 +223,49 @@ def test_a_scanner_that_cant_be_read_doesnt_count_as_no_raw_data(env, scanner):
     env.store.set_cursor(HEARTBEAT, int(env.clock()))
     s = snap(env)
     assert s["studies"][0]["raw"]["text"] == "Raw data still to come" and not s["on_pi_complete"]
+
+
+def test_the_upload_monitor_also_listens_on_the_pi_itself():
+    assert dashboard.addresses("192.168.99.1") == ["192.168.99.1", "127.0.0.1"]
+    for covers_it in ("127.0.0.1", "127.0.1.1", "localhost", "0.0.0.0", ""):
+        assert dashboard.addresses(covers_it) == [covers_it]  # never two listeners on one port
+
+
+def test_an_address_the_pi_doesnt_have_yet_is_bound_on_linux(monkeypatch):
+    """Python's socket module names IP_FREEBIND only from 3.14. Trixie has 3.13, so it's set by its number."""
+    from hyperwheel import reach
+
+    class Sock:
+        def __init__(self):
+            self.options = []
+
+        def setsockopt(self, *args):
+            self.options.append(args)
+
+    sock = Sock()
+    monkeypatch.setattr(reach.sys, "platform", "linux")
+    reach.allow_unassigned_address(sock)
+    assert sock.options == [(socket.IPPROTO_IP, 15, 1)]
+    monkeypatch.setattr(reach.sys, "platform", "darwin")
+    sock = Sock()
+    reach.allow_unassigned_address(sock)
+    assert sock.options == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only (CI)")
+def test_the_hotspot_address_binds_before_the_hotspot_is_up():
+    from http.server import BaseHTTPRequestHandler
+
+    from hyperwheel import viewer
+    for server_class in (dashboard.Server, viewer.Server):
+        server = server_class(("192.168.99.1", 0), BaseHTTPRequestHandler)  # not an address this machine has
+        server.server_close()
+
+
+def test_the_pis_own_bookmark_opens_the_upload_monitor_on_127_0_0_1():
+    from pathlib import Path
+    policy = json.loads((Path(__file__).resolve().parents[1] / "image/files/etc/chromium/policies/managed/"
+                         "hyperwheel.json").read_text())
+    urls = {b.get("name"): b.get("url") for b in policy["ManagedBookmarks"]}
+    assert urls["Upload Monitor"] == "http://127.0.0.1:5000/"
+    assert urls["Orthanc Explorer 2"].startswith("http://127.0.0.1:")

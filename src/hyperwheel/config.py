@@ -100,7 +100,7 @@ class HotspotSettings:
 
 @dataclass(frozen=True)
 class DashboardSettings:
-    # The Upload Monitor listens on the hotspot address only.
+    # The Upload Monitor listens on the hotspot address, and on 127.0.0.1 for the Pi's own browser.
     bind: str = "192.168.99.1"
     port: int = 5000
     # Once everything from the scanner is on the Pi, operators may switch the scanner

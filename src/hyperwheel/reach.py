@@ -19,6 +19,7 @@ from __future__ import annotations
 import ipaddress
 import secrets
 import socket
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -67,6 +68,16 @@ def tcp_answers(host: str, port: int, timeout_s: float = 5.0) -> bool:
             return True
     except OSError:  # includes a failed name look-up
         return False
+
+
+IP_FREEBIND = 15  # <linux/in.h>. Python's socket module has the name only from 3.14, and Trixie has 3.13.
+
+
+def allow_unassigned_address(sock: socket.socket) -> None:
+    """Let a listening socket bind an address the Pi doesn't have yet, such as the hotspot's before it's up
+    (Linux only). It starts answering there as soon as the address appears."""
+    if sys.platform.startswith("linux"):
+        sock.setsockopt(socket.IPPROTO_IP, IP_FREEBIND, 1)
 
 
 def lookup_seconds(name: str, timeout_s: float = LOOKUP_TIMEOUT_S) -> float | None:
