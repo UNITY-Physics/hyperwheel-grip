@@ -266,6 +266,22 @@ def test_missing_scanner_folder_flagged_after_grace(env, scanner):
     assert {f.code for f in env.store.open_flags(study_id=study.id)} == {"RAW_FOLDER_NOT_FOUND"}
 
 
+@pytest.mark.parametrize("series", [
+    [("Localizer Auto Align", "133251", ("ORIGINAL", "PRIMARY", "LOCALIZER")),
+     ("Localiser Sag", "133300", ("ORIGINAL", "PRIMARY", "LOCALIZER"))],
+    [("ADC", "134747", ("DERIVED", "PRIMARY", "DIFFUSION"))],
+])
+def test_no_folder_isnt_flagged_for_a_study_that_needs_no_raw_data(env, scanner, series):
+    uid = phantom_study(env, series=series)
+    p = puller(env, scanner)
+    p.pull_once()
+    env.advance(11 * 60)
+    p.pull_once()
+    study = env.store.study_by_uid(uid)
+    assert env.store.open_flags(study_id=study.id) == []
+    assert study.raw_checked_at is not None  # and it's complete: no raw data
+
+
 def test_no_raw_pull_when_disabled(env, scanner):
     from dataclasses import replace
     phantom_study(env)

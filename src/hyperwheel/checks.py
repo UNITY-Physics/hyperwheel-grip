@@ -104,16 +104,20 @@ def study_issues(store: Store, study: Study, instances: list[InstanceInfo], site
 
 
 def raw_issues(store: Store, study: Study, folder_found: bool) -> list[Issue]:
-    """Series that should have raw data but don't. Flags only; run after a raw-data pull."""
+    """Series that should have raw data but don't. Flags only; run after a raw-data pull.
+
+    A series the scanner makes from raw data (ORIGINAL, not a localiser) should have raw data. A study with no
+    such series (only localisers, or only derived maps) needs none, so no folder isn't a problem for it.
+    """
+    expected = [f for f in store.files(study.id, kind="dicom") if _should_have_raw(f)]
     if not folder_found:
+        if not expected:
+            return []
         return [Issue("RAW_FOLDER_NOT_FOUND", "No raw-data folder for this study was found on the scanner. "
                       "Check that raw data saving is on for this protocol.")]
     raw_times = {rrdf_timestamp(f.name) for f in store.files(study.id, kind="rrdf") if f.state != "seen"}
     missing = []
-    for f in store.files(study.id, kind="dicom"):
-        description = (f.series_description or "").lower()
-        if "ORIGINAL" not in (f.image_type or "") or any(s in description for s in NO_RAW_SERIES):
-            continue
+    for f in expected:
         when = parse_datetime(f.acquisition_time)
         if when is not None and when not in raw_times:
             missing.append(f.series_description or f.series_uid or "?")
@@ -121,6 +125,11 @@ def raw_issues(store: Store, study: Study, folder_found: bool) -> list[Issue]:
         names = ", ".join(sorted(set(missing)))
         return [Issue("RAW_MISSING_FOR_SERIES", f"No raw data found for: {names}.")]
     return []
+
+
+def _should_have_raw(f) -> bool:
+    description = (f.series_description or "").lower()
+    return "ORIGINAL" in (f.image_type or "") and not any(s in description for s in NO_RAW_SERIES)
 
 
 def apply(store: Store, study: Study, issues: list[Issue], codes: Iterable[str]) -> None:
