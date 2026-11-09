@@ -55,6 +55,10 @@ DATA_MANAGER = "datamanager"
 # asks for the data manager's own password; looking at the status doesn't. Until the Pi is set up,
 # it may also run ``hyperwheel setup`` without a password (there's no admin yet to ask).
 SETUP_DONE = "setup-done"
+# The viewer's (OE2 over HTTPS) certificate and key, made once on each Pi. The key is root-only.
+VIEWER_CERT = "/etc/hyperwheel/viewer/cert.pem"
+VIEWER_KEY = "/etc/hyperwheel/viewer/key.pem"
+VIEWER_NAMES = "IP:192.168.99.1,IP:127.0.0.1"
 SETUP_PROGRESS = "setup.json"
 
 
@@ -249,8 +253,8 @@ class Installer:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text.replace("@USER@", self.service_user))
             path.chmod(0o644)
-        self.say("Systemd units: written (hyperwheel, hyperwheel-dashboard, hyperwheel-connect, hyperwheel-update "
-                 "and its timer, Orthanc's settings drop-in).")
+        self.say("Systemd units: written (hyperwheel, hyperwheel-dashboard, hyperwheel-connect, hyperwheel-viewer, "
+                 "hyperwheel-update and its timer, Orthanc's settings drop-in).")
         # The hyperwheel command (status, doctor, update ...), always the current release's.
         command = self.layout.p("/usr/local/bin/hyperwheel")
         command.parent.mkdir(parents=True, exist_ok=True)
@@ -305,6 +309,8 @@ class Installer:
         # An image goes to every Pi, so each Pi makes its own login at first boot.
         if not self.image and self.orthanc_login():
             added.append("orthanc.json (new Orthanc login)")
+        if not self.image and self.viewer_certificate():
+            added.append("viewer (new certificate for Orthanc Explorer 2)")
         link = self.layout.orthanc_conf / "hyperwheel.json"
         if link.is_symlink() or link.exists():
             link.unlink()
@@ -335,6 +341,33 @@ class Installer:
         self._write_secret(users_file, json.dumps({"RegisteredUsers": {users["username"]: users["password"]}}) + "\n",
                            group=ORTHANC_USER, mode=0o640)
         return made
+
+    def viewer_certificate(self) -> bool:
+        """The certificate Orthanc Explorer 2 is served with: made once on each Pi, never replaced by an update.
+        Returns True if it was made now."""
+        cert, key = self.layout.p(VIEWER_CERT), self.layout.p(VIEWER_KEY)
+        if cert.is_file() and key.is_file():
+            return False
+        folder = cert.parent
+        folder.mkdir(parents=True, exist_ok=True)
+        folder.chmod(0o755)
+        work = folder / ".new"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(mode=0o700)
+        try:
+            self.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                      "-noenc", "-days", "3650", "-subj", "/CN=Hyperwheel",
+                      "-addext", f"subjectAltName={VIEWER_NAMES}", "-addext", "basicConstraints=critical,CA:FALSE",
+                      "-addext", "keyUsage=critical,digitalSignature", "-addext", "extendedKeyUsage=serverAuth",
+                      "-keyout", str(work / "key.pem"), "-out", str(work / "cert.pem")])
+            for name, mode in (("key.pem", 0o600), ("cert.pem", 0o644)):
+                os.chmod(work / name, mode)
+                self.chown(work / name, "root", "root")
+            os.replace(work / "key.pem", key)
+            os.replace(work / "cert.pem", cert)  # last: both are there once this is
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        return True
 
     def _add_if_missing(self, src: Path, dest: Path, mode: int) -> bool:
         if not src.is_file() or dest.exists():
@@ -369,16 +402,21 @@ class Installer:
     def restart(self, configured: bool) -> None:
         if self.image:
             self.run(["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer",
-                      "hyperwheel-connect.service", "hyperwheel-dashboard.service"])
-            self.say("In the image: first boot, update checks, Connect's sign-in and the Upload Monitor are on, "
-                     "and nothing was started.")
+                      "hyperwheel-connect.service", "hyperwheel-dashboard.service", "hyperwheel-viewer.service"])
+            self.say("In the image: first boot, update checks, Connect's sign-in, the Upload Monitor and Orthanc "
+                     "Explorer 2 are on, and nothing was started.")
             return
         self.run(["systemctl", "daemon-reload"])
         self.run(["systemctl", "restart", "orthanc"])
         self.say("Orthanc: restarted with the release's settings.")
         if self.start:
-            self.run(["systemctl", "enable", "--now", "hyperwheel-update.timer", "hyperwheel-connect.service"])
-            self.say("Update checks: on (every 6 hours). Connect's state: watched.")
+            self.run(["systemctl", "enable", "hyperwheel-update.timer", "hyperwheel-connect.service",
+                      "hyperwheel-viewer.service"])
+            # A restart, so services already running take this release's code.
+            self.run(["systemctl", "restart", "hyperwheel-update.timer", "hyperwheel-connect.service",
+                      "hyperwheel-viewer.service"])
+            self.say("Update checks: on (every 6 hours). Connect's state: watched. Orthanc Explorer 2: at "
+                     "https://192.168.99.1:8443")
         if not (configured and self.start):
             return
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
@@ -432,6 +470,18 @@ def _atomic_link(link: Path, target: str) -> None:
     os.replace(tmp, link)
 
 
+# OE2 is for looking and downloading only. These hide what changes anything, and what this Pi doesn't have.
+# The viewer refuses those requests as well, whatever the page shows.
+OE2_UI = {
+    "EnableUpload": False, "EnableDeleteResources": False, "EnableModification": False,
+    "EnableAnonymization": False, "EnableAddSeries": False, "EnableSendTo": False, "EnableEditLabels": False,
+    "EnableDicomModalities": False, "EnableDicomWebServers": False, "EnableWorklists": False,
+    "EnableSettings": False, "EnableLinkToLegacyUi": False, "EnableApiViewMenu": False,
+    "EnableViewerQuickButton": False, "EnableDownloadDicomDir": False,
+    "EnableDownloadZip": True, "EnableDownloadDicomFile": True,
+}
+
+
 def orthanc_json(plugins: list[str]) -> dict:
     """The release's Orthanc settings. Logins are in users.json beside it (site secret)."""
     return {
@@ -447,7 +497,7 @@ def orthanc_json(plugins: list[str]) -> dict:
         "StableAge": 60,
         "OrthancExplorerEnabled": False,
         "Plugins": plugins,
-        "OrthancExplorer2": {"Enable": True, "IsDefaultOrthancUI": True},
+        "OrthancExplorer2": {"Enable": True, "IsDefaultOrthancUI": True, "UiOptions": OE2_UI},
     }
 
 
@@ -482,7 +532,8 @@ Description=Hyperwheel: first start of a newly flashed Pi
 DefaultDependencies=no
 After=local-fs.target systemd-remount-fs.service
 RequiresMountsFor=/boot/firmware /etc/hyperwheel
-Before=NetworkManager.service orthanc.service hyperwheel.service hyperwheel-dashboard.service multi-user.target
+Before=NetworkManager.service orthanc.service hyperwheel.service hyperwheel-dashboard.service \
+       hyperwheel-viewer.service multi-user.target
 ConditionPathExists=!/etc/hyperwheel/first-boot-done
 
 [Service]
@@ -503,6 +554,29 @@ Restart=always
 RestartSec=30
 ProtectSystem=full
 PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+""",
+    # A user made by systemd for this service alone, in the shadow group so it can check passwords. It can't
+    # read the staged files, and gets Orthanc's login and the certificate's key only from systemd.
+    "hyperwheel-viewer.service": """[Unit]
+Description=Hyperwheel: Orthanc Explorer 2 over HTTPS, signed in with the Pi's own accounts
+After=network.target orthanc.service hyperwheel-firstboot.service
+
+[Service]
+DynamicUser=yes
+SupplementaryGroups=shadow
+ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel viewer
+LoadCredential=orthanc:/etc/hyperwheel/orthanc.json
+LoadCredential=viewer-key:/etc/hyperwheel/viewer/key.pem
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+InaccessiblePaths=-/var/lib/hyperwheel -/etc/hyperwheel/keys
 
 [Install]
 WantedBy=multi-user.target

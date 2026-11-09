@@ -45,6 +45,7 @@ class Probes:
     free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free
     now: Callable[[], float] = time.time
     connect_state: Callable[[], dict | None] = connect.read_state
+    viewer_answers: Callable[[], bool] = lambda: reach.tcp_answers("127.0.0.1", 8443)
     etc: Path = Path("/etc/hyperwheel")
 
 
@@ -125,6 +126,10 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
         out.append((OK, "Orthanc (receives the scanner's DICOM)", "answering"))
     else:
         out.append((PROBLEM, "Orthanc (receives the scanner's DICOM)", f"not answering at {site.orthanc.url}"))
+    if p.viewer_answers():
+        out.append((OK, "Orthanc Explorer 2", "answering at https://192.168.99.1:8443"))
+    else:
+        out.append((PROBLEM, "Orthanc Explorer 2", "not answering. Uploads aren't affected."))
 
     if p.synced():
         out.append((OK, "Clock", "set from the network"))

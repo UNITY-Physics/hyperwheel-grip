@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pwd
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -58,6 +59,9 @@ class FakePi:
             if cmd[-1] not in self.packages:
                 raise InstallError("not installed")
             return self.packages[cmd[-1]]
+        if cmd[0] == "openssl":
+            Path(cmd[cmd.index("-keyout") + 1]).write_text("KEY")
+            Path(cmd[cmd.index("-out") + 1]).write_text("CERT")
         if cmd[0] == "useradd":
             self.accounts[cmd[-1]] = (998, "/usr/sbin/nologin")
         if cmd[0] == "apt-get":
@@ -178,7 +182,9 @@ def test_update_checks_are_switched_on_and_the_release_signers_kept_for_the_upda
     assert "ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel update check" in \
         (units / "hyperwheel-update.service").read_text()
     assert "OnUnitInactiveSec=6h" in (units / "hyperwheel-update.timer").read_text()
-    assert ["systemctl", "enable", "--now", "hyperwheel-update.timer", "hyperwheel-connect.service"] in fake.commands
+    services = ["hyperwheel-update.timer", "hyperwheel-connect.service", "hyperwheel-viewer.service"]
+    assert ["systemctl", "enable", *services] in fake.commands
+    assert ["systemctl", "restart", *services] in fake.commands  # running ones take the new code
     assert os.readlink(root / "usr/local/bin/hyperwheel") == "/opt/hyperwheel/current/venv/bin/hyperwheel"
     trusted = root / "etc/hyperwheel/release_allowed_signers"
     assert trusted.read_bytes() == signers.read_bytes() and mode(trusted) == 0o644
@@ -323,7 +329,8 @@ def test_image_mode_starts_nothing_and_leaves_the_login_to_first_boot(tmp_path, 
     assert fake.ran("apt-get") and fake.ran("pip")  # the same install
     systemctl = fake.ran("systemctl")
     assert systemctl == [["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer",
-                          "hyperwheel-connect.service", "hyperwheel-dashboard.service"]]
+                          "hyperwheel-connect.service", "hyperwheel-dashboard.service", "hyperwheel-viewer.service"]]
+    assert not (root / "etc/hyperwheel/viewer").exists()  # each Pi makes its own certificate at first boot
     assert not (root / "etc/hyperwheel/orthanc.json").exists()
     assert not (root / "etc/hyperwheel/orthanc.d/users.json").exists()
     assert (root / "etc/hyperwheel/orthanc.d/hyperwheel.json").is_symlink()
@@ -346,3 +353,35 @@ def test_the_upload_monitor_may_write_only_to_connects_inbox(tmp_path, key, sign
     assert mode(var / "connect") == 0o755 and mode(var / "connect" / "inbox") == 0o730
     unit = (root / "etc/systemd/system/hyperwheel-dashboard.service").read_text()
     assert "ReadWritePaths=/var/lib/hyperwheel/connect/inbox\n" in unit and "ProtectSystem=strict" in unit
+
+
+def test_each_pi_makes_its_own_viewer_certificate_once(tmp_path, key, signers, pi):
+    root, fake = pi
+    installer(make_release(tmp_path, key), signers, pi, []).install()
+    viewer = root / "etc/hyperwheel/viewer"
+    assert mode(viewer / "key.pem") == 0o600 and mode(viewer / "cert.pem") == 0o644
+    assert not (viewer / ".new").exists()
+    openssl = fake.ran("openssl")[0]
+    assert "subjectAltName=IP:192.168.99.1,IP:127.0.0.1" in openssl and "ec_paramgen_curve:prime256v1" in openssl
+    installer(make_release(tmp_path, key, version="0.2.0"), signers, pi, []).install()
+    assert len(fake.ran("openssl")) == 1  # an update never replaces it
+
+
+@pytest.mark.skipif(not shutil.which("openssl"), reason="needs openssl")
+def test_the_real_certificate_is_for_the_hotspot_and_the_pi_itself(tmp_path):
+    from cryptography import x509
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from hyperwheel.installer import run_command
+    layout = Layout(tmp_path)
+    made = Installer(Path("."), Path("."), layout, run=run_command, chown=lambda *a: None).viewer_certificate()
+    assert made
+    cert = x509.load_pem_x509_certificate((tmp_path / "etc/hyperwheel/viewer/cert.pem").read_bytes())
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert sorted(str(a) for a in names.get_values_for_type(x509.IPAddress)) == ["127.0.0.1", "192.168.99.1"]
+    assert isinstance(cert.public_key(), ec.EllipticCurvePublicKey) and cert.public_key().curve.name == "secp256r1"
+    assert (cert.not_valid_after_utc - cert.not_valid_before_utc).days >= 3649
+    assert not cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+    import ssl
+    ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(tmp_path / "etc/hyperwheel/viewer/cert.pem",
+                                                            tmp_path / "etc/hyperwheel/viewer/key.pem")

@@ -20,6 +20,7 @@ NOT_FOR_PEOPLE = (
     re.compile(r"^\s*(CREATE|ALTER) TABLE ", re.M),  # the state database's schema
     re.compile(r"^;$"),  # splitting that schema into statements
     re.compile(r"^\[connection\]\n"),  # NetworkManager connection files
+    re.compile(r"^; (Max-Age=|Path=/; HttpOnly)"),  # a cookie's attributes
 )
 
 
