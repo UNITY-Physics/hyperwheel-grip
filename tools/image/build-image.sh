@@ -75,7 +75,9 @@ rmdir "$mnt/tmp/hyperwheel-release"
 rm "$mnt/tmp/allowed_signers"
 
 echo "== Hyperwheel's changes"
-"$repo/image/customise.sh" "$mnt" "$version" "$admin"
+# Run as root on a checkout owned by another user, so git is told the folder is safe.
+commit=$(git -c safe.directory="$repo" -C "$repo" rev-parse HEAD 2>/dev/null || echo unknown)
+"$repo/image/customise.sh" "$mnt" "$version" "$admin" "$commit"
 
 echo "== Checks"
 shown=""
@@ -93,11 +95,16 @@ check sh -c "chroot '$mnt' id -nG admin | tr ' ' '\n' | grep -qx sudo"
 label="no trace of the first-boot wizard or the pi user"
 check sh -c "! grep -qE '^(pi|rpi-first-boot-wizard):' '$mnt/etc/passwd'"
 check sh -c "! grep -rqs rpi-first-boot-wizard '$mnt/etc/lightdm' '$mnt/etc/sudoers.d'"
+check sh -c "! grep -rqsE '^[[:space:]]*pi[[:space:]]' '$mnt/etc/sudoers.d'"
+label="no password-free sudo except the setup line"
+check sh -c "[ \"\$(grep -rhs NOPASSWD '$mnt/etc/sudoers.d' | grep -v '^#' | grep -vc 'hyperwheel setup')\" = 0 ]"
 check grep -qx "autologin-user=datamanager" "$mnt/etc/lightdm/lightdm.conf"
 label="nothing in it differs from one Pi to the next"
-for f in orthanc.json hotspot.json viewer site.toml routing.toml scanner.json setup-done first-boot-done; do
+for f in orthanc.json orthanc.d/users.json hotspot.json viewer site.toml routing.toml scanner.json \
+         scanner_known_hosts setup.json setup-done first-boot-done; do
   check [ ! -e "$mnt/etc/hyperwheel/$f" ]
 done
+check [ -d "$mnt/etc/hyperwheel/keys" ]
 check [ -z "$(ls -A "$mnt/etc/hyperwheel/keys")" ]
 check sh -c "! ls '$mnt'/etc/ssh/ssh_host_* >/dev/null 2>&1"
 check [ "$(cat "$mnt/etc/machine-id")" = uninitialized ]
@@ -111,10 +118,14 @@ for unit in hyperwheel-firstboot.service hyperwheel-firewall.service hyperwheel-
   check [ "$(in_image systemctl is-enabled "$unit")" = enabled ]
 done
 for unit in apt-daily.timer apt-daily-upgrade.timer packagekit.service rpi-eeprom-update.service \
-            userconfig.service kernel-command-line.service; do
+            userconfig.service; do
   check [ "$(in_image systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
 done
 check [ -e "$mnt/etc/cloud/cloud-init.disabled" ]
+label="Imager's first-run script is replaced by one that only removes its boot options"
+check grep -qx "ExecStart=/usr/local/lib/hyperwheel/ignore-first-run.sh" \
+  "$mnt/etc/systemd/system/kernel-command-line.service.d/hyperwheel.conf"
+check [ -x "$mnt/usr/local/lib/hyperwheel/ignore-first-run.sh" ]
 label="the sudo rule passes visudo, and lets datamanager run setup until the Pi is set up"
 check in_image visudo -c -q
 check grep -q "NOPASSWD: /usr/local/bin/hyperwheel setup" "$mnt/etc/sudoers.d/hyperwheel"
@@ -129,8 +140,11 @@ check offline /usr/sbin/nft -c -f /tmp/rules.nft
 rm "$mnt/tmp/rules.nft"
 label="hyperwheel help runs as datamanager"
 check sh -c "chroot '$mnt' runuser -u datamanager -- /usr/local/bin/hyperwheel help | grep -q 'hyperwheel setup'"
-label="the Wi-Fi country is GB"
+label="the Wi-Fi country is GB, and Wi-Fi is on"
 check grep -q "cfg80211.ieee80211_regdom=GB" "$mnt/boot/firmware/cmdline.txt"
+check grep -qx "WirelessEnabled=true" "$mnt/var/lib/NetworkManager/NetworkManager.state"
+label="the image's version, then its commit"
+check [ "$(head -1 "$mnt/etc/hyperwheel-image")" = "$version" ]
 
 echo "== The package list"
 in_image dpkg-query -W -f '${Package}\t${Version}\n' > "$out/$name-packages.txt"

@@ -27,12 +27,14 @@ It contains (`image/customise.sh`):
   admin password file as it was at build time, so admin works before the Pi has
   ever been online;
 - **two accounts and no others:** `datamanager` (uid 1000, logged in to the
-  desktop automatically, its password locked until setup gives it one, lingering
+  desktop automatically, able to read the logs, its password locked until setup gives it one, lingering
   on so Connect runs with nobody logged in) and `admin` (in `sudo`). The official
   image's `pi` placeholder and its first-boot wizard are removed;
-- **no other way in:** cloud-init, the user-renaming service and a first-run
-  script on the kernel's command line are switched off, so a site that answers
-  Yes to Raspberry Pi Imager's customisation by mistake changes nothing;
+- **no other way in:** cloud-init and the user-renaming service are switched
+  off, and a first-run script that Raspberry Pi Imager puts on the card is
+  replaced by one that only removes Imager's boot options and restarts. So a
+  site that answers Yes to Imager's customisation by mistake gets no extra user,
+  Wi-Fi or password;
 - the desktop, with Chromium bookmarks for the scanner (`https://10.42.0.1:8080/`),
   the Upload Monitor (`http://192.168.99.1:5000/`) and OE2
   (`http://127.0.0.1:8442/ui/app/`, which only the Pi itself can open), and no
@@ -93,7 +95,7 @@ hidden files macOS leaves on the partition, and prints the private copy's
 SHA-256 for the sites. Share the private copy only with the sites, privately:
 anyone who has it can read the password from it.
 
-Sites download the private copy (about 1.5 GB, an estimate) **the day before**,
+Sites download the private copy (about 2.1 GB) **the day before**,
 in a browser, which can resume a broken download. They check its SHA-256 and
 flash it with Raspberry Pi Imager ("Use custom"). The SOP gives the exact steps:
 

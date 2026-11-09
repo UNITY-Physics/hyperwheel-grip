@@ -432,11 +432,16 @@ class Server(ThreadingHTTPServer):
 
 
 def make_server(viewer: Viewer, address: str, port: int, context: ssl.SSLContext | None) -> Server:
-    """``context`` None is plain HTTP, for tests only: the service always passes one."""
+    """``context`` None is plain HTTP: only for 127.0.0.1 (``listeners``) and tests."""
     server = Server((address, port), viewer.handler())
     if context is not None:
         server.socket = context.wrap_socket(server.socket, server_side=True)
     return server
+
+
+def listeners() -> list[tuple[str, int, bool]]:
+    """Where the service listens, as (address, port, HTTPS). Plain HTTP only on 127.0.0.1, which never leaves the Pi."""
+    return [*((address, PORT, True) for address in ADDRESSES), ("127.0.0.1", LOCAL_PORT, False)]
 
 
 def tls_context(cert: Path, key: Path) -> ssl.SSLContext:
@@ -471,11 +476,11 @@ def main(args: list[str]) -> int:
     except (OSError, ssl.SSLError, KeyProblem, KeyError, ValueError) as e:
         log.error("Viewer: can't start (%s).", e)
         return 1
-    servers = [make_server(viewer, address, PORT, context) for address in ADDRESSES]
-    servers.append(make_server(viewer, "127.0.0.1", LOCAL_PORT, None))
+    servers = [make_server(viewer, address, port, context if tls else None) for address, port, tls in listeners()]
     for server in servers[1:]:
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    log.info("Viewer: Orthanc Explorer 2 is at https://%s:%d.", ADDRESSES[-1], PORT)
+    log.info("Viewer: Orthanc Explorer 2 is at https://%s:%d, and at http://127.0.0.1:%d on the Pi itself.",
+             ADDRESSES[-1], PORT, LOCAL_PORT)
     servers[0].serve_forever()
     return 0
 

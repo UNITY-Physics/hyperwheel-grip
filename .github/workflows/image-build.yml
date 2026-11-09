@@ -21,6 +21,7 @@ on:
       - ".github/workflows/image-build.yml"
       - "image/**"
       - "tools/image/build-image.sh"
+      - "tools/image/find-private-keys.py"
 
 permissions:
   contents: read

@@ -2,7 +2,7 @@
 # What makes the official image a Hyperwheel image. Run by tools/image/build-image.sh, as root, on the image's
 # root file system mounted at $1, after the release is installed in it (install.sh --image).
 #
-#     image/customise.sh <root> <image-version> <admin-password-folder>
+#     image/customise.sh <root> <image-version> <admin-password-folder> [<commit>]
 #
 # Nothing here is different from one Pi to the next: whatever must differ (Orthanc's login, the certificate,
 # SSH host keys, the hotspot password, every password but admin's) is made on each Pi, at first boot or by
@@ -12,6 +12,7 @@ set -euo pipefail
 root=${1:?root}
 version=${2:?image version}
 admin=${3:?admin password folder}
+commit=${4:-unknown}
 here=$(cd "$(dirname "$0")" && pwd)
 in_image() { chroot "$root" "$@"; }
 say() { printf '  %s\n' "$*"; }
@@ -19,13 +20,16 @@ say() { printf '  %s\n' "$*"; }
 echo "== Accounts"
 # The official image's placeholder user and its first-boot wizard go. datamanager takes uid 1000, the one
 # Raspberry Pi OS's tools take as the desktop's user.
+# Their password-free sudo goes too (the wizard's, and pi's 010_pi-nopasswd).
 for f in "$root"/etc/sudoers.d/*; do
-  grep -q "rpi-first-boot-wizard" "$f" && rm "$f"
+  if grep -qE '^[[:space:]]*(pi|rpi-first-boot-wizard)[[:space:]]' "$f"; then rm "$f"; fi
 done
 in_image userdel --remove rpi-first-boot-wizard 2>/dev/null || true
 in_image userdel --remove pi
+# systemd-journal: data managers read Hyperwheel's logs (journalctl -t hyperwheel), which hold no patient data.
 in_image useradd --create-home --shell /bin/bash --user-group --uid 1000 \
-  --groups audio,video,plugdev,users,input,render,netdev,gpio,i2c,spi,lpadmin --comment "Data manager" datamanager
+  --groups audio,video,plugdev,users,input,render,netdev,gpio,i2c,spi,lpadmin,systemd-journal \
+  --comment "Data manager" datamanager
 in_image useradd --create-home --shell /bin/bash --user-group --groups sudo --comment "Hyperwheel admin" admin
 say "datamanager (desktop, locked until setup gives it a password) and admin (in sudo)"
 # Connect's user services run from every boot, with nobody logged in.
@@ -44,10 +48,16 @@ echo "== No other way in"
 # Answering Yes to Raspberry Pi Imager's customisation by mistake changes nothing: cloud-init, the user
 # renaming service and a first-run script on the kernel's command line are all off.
 touch "$root/etc/cloud/cloud-init.disabled"
-in_image systemctl mask --quiet userconfig.service kernel-command-line.service
+in_image systemctl mask --quiet userconfig.service
+# Imager's first-run script is replaced, not masked: a masked one would leave its boot options in place and the
+# Pi would never get past them. The replacement removes them and restarts.
+install -m 755 "$here/files/usr/local/lib/hyperwheel/ignore-first-run.sh" -D \
+  "$root/usr/local/lib/hyperwheel/ignore-first-run.sh"
+install -m 644 -D "$here/files/etc/systemd/system/kernel-command-line.service.d/hyperwheel.conf" \
+  "$root/etc/systemd/system/kernel-command-line.service.d/hyperwheel.conf"
 rm -f "$root/etc/ssh/sshd_config.d/rename_user.conf"
 in_image systemctl enable --quiet ssh.service
-say "cloud-init, userconf and systemd.run= off, SSH on"
+say "cloud-init and userconf off, Imager's first-run script replaced, SSH on"
 
 echo "== Nothing changes by itself"
 in_image systemctl mask --quiet apt-daily.timer apt-daily-upgrade.timer packagekit.service \
@@ -87,6 +97,7 @@ print("  " + AdminPassword("local", fetch=fetch).check())
 rm -r "$root/tmp/hyperwheel-admin"
 
 echo "== The image's version"
-printf '%s\n' "$version" > "$root/etc/hyperwheel-image"
+# The version first (what the updater compares), then the commit this image was built from.
+printf '%s\nbuilt from commit %s\n' "$version" "$commit" > "$root/etc/hyperwheel-image"
 chmod 644 "$root/etc/hyperwheel-image"
-say "$version"
+say "$version, from commit $commit"
