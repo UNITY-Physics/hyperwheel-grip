@@ -425,3 +425,17 @@ def test_macs_files_and_the_folder_go_with_the_copy(pi):
     setup, _ = make(pi, typed)
     assert setup.main() == 0, typed.text
     assert not copy.parent.exists()
+
+
+def test_hotspot_routing_is_on_unless_the_site_file_turns_it_off(pi):
+    from hyperwheel.sitesetup import SetupError, parse_site_file
+    zoneinfo = pi.root / "usr/share/zoneinfo"
+    text = "\n".join(template_lines())
+    on = parse_site_file(text, zoneinfo=zoneinfo)
+    assert on.site.hotspot.routing is True and "routing = true" in on.site_toml
+    off = parse_site_file(text.replace("schema_version = 1", "schema_version = 1\nhotspot_routing = false", 1),
+                          zoneinfo=zoneinfo)
+    assert off.site.hotspot.routing is False and "routing = false" in off.site_toml
+    with pytest.raises(SetupError, match="hotspot_routing must be true or false"):
+        parse_site_file(text.replace("schema_version = 1", 'schema_version = 1\nhotspot_routing = "no"', 1),
+                        zoneinfo=zoneinfo)

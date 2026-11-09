@@ -21,6 +21,7 @@ NOT_FOR_PEOPLE = (
     re.compile(r"^;$"),  # splitting that schema into statements
     re.compile(r"^\[connection\]\n"),  # NetworkManager connection files
     re.compile(r"^; (Max-Age=|Path=/; HttpOnly)"),  # a cookie's attributes
+    re.compile(r"type filter hook (input|forward) priority filter; policy drop;"),  # the firewall's rules
 )
 
 

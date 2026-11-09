@@ -112,10 +112,24 @@ if [ "$mode" = image ]; then
   for f in orthanc.json orthanc.d/users.json hotspot.json first-boot-done setup-done; do
     [ ! -e "$mnt/etc/hyperwheel/$f" ] || { echo "$f shouldn't be in the image." >&2; exit 1; }
   done
-  for unit in hyperwheel-firstboot.service hyperwheel-connect.service hyperwheel-dashboard.service; do
+  for unit in hyperwheel-firstboot.service hyperwheel-connect.service hyperwheel-dashboard.service \
+              hyperwheel-viewer.service hyperwheel-firewall.service; do
     [ "$(in_image systemctl is-enabled "$unit")" = enabled ] || { echo "$unit isn't enabled." >&2; exit 1; }
   done
   grep -q "hyperwheel setup" "$mnt/etc/sudoers.d/hyperwheel"
+
+  echo "== The image's SSH server accepts Hyperwheel's SSH settings"
+  grep -q PerSourcePenalties "$mnt/etc/ssh/sshd_config.d/05-hyperwheel.conf"
+  in_image ssh-keygen -q -t ed25519 -N '' -f /tmp/test-host-key
+  mkdir -p "$mnt/run/sshd"
+  in_image /usr/sbin/sshd -t -o HostKey=/tmp/test-host-key
+  in_image /usr/sbin/sshd -T -o HostKey=/tmp/test-host-key | grep -qx "maxauthtries 3"
+  rm -f "$mnt/tmp/test-host-key" "$mnt/tmp/test-host-key.pub"
+
+  echo "== The firewall's rules are accepted by the image's nft"
+  in_image /opt/hyperwheel/current/venv/bin/hyperwheel firewall --print > "$mnt/tmp/rules.nft"
+  offline /usr/sbin/nft -c -f /tmp/rules.nft
+  rm -f "$mnt/tmp/rules.nft"
 
   echo "== First boot, with a password on the card as written on a Mac"
   card=$mnt/boot/firmware/hyperwheel

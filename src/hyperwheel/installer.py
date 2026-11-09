@@ -254,7 +254,7 @@ class Installer:
             path.write_text(text.replace("@USER@", self.service_user))
             path.chmod(0o644)
         self.say("Systemd units: written (hyperwheel, hyperwheel-dashboard, hyperwheel-connect, hyperwheel-viewer, "
-                 "hyperwheel-update and its timer, Orthanc's settings drop-in).")
+                 "hyperwheel-firewall, hyperwheel-update and its timer, Orthanc's settings drop-in).")
         # The hyperwheel command (status, doctor, update ...), always the current release's.
         command = self.layout.p("/usr/local/bin/hyperwheel")
         command.parent.mkdir(parents=True, exist_ok=True)
@@ -342,6 +342,32 @@ class Installer:
                            group=ORTHANC_USER, mode=0o640)
         return made
 
+    def ssh_settings(self) -> None:
+        """sshd's slowdown for wrong passwords. Put in place only if sshd accepts it, as with the sudo rule."""
+        from .firewall import SSHD_DROP_IN, SSHD_SETTINGS
+        path = self.layout.p(SSHD_DROP_IN)
+        if not path.parent.is_dir():
+            self.say("SSH settings: not changed (this Pi has no SSH server).")
+            return
+        if path.is_file() and path.read_text() == SSHD_SETTINGS:
+            return
+        old = path.read_text() if path.is_file() else None
+        path.write_text(SSHD_SETTINGS)
+        path.chmod(0o644)
+        if self.image:
+            return  # checked in CI, since the image has no host keys yet
+        try:
+            self.run(["sshd", "-t"])
+        except InstallError as e:
+            if old is None:
+                path.unlink()
+            else:
+                path.write_text(old)
+            self.say(f"SSH settings: not changed, because sshd didn't accept them ({e}).")
+            return
+        self.run(["systemctl", "reload", "ssh"])
+        self.say("SSH settings: wrong passwords are slowed down.")
+
     def viewer_certificate(self) -> bool:
         """The certificate Orthanc Explorer 2 is served with: made once on each Pi, never replaced by an update.
         Returns True if it was made now."""
@@ -401,12 +427,19 @@ class Installer:
 
     def restart(self, configured: bool) -> None:
         if self.image:
+            self.ssh_settings()
             self.run(["systemctl", "enable", "hyperwheel-firstboot.service", "hyperwheel-update.timer",
-                      "hyperwheel-connect.service", "hyperwheel-dashboard.service", "hyperwheel-viewer.service"])
-            self.say("In the image: first boot, update checks, Connect's sign-in, the Upload Monitor and Orthanc "
-                     "Explorer 2 are on, and nothing was started.")
+                      "hyperwheel-connect.service", "hyperwheel-dashboard.service", "hyperwheel-viewer.service",
+                      "hyperwheel-firewall.service"])
+            self.say("In the image: first boot, update checks, Connect's sign-in, the Upload Monitor, Orthanc "
+                     "Explorer 2 and the firewall are on, and nothing was started.")
             return
         self.run(["systemctl", "daemon-reload"])
+        self.run(["systemctl", "enable", "hyperwheel-firewall.service"])
+        # A reload replaces the rules in one step. On the first install it starts the firewall.
+        self.run(["systemctl", "reload-or-restart", "hyperwheel-firewall.service"])
+        self.say("Firewall: on.")
+        self.ssh_settings()
         self.run(["systemctl", "restart", "orthanc"])
         self.say("Orthanc: restarted with the release's settings.")
         if self.start:
@@ -557,6 +590,25 @@ PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
+""",
+    # Before the network comes up, so there's never a moment without it. A reload replaces the rules in one step.
+    "hyperwheel-firewall.service": """[Unit]
+Description=Hyperwheel: the firewall (what the hotspot and the scanner cable may reach)
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel firewall
+ExecReload=/opt/hyperwheel/current/venv/bin/hyperwheel firewall
+ExecStop=/usr/sbin/nft delete table inet hyperwheel
+
+[Install]
+WantedBy=sysinit.target
 """,
     # A user made by systemd for this service alone, in the shadow group so it can check passwords. It can't
     # read the staged files, and gets Orthanc's login and the certificate's key only from systemd.

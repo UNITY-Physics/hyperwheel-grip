@@ -38,9 +38,9 @@ ADMIN = (
     ("update release-hold", "Let this Pi take updates again"),
 )
 
-# run, dashboard, viewer and connect-watch are the services, and first-boot runs once on a newly flashed Pi
+# run, dashboard, viewer, firewall and connect-watch are the services, and first-boot runs once on a newly flashed Pi
 COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "setup", "run", "dashboard", "first-boot",
-            "connect-watch", "viewer"}
+            "connect-watch", "viewer", "firewall"}
 KEYS_ACTIONS = {"list", "set"}
 SCANNER_ACTIONS = {"password"}
 UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status"}
