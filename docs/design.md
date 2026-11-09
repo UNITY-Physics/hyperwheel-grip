@@ -163,9 +163,11 @@ File modification times on the scanner are not used: they are shown in a
 different time zone from the names.
 
 After each pull, a series that should have raw data (ORIGINAL images, not a
-localizer) but has no raw file with its exact acquisition time is flagged,
-and so is a study whose scanner folder can't be found 10 minutes after it
-became stable. A site that saves no raw data sets `rrdf.enabled = false`.
+localizer) but has no raw file with its exact acquisition time is flagged.
+A study whose scanner folder can't be found 10 minutes after it became stable
+is flagged only if it has such a series. A study of only localisers or derived
+maps needs no raw data. A site that saves no raw data sets
+`rrdf.enabled = false`.
 
 ## Checks
 

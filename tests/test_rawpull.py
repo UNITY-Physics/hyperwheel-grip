@@ -282,6 +282,15 @@ def test_no_folder_isnt_flagged_for_a_study_that_needs_no_raw_data(env, scanner,
     assert study.raw_checked_at is not None  # and it's complete: no raw data
 
 
+def test_a_flag_raised_before_this_rule_is_cleared_while_the_study_is_watched(env, scanner):
+    uid = phantom_study(env, series=[("Localizer Auto Align", "133251", ("ORIGINAL", "PRIMARY", "LOCALIZER"))])
+    study = env.store.study_by_uid(uid)
+    env.store.raise_flag("RAW_FOLDER_NOT_FOUND", "an old flag", study_id=study.id)
+    env.advance(11 * 60)
+    puller(env, scanner).pull_once()
+    assert env.store.open_flags(study_id=study.id) == []
+
+
 def test_no_raw_pull_when_disabled(env, scanner):
     from dataclasses import replace
     phantom_study(env)
