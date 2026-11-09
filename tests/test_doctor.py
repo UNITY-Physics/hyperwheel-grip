@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import socket
+import time
 from dataclasses import replace
 
-from hyperwheel import doctor
+from hyperwheel import doctor, reach
 from hyperwheel.dashboard import HEARTBEAT
-from hyperwheel.doctor import OK, PROBLEM, Probes
+from hyperwheel.doctor import NOTE, OK, PROBLEM, Probes
 
 
-def run(env, *, scanner=True, link=True, grip=True, orthanc=True, beat=True):
+def run(env, *, scanner=True, link=True, grip=True, orthanc=True, beat=True, lookup=lambda name: 0.01):
     site = replace(env.site, scanner=replace(env.site.scanner, host="10.42.0.1"))
     if beat:
         env.store.set_cursor(HEARTBEAT, int(env.clock()))
-    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip,
+    probes = Probes(link=lambda i: link, answers=lambda h, p: scanner if h == "10.42.0.1" else grip, lookup=lookup,
                     orthanc_answers=lambda url: orthanc, synced=lambda: True,
                     free_bytes=lambda p: 50 * 1024 ** 3, now=env.clock)
     results, code = doctor.run(site, env.routing, probes)
@@ -24,6 +26,57 @@ def test_all_well(env):
     r, code = run(env)
     assert code == 0
     assert r["Scanner"][0] == OK and r["GRIP over the internet"][0] == OK and r["Hyperwheel service"][0] == OK
+
+
+def test_name_lookups_quick(env):
+    r, code = run(env, lookup=lambda name: 0.2)
+    assert code == 0 and r["Name lookups"] == (OK, "quick (usual names 0.2 s, a new name 0.2 s)")
+
+
+def test_slow_name_lookups_are_a_note_showing_which_kind_is_slow(env):
+    r, code = run(env, lookup=lambda name: 24.0 if name.startswith("hyperwheel-check-") else 0.1)
+    assert code == 0 and r["Name lookups"][0] == NOTE
+    assert "slow (usual names 0.1 s, a new name 24.0 s)" in r["Name lookups"][1]
+    assert "hyperwheel-check-" not in r["Name lookups"][1]
+
+
+def test_no_answer_to_a_name_lookup_is_a_problem_and_stops_at_the_first(env):
+    asked = []
+
+    def lookup(name):
+        asked.append(name)
+
+    r, code = run(env, lookup=lookup)
+    assert code == 1 and r["Name lookups"][0] == PROBLEM and "no answer within 30 s" in r["Name lookups"][1]
+    assert len(asked) == 1
+
+
+def test_name_lookups_blame_the_scanner_when_it_is_down(env):
+    r, _ = run(env, scanner=False, link=False, grip=False, lookup=lambda name: None)
+    assert r["Name lookups"][0] == NOTE and "can't reach the scanner" in r["Name lookups"][1]
+
+
+def test_lookup_names_are_each_grip_host_and_github_and_never_an_address(env):
+    names = reach.lookup_names(env.routing)
+    assert "github.com" in names and names == sorted(set(names))
+    assert not any(n.replace(".", "").isdigit() for n in names)
+
+
+def test_lookup_counts_no_such_name_as_an_answer_and_a_hang_as_none(monkeypatch):
+    def no_such_name(*a, **k):
+        raise socket.gaierror(socket.EAI_NONAME, "no such name")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_such_name)
+    assert reach.lookup_seconds("x.example.org") is not None
+
+    def no_server(*a, **k):
+        raise socket.gaierror(socket.EAI_AGAIN, "try again")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_server)
+    assert reach.lookup_seconds("x.example.org") is None
+
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: time.sleep(1))
+    assert reach.lookup_seconds("x.example.org", timeout_s=0.01) is None
 
 
 def test_scanner_not_answering_with_cable_connected(env):

@@ -38,6 +38,7 @@ def _orthanc_answers(url: str) -> bool:
 class Probes:
     link: Callable[[str], bool | None] = reach.link_up
     answers: Callable[[str, int], bool] = reach.tcp_answers
+    lookup: Callable[[str], float | None] = reach.lookup_seconds
     orthanc_answers: Callable[[str], bool] = _orthanc_answers
     synced: Callable[[], bool] = clock_synced
     free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free
@@ -115,6 +116,8 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
                                                           "the scanner is. The internet through the scanner is down, "
                                                           "or GRIP is."))
 
+    out.append(_name_lookups(routing, p, scanner_ok, busy if recent else None))
+
     if p.orthanc_answers(site.orthanc.url):
         out.append((OK, "Orthanc (receives the scanner's DICOM)", "answering"))
     else:
@@ -147,6 +150,30 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
     out.append((NOTE, "Updates", summary(Paths())))
     out.append((NOTE, "Versions", f"Hyperwheel {__version__}, {_os_name()}, kernel {platform.release()}"))
     return out, int(any(r == PROBLEM for r, _, _ in out))
+
+
+def _name_lookups(routing: Routing, p: Probes, scanner_ok: bool | None, busy: str | None) -> tuple[str, str, str]:
+    """Time a lookup for the usual names, then for a new one, which no name server has an answer for yet."""
+    what = "Name lookups"
+    usual = 0.0
+    for name in [*reach.lookup_names(routing), reach.new_lookup_name()]:
+        seconds = p.lookup(name)
+        if seconds is None:
+            if scanner_ok is False:
+                return NOTE, what, "can't be checked, because the Pi can't reach the scanner. They go through it."
+            why = f"no answer within {reach.LOOKUP_TIMEOUT_S:.0f} s. They go through the scanner"
+            if busy:
+                return NOTE, what, f"{why}, but {busy}."
+            return PROBLEM, what, f"{why}. The Pi needs them to find GRIP and its updates."
+        if name.startswith("hyperwheel-check-"):
+            new = seconds
+        else:
+            usual = max(usual, seconds)
+    times = f"usual names {usual:.1f} s, a new name {new:.1f} s"
+    if max(usual, new) >= reach.SLOW_LOOKUP_S:
+        return (NOTE, what, f"slow ({times}). They go through the scanner. Connections and web pages that need a "
+                            "lookup wait this long.")
+    return OK, what, f"quick ({times})"
 
 
 def _os_name() -> str:

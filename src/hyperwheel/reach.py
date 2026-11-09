@@ -16,7 +16,11 @@ the Upload Monitor only reads the store.
 
 from __future__ import annotations
 
+import ipaddress
+import secrets
 import socket
+import threading
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +47,11 @@ GRACE_S = 120
 GRIP_ANSWERED = "reach_grip_answered"
 RECENT_S = 90
 
+# Name lookups: slower than this and people notice it. Longer than the timeout counts as no answer.
+SLOW_LOOKUP_S = 3.0
+LOOKUP_TIMEOUT_S = 30.0
+_NO_SUCH_NAME = {socket.EAI_NONAME, getattr(socket, "EAI_NODATA", socket.EAI_NONAME)}
+
 
 def link_up(interface: str, sys_net: Path = Path("/sys/class/net")) -> bool | None:
     """Whether the network interface has a link (cable connected, other end on). None if unknown."""
@@ -58,6 +67,36 @@ def tcp_answers(host: str, port: int, timeout_s: float = 5.0) -> bool:
             return True
     except OSError:  # includes a failed name look-up
         return False
+
+
+def lookup_seconds(name: str, timeout_s: float = LOOKUP_TIMEOUT_S) -> float | None:
+    """How long the Pi takes to get an answer for a name, or None if none comes in time.
+
+    "There's no such name" is an answer too: this measures the way to the name server, not the name.
+    """
+    answers: list[float] = []
+
+    def look() -> None:
+        started = time.monotonic()
+        try:
+            socket.getaddrinfo(name, 443, type=socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            if e.errno not in _NO_SUCH_NAME:
+                return
+        except OSError:
+            return
+        answers.append(time.monotonic() - started)
+
+    # getaddrinfo has no timeout of its own, so it runs in a thread that's left behind if it takes too long.
+    worker = threading.Thread(target=look, daemon=True)
+    worker.start()
+    worker.join(timeout_s)
+    return answers[0] if answers else None
+
+
+def new_lookup_name() -> str:
+    """A name no name server has an answer for yet, so it goes all the way and shows the slowest case."""
+    return f"hyperwheel-check-{secrets.token_hex(6)}.github.com"
 
 
 def scanner_state(site: SiteConfig, *, link: Callable[[str], bool | None] = link_up,
@@ -164,6 +203,20 @@ def messages(r: Reach, now: float) -> list[dict]:
                                               "through the scanner is down, or GRIP is. Uploads wait. Files on the "
                                               "Pi are kept."})
     return out
+
+
+def lookup_names(routing: Routing) -> list[str]:
+    """The names the Pi depends on: each project's GRIP address, and GitHub for updates."""
+    names = {host for host, _ in grip_hosts(routing) if not _is_address(host)}
+    return sorted(names | {"github.com"})
+
+
+def _is_address(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
 
 
 def describe_hosts(hosts: Iterable[tuple[str, int]]) -> str:
