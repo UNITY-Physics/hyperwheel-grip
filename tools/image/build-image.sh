@@ -77,7 +77,12 @@ echo "== Hyperwheel's changes"
 "$repo/image/customise.sh" "$mnt" "$version" "$admin"
 
 echo "== Checks"
-check() { if "$@"; then printf '  ok  %s\n' "$label"; else fail "$label"; fi; }
+shown=""
+check() {  # each check's label is printed once, however many checks it has
+  "$@" || fail "$label"
+  [ "$label" = "$shown" ] || printf '  ok  %s\n' "$label"
+  shown=$label
+}
 label="only admin has a password hash"
 check [ "$(awk -F: '$2 ~ /^\$/ {print $1}' "$mnt/etc/shadow")" = admin ]
 label="datamanager is uid 1000 and not in sudo, admin is in sudo"
@@ -97,8 +102,8 @@ check sh -c "! ls '$mnt'/etc/ssh/ssh_host_* >/dev/null 2>&1"
 check [ "$(cat "$mnt/etc/machine-id")" = uninitialized ]
 check [ ! -e "$mnt/boot/firmware/hyperwheel" ]
 label="no private key in Hyperwheel's places"
-check sh -c "! grep -rIlqs 'PRIVATE KEY' '$mnt/etc/hyperwheel' '$mnt/home' '$mnt/root' '$mnt/opt/hyperwheel' \
-  '$mnt/var/lib/hyperwheel' '$mnt/etc/NetworkManager' '$mnt/boot/firmware'"
+check python3 "$repo/tools/image/find-private-keys.py" "$mnt/etc/hyperwheel" "$mnt/home" "$mnt/root" \
+  "$mnt/opt/hyperwheel" "$mnt/var/lib/hyperwheel" "$mnt/etc/NetworkManager" "$mnt/etc/ssh" "$mnt/boot/firmware"
 label="Hyperwheel's services are on, and what must not run is off"
 for unit in hyperwheel-firstboot.service hyperwheel-firewall.service hyperwheel-connect.service \
             hyperwheel-dashboard.service hyperwheel-viewer.service hyperwheel-update.timer ssh.service; do

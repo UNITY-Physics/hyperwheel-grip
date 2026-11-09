@@ -110,3 +110,21 @@ def test_it_refuses_a_private_copy_an_existing_output_and_three_unusable_passwor
     assert bad.returncode == 1 and "Nothing was written" in bad.stderr
     assert "can't start or end with a space" in bad.stdout and "symbols on a keyboard" in bad.stdout
     assert not private.exists()
+
+
+FIND_KEYS = Path(__file__).resolve().parents[1] / "tools" / "image" / "find-private-keys.py"
+
+
+def test_the_key_check_finds_real_keys_and_not_code_that_mentions_them(tmp_path):
+    import sys
+    (tmp_path / "code.py").write_text('HEADER = "-----BEGIN OPENSSH PRIVATE KEY-----"\nFOOTER = "-----END"\n')
+    (tmp_path / "notes.txt").write_text("Never put a PRIVATE KEY in the image.\n")
+    clean = subprocess.run([sys.executable, str(FIND_KEYS), str(tmp_path)], capture_output=True, text=True)
+    assert clean.returncode == 0 and clean.stdout == ""
+    (tmp_path / "id_test").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n" + "b3BlbnNzaC1rZXktdjEAAAAA" * 3
+                                      + "\n-----END OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / "key.pem").write_text("-----BEGIN EC PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,0\n\n"
+                                      + "MHcCAQEEIA" * 6 + "\n-----END EC PRIVATE KEY-----\n")
+    found = subprocess.run([sys.executable, str(FIND_KEYS), str(tmp_path)], capture_output=True, text=True)
+    assert found.returncode == 1
+    assert sorted(Path(p).name for p in found.stdout.split()) == ["id_test", "key.pem"]
