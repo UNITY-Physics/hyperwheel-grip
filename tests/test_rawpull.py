@@ -98,7 +98,8 @@ def test_a_series_with_no_raw_file_isnt_flagged_and_what_is_there_uploads(env, s
     p.pull_once()
     p.pull_once()
     study = env.store.study_by_uid(uid)
-    assert sorted(f.name for f in env.store.files(study.id, kind="rrdf")) == sorted(present)
+    files = env.store.files(study.id, kind="rrdf")
+    assert sorted(f.name for f in files) == sorted(present) and {f.state for f in files} == {"pulled"}
     assert env.store.open_flags(study_id=study.id) == []
 
 

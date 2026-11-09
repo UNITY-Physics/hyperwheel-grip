@@ -181,8 +181,8 @@ Everything else is flagged only, and the data goes to GRIP unchanged: a
 blank, padded or unexpected Patient ID (`patient_id_pattern` per project in
 the routing file), a Patient ID that differs from an ID in the patient name,
 a phantom not under the site's phantom ID or a participant under it, the
-same ID twice in one day, a different sex or birth date for the same ID,
-and series without raw data. The phantom check uses the site's
+same ID twice in one day, and a different sex or birth date for the same
+ID. Missing raw data is never flagged. The phantom check uses the site's
 `phantom_patient_id`; a site without one skips it.
 
 Patient data in the state store (Patient ID, name, sex, birth date) is
