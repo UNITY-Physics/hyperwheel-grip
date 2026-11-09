@@ -30,7 +30,8 @@ mnt=$work/mnt
 loop=""
 cleanup() {
   set +e
-  if [ -d "$mnt" ]; then
+  # Only on the image's own mount: on a folder that isn't mounted, fuser -m would mean the machine's own disk.
+  if mountpoint -q "$mnt"; then
     fuser -k -m "$mnt" >/dev/null 2>&1
     umount -R "$mnt" 2>/dev/null
   fi
