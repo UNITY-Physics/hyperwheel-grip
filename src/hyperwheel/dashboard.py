@@ -1,11 +1,12 @@
-"""The Upload Monitor: a small read-only web page on the Pi's hotspot.
+"""The Upload Monitor: a small read-only web page on the Pi's hotspot, and on the Pi itself.
 
 Operators use it (often on an iPad) to see when everything from the scanner is
 on the Pi; data managers use it to see what reached GRIP and what needs
 attention. It reads the state store, never the logs, and changes nothing.
 
-It runs as its own unprivileged service and listens on the hotspot address
-only. Studies from logins with no routing entry are never shown.
+It runs as its own unprivileged service and listens on the hotspot address,
+and on 127.0.0.1 for the Pi's own browser (which works even when the hotspot
+isn't up). Studies from logins with no routing entry are never shown.
 
 On a newly flashed Pi (no site settings yet) it serves one other page instead,
 where the Pi joins Raspberry Pi Connect: a box for the one-use key the admin sent,
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import logging
+import threading
 import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +28,8 @@ from pathlib import Path
 from . import connect, hostkeys, reach
 from .config import DashboardSettings, Routing, SiteConfig
 from .state import PENDING_FILE_STATES, Store
+
+log = logging.getLogger("hyperwheel.dashboard")
 
 HEARTBEAT = "service_heartbeat"
 _HIDDEN = ("unrouted", "purged", "archived")
@@ -195,9 +200,42 @@ def clock_synced() -> bool:
     return Path("/run/systemd/timesync/synchronized").exists()
 
 
+LOOPBACK = "127.0.0.1"
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def server_bind(self):
+        reach.allow_unassigned_address(self.socket)  # the hotspot's address may not be up yet
+        super().server_bind()
+
+
+# Binds that already include the Pi itself: a second listener on 127.0.0.1 would clash with them.
+_COVERS_LOOPBACK = {LOOPBACK, "localhost", "0.0.0.0", ""}
+
+
+def addresses(bind: str) -> list[str]:
+    """Where the Upload Monitor listens: the hotspot address, and the Pi itself."""
+    return [bind] if bind in _COVERS_LOOPBACK or bind.startswith("127.") else [bind, LOOPBACK]
+
+
+def _serve_all(servers: list[ThreadingHTTPServer]) -> None:
+    for server in servers[1:]:
+        threading.Thread(target=_serve_logged, args=(server,), daemon=True).start()
+    servers[0].serve_forever()
+
+
+def _serve_logged(server: ThreadingHTTPServer) -> None:
+    try:
+        server.serve_forever()
+    except Exception:  # noqa: BLE001 - the other address keeps working, so say so and carry on
+        log.exception("Upload Monitor: stopped answering on %s", server.server_address[0])
+
+
 def serve(site: SiteConfig, routing: Routing, *, bind: str | None = None, port: int | None = None) -> None:
-    server = make_server(site, routing, bind=bind or site.dashboard.bind, port=port or site.dashboard.port)
-    server.serve_forever()
+    _serve_all([make_server(site, routing, bind=address, port=port or site.dashboard.port)
+                for address in addresses(bind or site.dashboard.bind)])
 
 
 # ---- a newly flashed Pi ----------------------------------------------------------------------------------
@@ -254,14 +292,14 @@ def make_not_set_up_server(*, bind: str, port: int, folder: Path = Path(connect.
                 return _answer(self, 400, problem)
             return _answer(self, 200, "The Pi has the key and is signing in.")
 
-    server = ThreadingHTTPServer((bind, port), Handler)
-    server.daemon_threads = True
+    server = Server((bind, port), Handler)
     return server
 
 
 def serve_not_set_up(*, bind: str | None = None, port: int | None = None) -> None:
     defaults = DashboardSettings()
-    make_not_set_up_server(bind=bind or defaults.bind, port=port or defaults.port).serve_forever()
+    _serve_all([make_not_set_up_server(bind=address, port=port or defaults.port)
+                for address in addresses(bind or defaults.bind)])
 
 
 def _answer(handler: BaseHTTPRequestHandler, status: int, message: str) -> None:
@@ -299,8 +337,7 @@ def make_server(site: SiteConfig, routing: Routing, *, bind: str, port: int,
                 return _send(self, 200, json.dumps(body).encode(), "application/json")
             return _send(self, 404, b"Not found", "text/plain")
 
-    server = ThreadingHTTPServer((bind, port), Handler)
-    server.daemon_threads = True
+    server = Server((bind, port), Handler)
     return server
 
 

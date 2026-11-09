@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from . import passwords
+from . import passwords, reach
 from .installer import DATA_MANAGER, VIEWER_CERT, VIEWER_KEY
 from .keys import KeyProblem, read_secret_json
 from .release import ADMIN_USER
@@ -425,9 +425,7 @@ class Server(ThreadingHTTPServer):
     request_queue_size = 32
 
     def server_bind(self):
-        # The hotspot's address may not be up yet when the service starts. Linux lets it be bound anyway.
-        if hasattr(socket, "IP_FREEBIND"):
-            self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_FREEBIND, 1)
+        reach.allow_unassigned_address(self.socket)  # the hotspot's address may not be up yet
         super().server_bind()
 
 

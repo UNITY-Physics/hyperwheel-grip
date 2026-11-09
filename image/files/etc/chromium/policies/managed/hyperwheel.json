@@ -3,7 +3,7 @@
   "ManagedBookmarks": [
     {"toplevel_name": "Hyperwheel"},
     {"name": "Scanner", "url": "https://10.42.0.1:8080/"},
-    {"name": "Upload Monitor", "url": "http://192.168.99.1:5000/"},
+    {"name": "Upload Monitor", "url": "http://127.0.0.1:5000/"},
     {"name": "Orthanc Explorer 2", "url": "http://127.0.0.1:8442/ui/app/"}
   ]
 }
