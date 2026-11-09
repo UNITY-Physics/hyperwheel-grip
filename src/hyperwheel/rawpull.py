@@ -208,7 +208,14 @@ class RawPuller:
 
         grace = self.site.rrdf.folder_grace_minutes * 60
         for study in watched:
-            if study.id not in seen_folders and self.clock() - (study.stable_at or 0) >= grace:
+            if study.id in seen_folders:
+                continue
+            # The scanner makes DICOM from raw data, so a study's raw data is on the scanner before its DICOM
+            # arrives. No folder now means no raw data: the study is complete without it. It's still watched,
+            # in case a folder turns up.
+            if study.raw_checked_at is None:
+                self.store.update_study(study.id, raw_checked_at=self.clock())
+            if self.clock() - (study.stable_at or 0) >= grace:
                 checks.apply(self.store, study, checks.raw_issues(self.store, study, False), checks.RAW_CHECK_CODES)
 
     def _in_window(self, study: Study, ts: datetime | None, next_start: datetime | None) -> bool:
