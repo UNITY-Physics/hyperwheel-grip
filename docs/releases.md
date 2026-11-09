@@ -36,8 +36,9 @@ It contains (`image/customise.sh`):
   site that answers Yes to Imager's customisation by mistake gets no extra user,
   Wi-Fi or password;
 - the desktop, with Chromium bookmarks for the scanner (`https://10.42.0.1:8080/`),
-  the Upload Monitor (`http://192.168.99.1:5000/`) and OE2
-  (`http://127.0.0.1:8442/ui/app/`, which only the Pi itself can open), and no
+  the Upload Monitor (`http://127.0.0.1:5000/`, the same page as on the hotspot,
+  and there even when the hotspot isn't up) and OE2
+  (`http://127.0.0.1:8442/ui/app/`), both only reachable on the Pi itself, and no
   keyring prompt (`--password-store=basic`);
 - **Raspberry Pi Connect** (`rpi-connect`), signed out;
 - the **scanner cable** connection (10.42.0.88), so a new Pi reaches the

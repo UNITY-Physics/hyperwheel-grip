@@ -4,8 +4,9 @@ Operators use it (often on an iPad) to see when everything from the scanner is
 on the Pi; data managers use it to see what reached GRIP and what needs
 attention. It reads the state store, never the logs, and changes nothing.
 
-It runs as its own unprivileged service and listens on the hotspot address
-only. Studies from logins with no routing entry are never shown.
+It runs as its own unprivileged service and listens on the hotspot address,
+and on 127.0.0.1 for the Pi's own browser (which works even when the hotspot
+isn't up). Studies from logins with no routing entry are never shown.
 
 On a newly flashed Pi (no site settings yet) it serves one other page instead,
 where the Pi joins Raspberry Pi Connect: a box for the one-use key the admin sent,
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import socket
+import threading
 import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -195,9 +198,33 @@ def clock_synced() -> bool:
     return Path("/run/systemd/timesync/synchronized").exists()
 
 
+LOOPBACK = "127.0.0.1"
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def server_bind(self):
+        # The hotspot's address may not be up yet when the service starts. Linux lets it be bound anyway.
+        if hasattr(socket, "IP_FREEBIND"):
+            self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_FREEBIND, 1)
+        super().server_bind()
+
+
+def addresses(bind: str) -> list[str]:
+    """Where the Upload Monitor listens: the hotspot address, and the Pi itself."""
+    return [bind] if bind == LOOPBACK else [bind, LOOPBACK]
+
+
+def _serve_all(servers: list[ThreadingHTTPServer]) -> None:
+    for server in servers[1:]:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    servers[0].serve_forever()
+
+
 def serve(site: SiteConfig, routing: Routing, *, bind: str | None = None, port: int | None = None) -> None:
-    server = make_server(site, routing, bind=bind or site.dashboard.bind, port=port or site.dashboard.port)
-    server.serve_forever()
+    _serve_all([make_server(site, routing, bind=address, port=port or site.dashboard.port)
+                for address in addresses(bind or site.dashboard.bind)])
 
 
 # ---- a newly flashed Pi ----------------------------------------------------------------------------------
@@ -254,14 +281,14 @@ def make_not_set_up_server(*, bind: str, port: int, folder: Path = Path(connect.
                 return _answer(self, 400, problem)
             return _answer(self, 200, "The Pi has the key and is signing in.")
 
-    server = ThreadingHTTPServer((bind, port), Handler)
-    server.daemon_threads = True
+    server = Server((bind, port), Handler)
     return server
 
 
 def serve_not_set_up(*, bind: str | None = None, port: int | None = None) -> None:
     defaults = DashboardSettings()
-    make_not_set_up_server(bind=bind or defaults.bind, port=port or defaults.port).serve_forever()
+    _serve_all([make_not_set_up_server(bind=address, port=port or defaults.port)
+                for address in addresses(bind or defaults.bind)])
 
 
 def _answer(handler: BaseHTTPRequestHandler, status: int, message: str) -> None:
@@ -299,8 +326,7 @@ def make_server(site: SiteConfig, routing: Routing, *, bind: str, port: int,
                 return _send(self, 200, json.dumps(body).encode(), "application/json")
             return _send(self, 404, b"Not found", "text/plain")
 
-    server = ThreadingHTTPServer((bind, port), Handler)
-    server.daemon_threads = True
+    server = Server((bind, port), Handler)
     return server
 
 

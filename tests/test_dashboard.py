@@ -221,3 +221,16 @@ def test_a_scanner_that_cant_be_read_doesnt_count_as_no_raw_data(env, scanner):
     env.store.set_cursor(HEARTBEAT, int(env.clock()))
     s = snap(env)
     assert s["studies"][0]["raw"]["text"] == "Raw data still to come" and not s["on_pi_complete"]
+
+
+def test_the_upload_monitor_also_listens_on_the_pi_itself():
+    assert dashboard.addresses("192.168.99.1") == ["192.168.99.1", "127.0.0.1"]
+    assert dashboard.addresses("127.0.0.1") == ["127.0.0.1"]
+
+
+def test_the_pis_own_bookmark_opens_the_upload_monitor_on_127_0_0_1():
+    from pathlib import Path
+    policy = json.loads((Path(__file__).resolve().parents[1] / "image/files/etc/chromium/policies/managed/"
+                         "hyperwheel.json").read_text())
+    urls = {b.get("name"): b.get("url") for b in policy["ManagedBookmarks"]}
+    assert urls["Upload Monitor"] == "http://127.0.0.1:5000/" and urls["Orthanc Explorer 2"].startswith("http://127.0.0.1:")
