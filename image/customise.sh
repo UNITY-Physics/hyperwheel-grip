@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# What makes the official image a Hyperwheel image. Run by tools/image/build-image.sh, as root, on the image's
+# root file system mounted at $1, after the release is installed in it (install.sh --image).
+#
+#     image/customise.sh <root> <image-version> <admin-password-folder>
+#
+# Nothing here is different from one Pi to the next: whatever must differ (Orthanc's login, the certificate,
+# SSH host keys, the hotspot password, every password but admin's) is made on each Pi, at first boot or by
+# hyperwheel setup.
+
+set -euo pipefail
+root=${1:?root}
+version=${2:?image version}
+admin=${3:?admin password folder}
+here=$(cd "$(dirname "$0")" && pwd)
+in_image() { chroot "$root" "$@"; }
+say() { printf '  %s\n' "$*"; }
+
+echo "== Accounts"
+# The official image's placeholder user and its first-boot wizard go. datamanager takes uid 1000, the one
+# Raspberry Pi OS's tools take as the desktop's user.
+for f in "$root"/etc/sudoers.d/*; do
+  grep -q "rpi-first-boot-wizard" "$f" && rm "$f"
+done
+in_image userdel --remove rpi-first-boot-wizard 2>/dev/null || true
+in_image userdel --remove pi
+in_image useradd --create-home --shell /bin/bash --user-group --uid 1000 \
+  --groups audio,video,plugdev,users,input,render,netdev,gpio,i2c,spi,lpadmin --comment "Data manager" datamanager
+in_image useradd --create-home --shell /bin/bash --user-group --groups sudo --comment "Hyperwheel admin" admin
+say "datamanager (desktop, locked until setup gives it a password) and admin (in sudo)"
+# Connect's user services run from every boot, with nobody logged in.
+mkdir -p "$root/var/lib/systemd/linger"
+touch "$root/var/lib/systemd/linger/datamanager"
+
+echo "== The desktop"
+sed -i 's/^autologin-user=.*/autologin-user=datamanager/' "$root/etc/lightdm/lightdm.conf"
+rm -f "$root/etc/xdg/autostart/piwiz.desktop"
+install -m 755 "$here/files/etc/chromium.d/hyperwheel" "$root/etc/chromium.d/hyperwheel"
+install -d -m 755 "$root/etc/chromium/policies/managed"
+install -m 644 "$here/files/etc/chromium/policies/managed/hyperwheel.json" "$root/etc/chromium/policies/managed/"
+say "datamanager logged in automatically, Chromium's bookmarks, no keyring prompt"
+
+echo "== No other way in"
+# Answering Yes to Raspberry Pi Imager's customisation by mistake changes nothing: cloud-init, the user
+# renaming service and a first-run script on the kernel's command line are all off.
+touch "$root/etc/cloud/cloud-init.disabled"
+in_image systemctl mask --quiet userconfig.service kernel-command-line.service
+rm -f "$root/etc/ssh/sshd_config.d/rename_user.conf"
+in_image systemctl enable --quiet ssh.service
+say "cloud-init, userconf and systemd.run= off, SSH on"
+
+echo "== Nothing changes by itself"
+in_image systemctl mask --quiet apt-daily.timer apt-daily-upgrade.timer packagekit.service \
+  packagekit-offline-update.service rpi-eeprom-update.service
+say "no automatic package updates, no update notifier, no firmware updates outside a release"
+
+echo "== The network"
+install -m 755 "$here/files/etc/NetworkManager/dispatcher.d/99-hyperwheel-eee-off" \
+  "$root/etc/NetworkManager/dispatcher.d/"
+in_image /opt/hyperwheel/current/venv/bin/python -c '
+import os
+from hyperwheel.sitesetup import CABLE_FILE, NM_DIR, cable_connection
+path = os.path.join(NM_DIR, CABLE_FILE)
+with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+    f.write(cable_connection("72eefe84-a1ea-5c9a-8f30-1085ac89bed5"))  # the same on every Pi, like the rest
+'
+# Wi-Fi starts at first boot: the country is GB until setup sets the site's, and the hotspot uses channel 6,
+# which every country allows.
+cmdline="$root/boot/firmware/cmdline.txt"
+sed -i -e 's/\s*cfg80211.ieee80211_regdom=\S*//' -e 's/$/ cfg80211.ieee80211_regdom=GB/' "$cmdline"
+sed -i 's/^WirelessEnabled=.*/WirelessEnabled=true/' "$root/var/lib/NetworkManager/NetworkManager.state"
+say "the scanner cable at 10.42.0.88, EEE off on it, Wi-Fi country GB"
+
+echo "== The admin password, from its signed file"
+install -d -m 700 "$root/tmp/hyperwheel-admin"
+install -m 644 "$admin/admin.json" "$admin/admin.json.sig" "$root/tmp/hyperwheel-admin/"
+in_image /opt/hyperwheel/current/venv/bin/python -c '
+import shutil
+from pathlib import Path
+from hyperwheel.adminpw import AdminPassword
+
+def fetch(url, dest, max_bytes):  # the files downloaded for this build, checked here as a Pi checks them
+    shutil.copyfile(Path("/tmp/hyperwheel-admin") / url.rsplit("/", 1)[1], dest)
+
+print("  " + AdminPassword("local", fetch=fetch).check())
+'
+rm -r "$root/tmp/hyperwheel-admin"
+
+echo "== The image's version"
+printf '%s\n' "$version" > "$root/etc/hyperwheel-image"
+chmod 644 "$root/etc/hyperwheel-image"
+say "$version"

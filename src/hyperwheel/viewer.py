@@ -1,7 +1,9 @@
 """Orthanc Explorer 2 over HTTPS, signed in with the Pi's own accounts. Runs as ``hyperwheel-viewer.service``.
 
-People reach OE2 only through this proxy, on the Pi itself (``https://127.0.0.1:8443``) and from the hotspot
-(``https://192.168.99.1:8443``). It:
+People reach OE2 only through this proxy: from the hotspot at ``https://192.168.99.1:8443``, and on the Pi
+itself at ``https://127.0.0.1:8443``, or ``http://127.0.0.1:8442`` for Chromium on the Pi's desktop. Traffic
+on 127.0.0.1 never leaves the Pi, so it needs no encryption, and the browser shows no certificate warning there.
+It:
 
 - **signs people in** as ``datamanager`` or ``admin``, checking the password against the system's own hash
   (``/etc/shadow``, which the service may read through the ``shadow`` group), so no password is stored a second
@@ -53,6 +55,8 @@ log = logging.getLogger("hyperwheel.viewer")
 
 PORT = 8443
 ADDRESSES = ("127.0.0.1", "192.168.99.1")
+# Plain HTTP for the Pi's own browser, on the Pi only: 127.0.0.1 can't be reached from anywhere else.
+LOCAL_PORT = 8442
 ORTHANC = ("127.0.0.1", 8042)
 ACCOUNTS = (DATA_MANAGER, ADMIN_USER)
 SESSION_S = 8 * 3600
@@ -468,6 +472,7 @@ def main(args: list[str]) -> int:
         log.error("Viewer: can't start (%s).", e)
         return 1
     servers = [make_server(viewer, address, PORT, context) for address in ADDRESSES]
+    servers.append(make_server(viewer, "127.0.0.1", LOCAL_PORT, None))
     for server in servers[1:]:
         threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info("Viewer: Orthanc Explorer 2 is at https://%s:%d.", ADDRESSES[-1], PORT)
