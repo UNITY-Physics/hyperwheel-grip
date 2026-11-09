@@ -84,21 +84,22 @@ def test_phantom_study_raw_files_all_assigned_unchanged(env, scanner):
         assert Path(f.path) == env.site.staging_dir / PROJECT / uid / "RRDF" / f.name
         assert Path(f.path).read_bytes() == contents[f.name]
         assert f.sha256 == hashlib.sha256(contents[f.name]).hexdigest()
-    assert env.store.open_flags(study_id=study.id) == []  # every series that should have raw data has it
+    assert env.store.open_flags(study_id=study.id) == []
     assert p.pull_once().pulled == 0 and len(scanner.reads) == 9  # never pulled twice
 
 
-def test_series_without_raw_data_is_flagged(env, scanner):
+def test_a_series_with_no_raw_file_isnt_flagged_and_what_is_there_uploads(env, scanner):
+    """Raw files aren't matched to series: whatever raw data is there goes to the study, and nothing is flagged."""
     uid = phantom_study(env)
-    for name in PHANTOM_RAW:
-        if "flair" not in name:
-            raw(scanner, FOLDER, name)
+    present = [name for name in PHANTOM_RAW if "flair" not in name]
+    for name in present:
+        raw(scanner, FOLDER, name)
     p = puller(env, scanner)
     p.pull_once()
     p.pull_once()
-    flags = env.store.open_flags(study_id=env.store.study_by_uid(uid).id)
-    assert [(f.code, f.level) for f in flags] == [("RAW_MISSING_FOR_SERIES", "flag")]
-    assert "FLAIR ISO" in flags[0].detail
+    study = env.store.study_by_uid(uid)
+    assert sorted(f.name for f in env.store.files(study.id, kind="rrdf")) == sorted(present)
+    assert env.store.open_flags(study_id=study.id) == []
 
 
 def test_file_outside_the_window_is_held_unassigned(env, scanner):
@@ -255,40 +256,26 @@ def test_low_disk_stops_pulling(env, scanner):
     assert "DISK_LOW" in {f.code for f in env.store.open_flags()}
 
 
-def test_missing_scanner_folder_flagged_after_grace(env, scanner):
+def test_no_scanner_folder_isnt_flagged(env, scanner):
     uid = phantom_study(env)
     p = puller(env, scanner)
     p.pull_once()
-    study = env.store.study_by_uid(uid)
-    assert env.store.open_flags(study_id=study.id) == []
-    env.advance(11 * 60)
-    p.pull_once()
-    assert {f.code for f in env.store.open_flags(study_id=study.id)} == {"RAW_FOLDER_NOT_FOUND"}
-
-
-@pytest.mark.parametrize("series", [
-    [("Localizer Auto Align", "133251", ("ORIGINAL", "PRIMARY", "LOCALIZER")),
-     ("Localiser Sag", "133300", ("ORIGINAL", "PRIMARY", "LOCALIZER"))],
-    [("ADC", "134747", ("DERIVED", "PRIMARY", "DIFFUSION"))],
-])
-def test_no_folder_isnt_flagged_for_a_study_that_needs_no_raw_data(env, scanner, series):
-    uid = phantom_study(env, series=series)
-    p = puller(env, scanner)
-    p.pull_once()
-    env.advance(11 * 60)
+    env.advance(60 * 60)
     p.pull_once()
     study = env.store.study_by_uid(uid)
     assert env.store.open_flags(study_id=study.id) == []
-    assert study.raw_checked_at is not None  # and it's complete: no raw data
+    assert study.raw_checked_at is not None  # complete without raw data
 
 
-def test_a_flag_raised_before_this_rule_is_cleared_while_the_study_is_watched(env, scanner):
-    uid = phantom_study(env, series=[("Localizer Auto Align", "133251", ("ORIGINAL", "PRIMARY", "LOCALIZER"))])
+def test_raw_data_flags_from_an_earlier_release_are_cleared(env, scanner):
+    from hyperwheel.organiser import Organiser
+    uid = phantom_study(env)
     study = env.store.study_by_uid(uid)
     env.store.raise_flag("RAW_FOLDER_NOT_FOUND", "an old flag", study_id=study.id)
-    env.advance(11 * 60)
-    puller(env, scanner).pull_once()
-    assert env.store.open_flags(study_id=study.id) == []
+    env.store.raise_flag("RAW_MISSING_FOR_SERIES", "an old flag", study_id=study.id)
+    env.store.raise_flag("BLANK_PATIENT_ID", "another kind of flag", study_id=study.id)
+    Organiser(env.store, env.site, env.routing, env.orthanc, clock=env.clock).housekeeping()
+    assert [f.code for f in env.store.open_flags(study_id=study.id)] == ["BLANK_PATIENT_ID"]
 
 
 def test_no_raw_pull_when_disabled(env, scanner):

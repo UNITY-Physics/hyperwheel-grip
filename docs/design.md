@@ -162,12 +162,11 @@ again for late files for 7 days.
 File modification times on the scanner are not used: they are shown in a
 different time zone from the names.
 
-After each pull, a series that should have raw data (ORIGINAL images, not a
-localizer) but has no raw file with its exact acquisition time is flagged.
-A study whose scanner folder can't be found 10 minutes after it became stable
-is flagged only if it has such a series. A study of only localisers or derived
-maps needs no raw data. A site that saves no raw data sets
-`rrdf.enabled = false`.
+Raw files aren't matched to series, and the Pi never flags missing raw data.
+Timestamps between series and raw files don't always line up, and DICOM and
+raw data go to GRIP separately. Whatever raw data the study's folder holds is
+uploaded, and a data manager sees on GRIP if something is missing. A site that
+saves no raw data sets `rrdf.enabled = false`.
 
 ## Checks
 

@@ -46,7 +46,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
-from . import checks
 from .config import SiteConfig
 from .dicominfo import parse_datetime
 from .ids import is_rrdf_name, rrdf_folder_time, rrdf_timestamp
@@ -169,7 +168,6 @@ class RawPuller:
             target = routed[0] if len(matches) == 1 else None
             seen_folders.update(m.id for m in routed)
             next_start = next((b for b in boundaries if b > folder_time), None)
-            settled = True
             for name, size in scanner.list_files(folder):
                 if not name.endswith(".h5"):
                     continue
@@ -189,24 +187,18 @@ class RawPuller:
                                             scanner_folder=folder, size=size)
                     else:
                         self.store.update_file(row.id, size=size)
-                    settled = False
                     report.waiting += 1
                     continue
                 window_ok = target is not None and self._in_window(target, rrdf_timestamp(name), next_start)
                 destination = target if window_ok else None
-                if not self._pull(scanner, folder, row, destination, matches, report):
-                    settled = False
+                self._pull(scanner, folder, row, destination, matches, report)
             if target is not None:
                 for row in self.store.files(kind="rrdf", states=("unassigned",)):
                     if row.scanner_folder == folder and self._in_window(target, rrdf_timestamp(row.name), next_start):
                         self._assign_held(folder, row, target, report)
                 target = self.store.study(target.id)
                 self.store.update_study(target.id, raw_checked_at=self.clock())
-                if settled:
-                    checks.apply(self.store, target, checks.raw_issues(self.store, target, True),
-                                 checks.RAW_CHECK_CODES)
 
-        grace = self.site.rrdf.folder_grace_minutes * 60
         for study in watched:
             if study.id in seen_folders:
                 continue
@@ -215,8 +207,6 @@ class RawPuller:
             # in case a folder turns up.
             if study.raw_checked_at is None:
                 self.store.update_study(study.id, raw_checked_at=self.clock())
-            if self.clock() - (study.stable_at or 0) >= grace:
-                checks.apply(self.store, study, checks.raw_issues(self.store, study, False), checks.RAW_CHECK_CODES)
 
     def _in_window(self, study: Study, ts: datetime | None, next_start: datetime | None) -> bool:
         start = parse_datetime(study.study_date, study.study_time)

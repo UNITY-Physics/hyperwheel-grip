@@ -66,7 +66,7 @@ class RrdfSettings:
     margin_minutes: int = 60
     # How long a study's scanner folder is checked again for late raw files.
     watch_days: int = 7
-    # How long after a study is stable its scanner folder may still be missing before that is flagged.
+    # No longer used (the Pi doesn't flag missing raw data). Kept so site settings that set it still load.
     folder_grace_minutes: int = 10
 
 
