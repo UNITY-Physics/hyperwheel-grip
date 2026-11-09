@@ -1,7 +1,8 @@
 # Image, releases and updates
 
-Status: agreed plan. Built so far: the record-format rule, and the release format with
-signing and checking (below). Not built yet: OE2, the installer, the updater, the image.
+Status: built so far: the release format with signing and checking, OE2, the installer, the
+updater, setup, the admin password and first boot. Not built yet: the image itself, the firewall,
+the hotspot limit, OE2's proxy and Connect's key box.
 
 Every Pi runs the same software: one pinned **image** that carries the OS,
 and one tested **release** that carries Orthanc, Orthanc Explorer 2 (OE2) and
@@ -10,9 +11,11 @@ Nothing is installed by hand in the field.
 
 ## The image
 
-Our own build with `pi-gen` (Raspberry Pi's image builder) from Raspberry Pi
-OS **Trixie desktop**, built once, published as a dated file with its SHA-256
-and a list of every package in it. The file itself is the pin.
+The official Raspberry Pi OS **Trixie desktop** image of 2026-10-06, with
+Hyperwheel's changes added in CI. Its SHA-256 is pinned in `image/base.lock`, so
+the base is byte for byte what was tested. The result is a dated file with its
+own SHA-256 and a list of every package in it. Only the hash and the list are
+published on GitHub. The file itself is the pin.
 
 It contains:
 
@@ -28,16 +31,21 @@ It contains:
   2.4 GHz channel allowed everywhere (1, 6 or 11). Setup then switches to the
   site's country;
 - the **firewall** (below), SSH, and the user accounts without passwords;
-- the first-boot service: it starts the hotspot `Hyperwheel` with the shared
-  password from the card (see "Setting up a Pi"), and runs
-  `rpi-connect signin`, showing the code on the Upload Monitor;
+- the first-boot service, which runs once, before the network and Orthanc
+  start. It makes this Pi's own Orthanc login, moves the shared hotspot password
+  from the card into the site settings and the hotspot's connection (root-only),
+  and deletes it from the card with the folder and any hidden files macOS left.
+  NetworkManager then starts the hotspot `Hyperwheel` by itself. A card with no
+  password waits for setup, which asks;
 - the release-signing public keys;
 - **release 1, already installed**, by the same offline installer an update
-  uses. A freshly flashed Pi works without downloading anything. Until the
+  uses (`--image`, which starts nothing and leaves Orthanc's login to first boot). A freshly flashed Pi works without downloading anything. Until the
   site's settings and keys are added, the service waits as "not set up yet"
   and the Upload Monitor says so.
 
-Nothing site-specific or secret is in the published image.
+Nothing site-specific or secret is in the published image. CI installs a release
+on the pinned official image with no network, on every change to the installer
+(`tools/image/test-offline-install.sh`).
 
 **The private copy.** The sites flash a private copy of the image that also
 holds the shared hotspot password, so nobody types it at setup. The admin makes
@@ -88,11 +96,14 @@ password stays in `/etc/hyperwheel`, and `"StableAge": 60`.
 
 ## Raspberry Pi Connect
 
-Each Pi is signed in to Connect at first boot (the code shows on the Upload
-Monitor and is approved in Connect). Which Connect account or organisation
-approves it is a site setting, so it can move from the maintainer's own account to a UNITY
-organisation without a new release. Moving a Pi later means signing it in
-again.
+New Pis join the UNITY organisation on Connect. The image holds no key, and
+sites answer No to Imager's customisation, so a Pi can't end up in someone's own
+account. Before setup, the Upload Monitor has a box where the site pastes the
+one-use organisation key the admin sends (`rpoak_...`, a personal key is
+refused), with the sign-in link as the fallback, which the site sends to the
+admin to open. Connect starts at every boot with nobody logged in (lingering is
+on) and keeps retrying until it's signed in. Its state shows on the Upload
+Monitor and in `hyperwheel doctor`.
 
 ## Logins, SSH and the firewall
 
@@ -104,8 +115,8 @@ again.
     other arguments: `hyperwheel status`, `hyperwheel doctor`,
     `hyperwheel keys list` and `hyperwheel update status` without a password,
     and `hyperwheel keys set` and `hyperwheel scanner password` with its own
-    password. The screen locks after 15
-    minutes idle and unlocks with that Pi's `datamanager` password.
+    password. From the end of setup, the screen locks
+    after 15 minutes idle and unlocks with that Pi's `datamanager` password.
   - Data managers never type `sudo`. `hyperwheel help` lists what they can
     run, one command per line. A command that needs root runs itself again
     through sudo with the same words, so the sudo rule above still decides
@@ -125,12 +136,18 @@ again.
   every Pi and reaches the Pis only as a hash through the signed update
   channel. Neither is ever in the image, the repo or the logs.
 - SSH is allowed only from the hotspot and the scanner cable.
-- On the Pi itself, hotspot devices reach only the Upload Monitor and SSH
-  (plus the DHCP and DNS the hotspot needs), never Orthanc's DICOM port. The
-  hotspot routes through to the scanner and the internet beyond it, so
-  operators can use the scanner interface from their laptops, with a
-  per-site setting to turn routing off. The Pi's own uploads get priority
-  over hotspot traffic.
+- On the Pi itself, hotspot devices reach only the Upload Monitor, SSH and OE2
+  (plus the DHCP and DNS the hotspot needs), never Orthanc's DICOM port or its
+  REST API. The hotspot routes through to the scanner and the internet beyond
+  it, so operators can use the scanner interface from their laptops, with a
+  per-site setting to turn routing off. While the Pi has uploads waiting,
+  hotspot devices are limited (4 Mbit/s each way by default, a site setting), so
+  the Pi's uploads come first. Otherwise they run at full speed.
+- OE2 sits behind a small proxy on HTTPS, with a certificate made on each Pi.
+  People sign in with `datamanager` or `admin`, checked against the system's
+  password hashes. Orthanc's own login stays internal and root-only. Wrong
+  passwords are slowed down. Nobody can delete, modify or upload through OE2,
+  which is blocked in the proxy as well as hidden. Downloads stay on for both.
 - On the scanner cable: SSH, DICOM (port 4242) and ping.
 - The release-signing key is only for signing releases, never for logins.
 
@@ -152,12 +169,13 @@ up, setup refuses to run, and the sudo rule no longer lists it.
 3. **The scanner cable:** every scanner is 10.42.0.1 and the Pi is
    10.42.0.88. Setup adds that connection (from the next restart) and says
    whether the scanner answers.
-4. **The hotspot** `Hyperwheel`. Its password comes from the private copy of
-   the image, where the admin's Mac put it
-   (`/boot/firmware/hyperwheel/hotspot-password`). Setup moves it into
-   `/etc/hyperwheel/hotspot.json` and the NetworkManager connection (both
-   root-only) and deletes the copy. Only if there's none does it ask, hidden
-   and twice.
+4. **The hotspot** `Hyperwheel`. On a flashed image, first boot has already set
+   it up from the password the admin's Mac put on the private copy
+   (`/boot/firmware/hyperwheel/hotspot-password`). Otherwise setup does the same
+   here: it moves the password into `/etc/hyperwheel/hotspot.json` and the
+   NetworkManager connection (both root-only), and deletes the copy, its folder
+   and any hidden files macOS left. Only if there's none does it ask, hidden and
+   twice.
 5. **The scanner's raw-data password**, tried on the scanner first, as
    `hyperwheel scanner password` does. It can be skipped and set later.
 6. **The datamanager password**, generated, shown once, and set only after it

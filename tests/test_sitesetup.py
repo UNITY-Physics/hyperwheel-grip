@@ -56,6 +56,8 @@ class FakePi:
     def run(self, cmd, input=None):
         self.ran.append(list(cmd))
         etc = self.root / "etc"
+        if cmd[0] == "install":
+            Path(cmd[-1]).mkdir(parents=True, exist_ok=True)
         if cmd[0] == "useradd":
             name, groups = cmd[-1], (cmd[cmd.index("--groups") + 1].split(",") if "--groups" in cmd else [])
             uid = 1001 + len((etc / "passwd").read_text().splitlines())
@@ -384,3 +386,41 @@ def test_a_missing_system_command_stops_setup_with_one_plain_line():
     with pytest.raises(SetupError) as e:
         run_command(["sh", "-c", "exit 3"], input="datamanager:not-shown\n")
     assert "not-shown" not in str(e.value) and "exit 3" in str(e.value)
+
+
+# ---- the screen lock ------------------------------------------------------------------------------------------
+
+
+def test_the_screen_lock_starts_only_at_the_end_of_setup(pi):
+    home = pi.root / "home" / "datamanager"
+    home.mkdir(parents=True)
+    autostart = home / ".config" / "labwc" / "autostart"
+    typed = Scripted(answers=[*template_lines(), "yes", DM_PW, "no"], hidden=[SCANNER_PW])
+    setup, _ = make(pi, typed)
+    assert setup.main() == 0, typed.text
+    assert "swayidle -w timeout 900 'swaylock -f" in autostart.read_text() and mode(autostart) == 0o644
+    assert "The screen locks after 15 minutes idle" in typed.text
+    # the folders belong to the account: root owning its .config would break the desktop
+    assert pi.ran_any("install", "-d", "-o", "datamanager", "-g", "datamanager", str(home / ".config"))
+    before = autostart.read_text()
+    setup.screen_lock()
+    assert autostart.read_text() == before  # never twice
+
+
+def test_the_screen_lock_waits_while_setup_waits_for_the_admin_password(pi):
+    home = pi.root / "home" / "datamanager"
+    home.mkdir(parents=True)
+    setup, _ = make(pi, Scripted(answers=[], hidden=[]))
+    (pi.root / "etc" / "shadow").write_text("".join(
+        line.split(":")[0] + ":!:20000:0:99999:7:::\n" for line in (pi.root / "etc" / "shadow").read_text().splitlines()))
+    assert setup.lock_down() is False
+    assert not (home / ".config").exists()
+
+
+def test_macs_files_and_the_folder_go_with_the_copy(pi):
+    copy = pi.root / BOOT_HOTSPOT.lstrip("/")
+    (copy.parent / "._hotspot-password").write_bytes(b"x")
+    typed = Scripted(answers=[*template_lines(), "yes", DM_PW, "no"], hidden=[SCANNER_PW])
+    setup, _ = make(pi, typed)
+    assert setup.main() == 0, typed.text
+    assert not copy.parent.exists()

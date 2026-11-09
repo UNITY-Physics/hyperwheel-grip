@@ -10,6 +10,7 @@ on:
       - ".github/workflows/offline-install.yml"
       - "image/base.lock"
       - "release/debs.*"
+      - "src/hyperwheel/firstboot.py"
       - "src/hyperwheel/installer.py"
       - "tools/image/test-offline-install.sh"
       - "tools/release/install.sh"
@@ -24,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [as-shipped, lists-refreshed]
+        mode: [as-shipped, lists-refreshed, image]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
