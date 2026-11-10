@@ -103,7 +103,15 @@ def test_unrouted_studies_are_never_shown(env):
 def test_unrouted_studies_are_not_shown_while_their_images_arrive(env):
     env.store.add_study("1.2.5", state="receiving", project=None, operators_name="hospital/clinical")
     env.store.add_study("1.2.6", state="stable", project=None, operators_name=None)
-    assert snap(env)["studies"] == []
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    s = snap(env)
+    assert s["studies"] == []
+    # Hidden, but still arriving: never "safe to switch off" while they are.
+    assert s["headline"] == "Receiving images from the scanner" and not s["safe_to_switch_off"]
+
+
+def test_the_row_leaves_out_the_dot_with_no_project():
+    assert 'st.project ? st.session + " · " + st.project : st.session' in dashboard.SCRIPT
 
 
 def test_a_held_study_with_no_project_is_still_shown(env):

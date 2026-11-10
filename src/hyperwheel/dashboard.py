@@ -86,7 +86,11 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     for s in sorted(studies, key=lambda s: (s.study_date or "", s.study_time or ""), reverse=True):
         project = s.project or _routed_project(routing, s.operators_name)
         if project is None and s.state in ("receiving", "stable"):
-            continue  # images still arriving from a login with no routing entry: never shown
+            # Images still arriving from a login with no routing entry: never shown. They still count as
+            # arriving, so the page never says it's safe to switch off while the scanner is sending (the first
+            # image's login may not be every image's).
+            receiving = True
+            continue
         files = store.files(s.id)
         dicom = [f for f in files if f.kind == "dicom"]
         rrdf = [f for f in files if f.kind == "rrdf" and f.state != "seen"]
