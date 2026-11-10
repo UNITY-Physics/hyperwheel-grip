@@ -11,8 +11,10 @@ refuses to run once the Pi is set up. The steps:
    which GRIP project. It is checked and shown back to confirm, then written as
    ``site.toml`` and ``routing.toml``. Site settings already on the Pi are never
    overwritten.
-2. **Time zone and Wi-Fi country**, from the site file, so times are local and
-   the hotspot uses the channels allowed there.
+2. **The Pi's name, time zone and Wi-Fi country**, from the site file. The name
+   is ``hyperwheel-`` and the site's (``hyperwheel-site-a``), so each Pi has its
+   own in the prompt, on the network and in Connect. The time zone makes times
+   local, and the Wi-Fi country gives the hotspot the channels allowed there.
 3. **The scanner cable.** Every scanner is 10.42.0.1 and the Pi is 10.42.0.88
    on its cable. Setup adds that network connection (from the next restart)
    and says whether the scanner answers.
@@ -188,6 +190,13 @@ def parse_site_file(text: str, *, zoneinfo: Path) -> SiteFile:
             message = str(e).replace(str(site_path), "the site file").replace(str(routing_path), "the site file")
             raise SetupError(message) from None
     return SiteFile(config, routing, site_toml, routing_toml)
+
+
+def hostname_for_site(site: str) -> str:
+    """The Pi's name from its site's: "site-a" gives "hyperwheel-site-a". Lower case, with '.' and '_' as '-'
+    (a host name has letters, digits and '-' only), and at most 63 characters."""
+    name = re.sub(r"-+", "-", "hyperwheel-" + re.sub(r"[^a-z0-9-]", "-", site.lower()))
+    return name[:63].rstrip("-")
 
 
 def known_countries(zoneinfo: Path) -> set[str]:
@@ -453,10 +462,15 @@ class Setup:
             lines.append(line)
         return "\n".join(lines) + "\n"
 
-    # ---- 2. time zone and Wi-Fi country ----
+    # ---- 2. the Pi's name, time zone and Wi-Fi country ----
 
     def time_and_country(self, site: SiteConfig) -> None:
-        self.step(2, "time zone and Wi-Fi country")
+        self.step(2, "the Pi's name, time zone and Wi-Fi country")
+        # The name shows in the prompt, on the network and in Connect, where every Pi from the image is called
+        # raspberrypi until now.
+        name = hostname_for_site(site.site)
+        self.run(["raspi-config", "nonint", "do_hostname", name])
+        self.say(f"The Pi's name: {name}. Windows opened before now show the old name until the Pi restarts.")
         if site.time_zone:
             self.run(["timedatectl", "set-timezone", site.time_zone])
             self.say(f"Time zone: {site.time_zone}.")

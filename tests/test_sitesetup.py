@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import stat
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from hyperwheel.config import load_routing, load_site
 from hyperwheel.installer import Layout, sudo_rule
 from hyperwheel.rawpull import LoginRefused
 from hyperwheel.sitesetup import (BOOT_HOTSPOT, CABLE_FILE, CLEAR_SCREEN, HOTSPOT_FILE, NM_DIR, Accounts, Setup,
-                                  SetupError, parse_site_file)
+                                  SetupError, hostname_for_site, parse_site_file)
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "config" / "examples" / "site-file.toml"
 HOTSPOT_PW = "hotspot-pw-not-for-logs"
@@ -150,6 +151,7 @@ def test_a_fresh_pi_is_set_up_from_the_pasted_site_file(pi):
     assert routing.project_for_login("study_one").name == "SiteA-StudyOne"
     assert routing.project_for_login("phantom").name == "SiteA-Sandbox"
 
+    assert pi.ran_any("raspi-config", "nonint", "do_hostname", "hyperwheel-site-a")
     assert pi.ran_any("timedatectl", "set-timezone", "Europe/London")
     assert pi.ran_any("raspi-config", "nonint", "do_wifi_country", "GB")
 
@@ -187,6 +189,18 @@ def test_a_fresh_pi_is_set_up_from_the_pasted_site_file(pi):
     assert HOTSPOT_PW not in typed.text and SCANNER_PW not in typed.text
     shown = [i for i, line in enumerate(typed.shown) if DM_PW in line]
     assert len(shown) == 1 and CLEAR_SCREEN in typed.shown[shown[0]:]
+
+
+@pytest.mark.parametrize("site, name", [
+    ("kcl-test", "hyperwheel-kcl-test"),
+    ("Site_A.2", "hyperwheel-site-a-2"),
+    ("a--b__c", "hyperwheel-a-b-c"),
+    ("x" * 64, "hyperwheel-" + "x" * 52),
+    ("a" * 51 + "-b", "hyperwheel-" + "a" * 51),
+])
+def test_the_pis_name_comes_from_the_site(site, name):
+    assert hostname_for_site(site) == name
+    assert len(name) <= 63 and re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", name)
 
 
 def test_the_example_site_file_in_the_repo_is_accepted(pi):
