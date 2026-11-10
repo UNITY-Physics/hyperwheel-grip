@@ -33,6 +33,7 @@ import getpass
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tomllib
 from collections.abc import Callable
@@ -86,6 +87,12 @@ def check_with_grip(project: Project, creds: Credentials, timeout_s: float) -> N
 
 def _active(unit: str) -> bool:
     return subprocess.run(["systemctl", "is-active", "--quiet", unit], capture_output=True).returncode == 0
+
+
+def _running_or_starting(unit: str) -> bool:
+    """Running, or about to (starting, or waiting to restart after a fault)."""
+    state = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True).stdout.strip()
+    return state in ("active", "activating", "reloading")
 
 
 def restart_service(what: str = "key") -> str:
@@ -144,7 +151,7 @@ class Datasets:
     check: Callable[[Project, Credentials, float], None] = check_with_grip
     restart: Callable[[], str] = restart_both
     is_root: Callable[[], bool] = _is_root
-    service_active: Callable[[], bool] = lambda: _active(SERVICE)
+    service_active: Callable[[], bool] = lambda: _running_or_starting(SERVICE)
     service_stop: Callable[[], None] = lambda: subprocess.run(["systemctl", "stop", SERVICE], check=True,
                                                                capture_output=True)
     service_start: Callable[[], None] = lambda: subprocess.run(["systemctl", "start", SERVICE], check=True,
@@ -485,36 +492,79 @@ class Datasets:
             raise Stop("There are no GRIP datasets on this Pi, so there's none to remove.")
         project = self._pick(routing, "remove")
         label, logins = project.label, ", ".join(project.logins)
+        # Counted with the upload service running, so nothing pauses while the questions wait for an answer.
+        arriving, drop, _, not_on_grip = self._look(project)
+        if arriving:
+            raise Stop(f"Images are still arriving from the scanner for {label}. Nothing was changed. Try again "
+                       "once the Upload Monitor no longer says it's receiving images.")
         self.c.say(f"Removing {label} deletes its GRIP key from this Pi. Scans from {logins} will then be deleted "
                    "on this Pi, not uploaded. What's already on GRIP stays there.")
         if self.c.ask(f"To remove it, type its name ({label}): ").strip() != label:
             raise Cancelled()
+        if not_on_grip:
+            sessions = len([s for s in drop if s[1]])
+            self.c.say(f"{not_on_grip} file{'s' if not_on_grip != 1 else ''} from {sessions} "
+                       f"session{'s' if sessions != 1 else ''} {'are' if not_on_grip != 1 else 'is'} on this Pi "
+                       "and not on GRIP yet. If you go on, they are deleted on this Pi and never reach GRIP.")
+            if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
+                raise Cancelled()
 
+        # From here nothing waits for a person: stop the upload service, count again, then clear. A hang-up
+        # (a closed terminal) can't cut it short and leave the service stopped.
+        old_handlers = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGHUP, signal.SIGINT)}
         was_running = self.service_active()
-        if was_running:
-            self.service_stop()  # nothing uploads or arrives into its sessions while they are counted and cleared
         try:
-            return self._remove(project)
+            try:
+                self.service_stop()
+            except Exception:  # noqa: BLE001
+                raise Stop("Hyperwheel couldn't be stopped to clear the dataset, so nothing was changed. Ask "
+                           "your Hyperwheel admin.") from None
+            try:
+                return self._remove(project, not_on_grip)
+            finally:
+                if was_running:
+                    self.service_start()
+                self.restart_dashboard()
         finally:
-            if was_running:
-                self.service_start()
-            self.restart_dashboard()
+            for s, handler in old_handlers.items():
+                signal.signal(s, handler)
 
-    def _remove(self, project: Project) -> int:
+    def _look(self, project: Project, store: Store | None = None):
+        """What removing this dataset would touch: whether images are still arriving for it, the sessions to drop
+        (with how many of their files aren't on GRIP), the sessions to stop watching, and the files not on GRIP."""
+        own = store is None
+        store = store or self._open_for_change()
+        try:
+            arriving = self._arriving(store, project)
+            drop, archive, not_on_grip = self._sessions(store, project.name)
+            return arriving, drop, archive, not_on_grip
+        finally:
+            if own:
+                self._close(store)
+
+    @staticmethod
+    def _arriving(store: Store | None, project: Project) -> bool:
+        """A session of this dataset still receiving images, or not yet routed but from one of its logins."""
+        if store is None:
+            return False
+        for study in store.studies(states=("receiving", "stable")):
+            if study.project == project.name:
+                return True
+            if study.project is None and login_from_operators_name(study.operators_name) in project.logins:
+                return True
+        return False
+
+    def _remove(self, project: Project, agreed: int) -> int:
+        """Clear the dataset with the upload service stopped. Its sessions go first, then its routing entry, then
+        its key: stopped part-way (a fault, a power cut), the dataset is still there and remove can be run again
+        to finish."""
         label = project.label
         store = self._open_for_change()
         try:
-            drop, archive, not_on_grip = self._sessions(store, project.name)
-            if not_on_grip:
-                sessions = len([s for s in drop if s[1]])
-                self.c.say(f"{not_on_grip} file{'s' if not_on_grip != 1 else ''} from {sessions} "
-                           f"session{'s' if sessions != 1 else ''} are on this Pi and not on GRIP yet. If you go on, "
-                           "they are deleted on this Pi and never reach GRIP.")
-                if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
-                    raise Cancelled()
-            projects = self._raw()
-            projects.pop(project.name, None)
-            self._write(projects)
+            arriving, drop, archive, not_on_grip = self._look(project, store)
+            if arriving or not_on_grip > agreed:
+                raise Stop(f"More arrived for {label} while you answered. Nothing was changed. Run "
+                           "hyperwheel datasets remove again.")
             try:
                 for study in archive:
                     store.move_study(study.id, "archived", patient_id=None, patient_name=None, patient_sex=None,
@@ -523,9 +573,16 @@ class Datasets:
                     self._drop_one(store, study, project.name)
                 store.forget_project(project.name)
             except Exception as e:  # noqa: BLE001 - say exactly what was and wasn't done
-                raise Stop(f"{label} was taken off this Pi, but its sessions couldn't all be cleared ({e}). The "
-                           "files not cleared are kept. To bring the dataset back, add it again with: "
-                           "hyperwheel datasets add\nOr ask your Hyperwheel admin.") from None
+                raise Stop(f"Removing {label} stopped part-way ({type(e).__name__}). The dataset is still on this "
+                           "Pi, and the files not cleared are kept. To finish, type: hyperwheel datasets remove") \
+                    from None
+            projects = self._raw()
+            projects.pop(project.name, None)
+            try:
+                self._write(projects)
+            except Stop:
+                raise Stop(f"{label}'s sessions were cleared, but the dataset couldn't be taken off this Pi. To "
+                           "finish, type: hyperwheel datasets remove") from None
             self.keys.path(project.name).unlink(missing_ok=True)
         finally:
             self._close(store)
@@ -568,7 +625,7 @@ class Datasets:
         for study in store.studies():
             if study.project != name or study.state in ("unrouted", "purged", "archived"):
                 continue
-            missing = len([f for f in store.files(study.id) if f.state not in DONE_FILE_STATES])
+            missing = len([f for f in store.files(study.id) if f.state not in (*DONE_FILE_STATES, "seen")])
             if study.state == "uploaded" and not missing:
                 archive.append(study)
             else:

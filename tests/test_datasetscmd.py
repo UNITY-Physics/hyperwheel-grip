@@ -310,17 +310,77 @@ def test_refused_files_count_as_not_on_grip_and_need_the_second_confirmation(pi,
     assert PROJECT in pi.routing().projects and all(os.path.exists(f.path) for f in env.store.files(study.id))
 
 
-def test_a_session_still_receiving_images_is_counted_and_dropped_not_stranded(pi, env):
-    from hyperwheel.organiser import Organiser
+def test_remove_waits_while_images_are_still_arriving_for_the_dataset(pi, env):
+    # A: a session already on GRIP that went back to receiving (one more image arrived)
     study = env.stage_study(n_dicom=1, raw_sizes=())
     env.store.move_study(study.id, "uploading")
-    env.store.move_study(study.id, "receiving")  # one more image arrived
-    path = env.store.files(study.id)[0].path
+    env.store.move_study(study.id, "receiving")
+    before = pi.routing_path.read_text()
     typed = Scripted(answers=["1", PROJECT, "delete them"])
-    assert pi.run("remove", typed) == 0 and "1 file from 1 session" in typed.text
-    assert not os.path.exists(path) and env.store.files(study.id) == []
-    Organiser(env.store, env.site, pi.routing(), env.orthanc, clock=env.clock).housekeeping()
-    assert env.store.study(study.id).state == "purged" and study.orthanc_id in env.orthanc.deleted_studies
+    assert pi.run("remove", typed, active=True) == 1
+    assert "Images are still arriving from the scanner for SiteA-Sandbox. Nothing was changed." in typed.text
+    assert pi.routing_path.read_text() == before and env.store.study(study.id).state == "receiving"
+    assert pi.service == [] and typed.prompts[-1].startswith("Which dataset")  # nothing stopped, nothing asked
+    # B: a new scan from one of its logins, not routed yet
+    env.store.move_study(study.id, "stable")
+    env.store.move_study(study.id, "checking")
+    env.store.move_study(study.id, "ready")
+    env.store.add_study("1.2.11", state="receiving", operators_name="site_a/Sandbox")
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    assert pi.run("remove", typed) == 1 and "Images are still arriving" in typed.text
+
+
+def test_remove_stops_if_more_arrived_while_the_person_answered(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+
+    def more_arrives():
+        env.add_dicom(env.store.study(study.id), "1.2.3.4.5")
+        pi.service.append("stop")
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    code = main(pi.site, ["remove"], routing_path=pi.routing_path, console=typed.console(), keys=env.keys,
+                is_root=lambda: True, service_active=lambda: True, service_stop=more_arrives,
+                service_start=lambda: pi.service.append("start"), restart_dashboard=lambda: None)
+    assert code == 1 and "More arrived for SiteA-Sandbox while you answered. Nothing was changed." in typed.text
+    assert PROJECT in pi.routing().projects and len(env.store.files(study.id)) == 2
+    assert pi.service == ["stop", "start"]
+
+
+def test_remove_stopped_part_way_keeps_the_dataset_and_running_it_again_finishes(pi, env, monkeypatch):
+    from hyperwheel import datasetscmd
+    first = env.stage_study(n_dicom=1, raw_sizes=())
+    second = env.stage_study(n_dicom=1, raw_sizes=())
+    real, calls = datasetscmd.Datasets._drop_one, []
+
+    def fails_second(self, store, study, name):
+        calls.append(study.id)
+        if len(calls) == 2:
+            raise OSError("disk went away")
+        return real(self, store, study, name)
+    monkeypatch.setattr(datasetscmd.Datasets, "_drop_one", fails_second)
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    assert pi.run("remove", typed) == 1
+    assert "stopped part-way (OSError). The dataset is still on this Pi" in typed.text
+    assert "To finish, type: hyperwheel datasets remove" in typed.text
+    assert PROJECT in pi.routing().projects and env.keys.path(PROJECT).exists()
+    monkeypatch.setattr(datasetscmd.Datasets, "_drop_one", real)
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    assert pi.run("remove", typed) == 0, typed.text
+    assert pi.routing().projects == {} and not env.keys.path(PROJECT).exists()
+    assert {env.store.study(s.id).state for s in (first, second)} == {"unrouted"}
+
+
+def test_a_service_that_cant_be_stopped_changes_nothing(pi, env):
+    import subprocess
+    env.stage_study(n_dicom=1, raw_sizes=())
+
+    def cant():
+        raise subprocess.CalledProcessError(1, "systemctl")
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    code = main(pi.site, ["remove"], routing_path=pi.routing_path, console=typed.console(), keys=env.keys,
+                is_root=lambda: True, service_active=lambda: True, service_stop=cant,
+                service_start=lambda: pi.service.append("start"), restart_dashboard=lambda: None)
+    assert code == 1 and "Hyperwheel couldn't be stopped to clear the dataset, so nothing was changed." in typed.text
+    assert PROJECT in pi.routing().projects
 
 
 def test_a_session_on_grip_with_a_refused_file_left_is_counted_too(pi, env):
@@ -360,7 +420,7 @@ def test_a_store_that_cant_be_read_stops_remove_and_changes_nothing(pi, env):
     assert pi.run("remove", typed, active=True) == 1
     assert "can't tell what's still waiting to upload. Nothing was changed." in typed.text
     assert pi.routing_path.read_text() == before and env.keys.path(PROJECT).exists()
-    assert pi.service == ["stop", "start", "dashboard"]  # started again
+    assert pi.service == []  # found before anything was stopped
     from hyperwheel.state import Store
     env.site.state_db.unlink()
     env.store = Store(env.site.state_db, clock=env.clock)  # for the fixture's close
@@ -410,3 +470,50 @@ def test_messages_never_show_the_dataset_settings_path(pi):
     typed = Scripted()
     assert pi.run("list", typed) == 1 and str(pi.routing_path) not in typed.text
     assert "dataset settings can't be read" in typed.text
+
+
+# ---- the key and the routing file change together or not at all ----
+
+
+def _routing_write_fails(monkeypatch):
+    from hyperwheel import datasetscmd
+    real = datasetscmd.os.replace
+
+    def failing(src, dst):
+        if str(dst).endswith("routing.toml"):
+            raise OSError(28, "No space left on device")
+        return real(src, dst)
+    monkeypatch.setattr(datasetscmd.os, "replace", failing)
+
+
+def test_add_takes_the_new_key_away_again_if_the_routing_file_cant_be_saved(pi, env, monkeypatch):
+    before = pi.routing_path.read_text()
+    _routing_write_fails(monkeypatch)
+    typed = Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET])
+    assert pi.run("add", typed) == 1 and "couldn't be saved" in typed.text
+    assert pi.routing_path.read_text() == before and not env.keys.path(NEW_CLIENT).exists()
+
+
+def test_replacing_an_older_datasets_key_checks_the_routing_file_before_the_key_is_saved(pi, env, monkeypatch):
+    from hyperwheel import datasetscmd
+    real_load = datasetscmd.load_routing
+
+    def failing(path, **kw):
+        if str(path).endswith(".new"):
+            raise datasetscmd.ConfigError("made to fail")
+        return real_load(path, **kw)
+    monkeypatch.setattr(datasetscmd, "load_routing", failing)
+    env.fake.clients["site-a-sandbox-client"] = "rotated-0000"
+    typed = Scripted(answers=["1", "2", "site-a-sandbox-client"], hidden=["rotated-0000"])
+    assert pi.run("change", typed) == 1 and "couldn't be saved" in typed.text
+    assert env.keys.read(PROJECT).client_secret == OLD_SECRET and typed.hidden == ["rotated-0000"]
+
+
+def test_replacing_an_older_datasets_key_puts_the_old_key_back_if_the_routing_file_cant_be_saved(pi, env,
+                                                                                                monkeypatch):
+    env.fake.clients["site-a-sandbox-client"] = "rotated-0000"
+    _routing_write_fails(monkeypatch)
+    typed = Scripted(answers=["1", "2", "site-a-sandbox-client"], hidden=["rotated-0000"])
+    assert pi.run("change", typed) == 1 and "couldn't be saved" in typed.text
+    assert env.keys.read(PROJECT).client_secret == OLD_SECRET
+    assert pi.routing().projects[PROJECT].client_id is None

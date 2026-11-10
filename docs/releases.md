@@ -159,7 +159,8 @@ Connect key on it. The installer deletes any such key left on a Pi.
     other arguments: `hyperwheel status`, `hyperwheel doctor`,
     `hyperwheel datasets list` and `hyperwheel update status` without a
     password, and `hyperwheel datasets add`, `datasets change`,
-    `datasets remove` and `hyperwheel scanner password` with its own password. From the end of setup, the screen locks
+    `datasets remove` and `hyperwheel scanner password` with its own
+    password. From the end of setup, the screen locks
     after 15 minutes idle and unlocks with that Pi's `datamanager` password.
   - Data managers never type `sudo`. `hyperwheel help` lists what they can
     run, one command per line. A command that needs root runs itself again
@@ -353,10 +354,15 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   another dataset). A new key is checked with GRIP the same way.
 - `hyperwheel datasets remove` deletes a dataset and its key from the Pi,
   after saying that scans from its logins will then be deleted on the Pi, not
-  uploaded, and asking for the dataset's name to confirm. If files are still
-  waiting to upload to it, it says how many and refuses unless the person also
-  types `delete them`. Those files are then deleted on the Pi and in Orthanc,
-  like a study from a login with no dataset. What's on GRIP stays there.
+  uploaded, and asking for the dataset's name to confirm. While images are
+  still arriving for it, it waits (try again once the Upload Monitor no longer
+  says it's receiving). If any of its files aren't on GRIP yet (waiting,
+  refused), it says how many and stops unless the person also types
+  `delete them`. Then, with the upload service stopped for a moment, it counts
+  again (stopping if more arrived), deletes those sessions on the Pi and in
+  Orthanc like a study from a login with no dataset, and only then takes the
+  dataset and its key off the Pi. Stopped part-way, the dataset is still
+  there, and running `remove` again finishes it. What's on GRIP stays there.
 
 Every command asks for the data-manager password (except `list`). The secret
 is typed hidden and never shown, logged or put on a command line. Pressing
@@ -366,6 +372,11 @@ then replaced in one step. After a change, Hyperwheel and the Upload Monitor
 restart to use it, and uploads continue where they stopped. The service checks
 every key when it starts, so a minute later `hyperwheel datasets list` and the
 Upload Monitor show the key as working.
+
+A release before 0.1.16 can't read dataset settings written by these commands
+(a dataset with no address of its own, or a client ID). An automatic rollback
+comes straight after an update, before anyone could use them, but don't
+install an older release by hand on a Pi whose datasets were changed.
 
 The old commands, `hyperwheel keys list` and `keys set`, now say which
 `datasets` command replaced them.
