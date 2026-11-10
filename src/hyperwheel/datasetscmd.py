@@ -294,11 +294,11 @@ class Datasets:
             answer = answer.strip()
             if not answer:
                 raise Cancelled()
-            if answer.isdigit() and 1 <= int(answer) <= len(names):
-                return routing.projects[names[int(answer) - 1]]
             for project in routing.projects.values():
                 if answer == project.label:
                     return project
+            if answer.isdigit() and 1 <= int(answer) <= len(names):
+                return routing.projects[names[int(answer) - 1]]
             for project in routing.projects.values():
                 if answer == project.name:
                     return project
@@ -369,7 +369,9 @@ class Datasets:
 
     def _restarted(self) -> int:
         try:
-            self.c.say(self.restart())
+            with _uninterrupted():
+                said = self.restart()
+            self.c.say(said)
         except Exception as e:  # noqa: BLE001 - the change is saved, say so plainly
             self.c.say(f"Hyperwheel couldn't be restarted ({e}), so it uses the change only when it next starts. "
                        "Ask your Hyperwheel admin.")
@@ -407,7 +409,7 @@ class Datasets:
         project = Project(name, tuple(logins), self.site.grip.api_base_url, self.site.grip.token_url,
                           client_id=client_id)
         self._check(project, creds, "The dataset wasn't added.")
-        with _no_update(self.update_lock):
+        with _no_update(self.update_lock), _uninterrupted():
             projects = self._raw()
             projects[name] = {"client_id": client_id, "logins": logins}
             try:
@@ -455,7 +457,7 @@ class Datasets:
                            "changed. Try again once the Upload Monitor no longer says it's receiving images.")
         finally:
             self._close(store)
-        with _no_update(self.update_lock):
+        with _no_update(self.update_lock), _uninterrupted():
             projects = self._raw()
             projects[project.name] = {**projects[project.name], "logins": logins}
             self._write(projects)
@@ -497,7 +499,13 @@ class Datasets:
         if old == creds and project.client_id:
             self.c.say("It's the key already stored, so nothing needed to change.")
             return 0
-        with _no_update(self.update_lock):
+        with _no_update(self.update_lock), _uninterrupted():
+            if projects is not None:  # read again: another command may have changed it meanwhile
+                projects = self._raw()
+                if project.name not in projects:
+                    raise Stop(f"{project.label} was changed meanwhile. Nothing was saved. Try again.")
+                projects[project.name] = {"client_id": client_id, **projects[project.name]}
+                self._write(projects, check_only=True)
             try:
                 self.keys.write(project.name, creds)
             except OSError as e:
@@ -553,7 +561,7 @@ class Datasets:
             return self._clear(project, not_on_grip, on_scanner)
 
     def _clear(self, project: Project, not_on_grip: frozenset, on_scanner: int) -> int:
-        old_handlers = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)}
+        old_handlers = _ignore_interruptions()
         was_running = self.service_active()
         try:
             try:
@@ -602,7 +610,9 @@ class Datasets:
         """A session of this dataset still receiving images, or not yet routed but from one of its logins."""
         if store is None:
             return False
-        for study in store.studies(states=("receiving", "stable")):
+        for study in store.studies(states=("receiving", "stable", "unrouted")):
+            if study.state == "unrouted" and study.stable_at is not None:
+                continue  # waiting to be deleted, not arriving
             if study.project == project.name:
                 return True
             if study.project is None and login_from_operators_name(study.operators_name) in project.logins:
@@ -627,6 +637,9 @@ class Datasets:
                                      patient_sex=None, patient_birth_date=None)
                 for study, _ in drop:
                     self._drop_one(store, study, project.name)
+                for study in store.studies(states=("archived", "purged", "unrouted")):
+                    if study.project == project.name:  # sent again, it goes wherever its login goes then
+                        store.update_study(study.id, project=None)
                 store.forget_project(project.name)
             except Exception as e:  # noqa: BLE001 - say exactly what was and wasn't done
                 raise Stop(f"Removing {label} stopped part-way ({type(e).__name__}). The dataset is still on this "
@@ -709,6 +722,24 @@ class Datasets:
             shutil.rmtree(base / study.study_uid, ignore_errors=True)
 
 
+_INTERRUPTIONS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGTSTP)
+
+
+def _ignore_interruptions() -> dict:
+    """A closed terminal, Ctrl-C, a stop signal or Ctrl-Z can't cut a change short. Returns what to put back."""
+    return {s: signal.signal(s, signal.SIG_IGN) for s in _INTERRUPTIONS}
+
+
+@contextmanager
+def _uninterrupted():
+    old = _ignore_interruptions()
+    try:
+        yield
+    finally:
+        for s, handler in old.items():
+            signal.signal(s, handler)
+
+
 @contextmanager
 def _no_update(lock: Path):
     """Hold the updater's install lock for the moment datasets change, so no release installs or rolls back
@@ -721,8 +752,8 @@ def _no_update(lock: Path):
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            raise Stop("An update is being installed just now. Nothing was changed. Try again in a few "
-                       "minutes.") from None
+            raise Stop("An update is being installed just now, or another hyperwheel datasets command is "
+                       "saving. Nothing was changed. Try again in a few minutes.") from None
         yield
 
 

@@ -366,7 +366,8 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   Orthanc like a study from a login with no dataset, and only then takes the
   dataset and its key off the Pi. Stopped part-way, the dataset is still
   there, and running `remove` again finishes it. What's on GRIP stays there.
-- `add`, `change` and `remove` wait while an update is being installed.
+- While an update is being installed, `add`, `change` and `remove` change
+  nothing and say to try again in a few minutes.
 - A session deleted on the Pi because its login had no dataset (or its
   dataset was removed) goes through as a new one if the scanner sends it again
   once its login has a dataset.

@@ -527,3 +527,31 @@ def test_update_channel_says_plainly_when_the_site_settings_cant_be_read(tmp_pat
     before = site.read_text()
     assert main(["channel", "stable"], Paths(Layout(tmp_path))) == 1
     assert "can't be read" in capsys.readouterr().err and site.read_text() == before
+
+
+def test_an_install_and_its_checks_hold_the_install_lock_and_the_wait_for_idle_does_not(pi, monkeypatch):
+    import fcntl
+
+    def held(paths) -> bool:
+        with open(paths.installing, "a") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            return False
+    seen = {}
+    real_apply, real_wait = up.Updater._apply, up.Updater.wait_until_idle
+
+    def probe_apply(self, *a):
+        seen["apply"] = held(self.paths)
+        return real_apply(self, *a)
+
+    def probe_wait(self, *a, **kw):
+        seen["wait"] = held(self.paths)
+        return real_wait(self, *a, **kw)
+    monkeypatch.setattr(up.Updater, "_apply", probe_apply)
+    monkeypatch.setattr(up.Updater, "wait_until_idle", probe_wait)
+    pi.publish("0.1.3")
+    assert pi.updater().check() == "updated: 0.1.2 -> 0.1.3"
+    assert seen == {"apply": True, "wait": False}
+    assert not held(pi.paths)  # let go afterwards

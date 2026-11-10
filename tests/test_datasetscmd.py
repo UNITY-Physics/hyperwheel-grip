@@ -558,9 +558,9 @@ def test_hang_ups_are_ignored_while_it_clears(pi, env):
     import signal
     seen = []
     typed = Scripted(answers=["1", PROJECT])
-    assert _main(pi, env, typed, service_stop=lambda: seen.append(
-        [signal.getsignal(s) for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)])) == 0
-    assert seen == [[signal.SIG_IGN] * 3] and signal.getsignal(signal.SIGINT) is not signal.SIG_IGN
+    signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGTSTP)
+    assert _main(pi, env, typed, service_stop=lambda: seen.append([signal.getsignal(s) for s in signals])) == 0
+    assert seen == [[signal.SIG_IGN] * 4] and signal.getsignal(signal.SIGINT) is not signal.SIG_IGN
 
 
 def test_a_service_that_wont_start_again_is_said_plainly(pi, env):
@@ -581,7 +581,7 @@ def test_nothing_changes_while_an_update_is_being_installed(pi, env):
     with open(lock, "a") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         typed = Scripted(answers=["1", PROJECT])
-        assert _main(pi, env, typed) == 1 and "An update is being installed just now. Nothing was changed." in typed.text
+        assert _main(pi, env, typed) == 1 and "An update is being installed just now" in typed.text and "Nothing was changed." in typed.text
         assert pi.service == []  # not stopped
         typed = Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET])
         assert pi.run("add", typed) == 1 and "An update is being installed" in typed.text
@@ -594,12 +594,9 @@ def test_nothing_changes_while_an_update_is_being_installed(pi, env):
     assert _main(pi, env, Scripted(answers=["1", PROJECT])) == 0
 
 
-def test_the_updater_holds_the_install_lock_only_while_it_installs():
-    import inspect
+def test_the_datasets_commands_use_the_updaters_install_lock():
     from hyperwheel import datasetscmd, updater
-    assert datasetscmd.UPDATE_LOCK.name == ".installing" == updater.Paths().installing.name
-    assert "self.paths.installing" in inspect.getsource(updater.Updater.apply)
-    assert "installing" not in inspect.getsource(updater.Updater.check)
+    assert datasetscmd.UPDATE_LOCK == updater.Paths().installing
 
 
 def test_a_session_on_grip_of_a_removed_dataset_goes_through_when_sent_again_after_it_is_added_back(pi, env):
@@ -630,3 +627,56 @@ def test_dropping_a_login_waits_while_its_images_arrive(pi, env):
     assert pi.routing().projects[NEW_CLIENT].logins == ("one", "two")
     typed = Scripted(answers=[NEW_CLIENT, "1", "two", ""])  # dropping "one", which has nothing arriving
     assert pi.run("change", typed) == 0 and "New scans from one are deleted on this Pi" in typed.text
+
+
+def test_every_session_of_a_removed_dataset_loses_its_name_so_it_goes_through_once_added_back(pi, env):
+    from conftest import make_dicom
+    from pydicom.uid import generate_uid
+    from hyperwheel.organiser import Organiser
+    old = env.store.add_study("1.2.41", state="archived", project=PROJECT, stable_at=env.clock(),
+                              operators_name="site_a/sandbox")  # past the watch period before the removal
+    gone = env.store.add_study("1.2.42", state="purged", project=PROJECT, stable_at=env.clock())
+    assert pi.run("remove", Scripted(answers=["1", PROJECT])) == 0
+    assert env.store.study(old.id).project is None and env.store.study(gone.id).project is None
+    env.fake.clients["site-a-sandbox-client"] = OLD_SECRET
+    assert pi.run("add", Scripted(answers=["site-a-sandbox-client", "sandbox", ""], hidden=[OLD_SECRET])) == 0
+    _, data = make_dicom("1.2.41", generate_uid(), acq="133410")
+    env.orthanc.receive(data)
+    env.orthanc.stable("1.2.41")
+    Organiser(env.store, env.site, pi.routing(), env.orthanc, clock=env.clock).follow()
+    again = env.store.study(old.id)
+    assert again.state == "ready" and again.project == "site-a-sandbox-client"
+
+
+def test_a_purged_session_being_sent_again_from_its_login_counts_as_arriving(pi, env):
+    from conftest import make_dicom
+    from pydicom.uid import generate_uid
+    from hyperwheel.organiser import Organiser
+    env.store.add_study("1.2.43", state="purged", stable_at=env.clock())  # its details were wiped
+    _, data = make_dicom("1.2.43", generate_uid(), acq="133410")
+    env.orthanc.receive(data)
+    Organiser(env.store, env.site, pi.routing(), env.orthanc, clock=env.clock).follow()
+    typed = Scripted(answers=["1", PROJECT])
+    assert pi.run("remove", typed) == 1 and "Images are still arriving" in typed.text
+
+
+def test_a_linked_dataset_folder_is_never_followed(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    real = env.site.staging_dir / PROJECT
+    elsewhere = env.tmp / "elsewhere"
+    real.rename(elsewhere)
+    real.symlink_to(elsewhere)  # stagingArea/<dataset> now points somewhere else
+    kept = list(elsewhere.rglob("*.dcm"))
+    assert kept and pi.run("remove", Scripted(answers=["1", PROJECT, "delete them"])) == 0
+    assert all(p.exists() for p in kept) and env.store.files(study.id) == []
+
+
+def test_a_shown_name_that_is_a_number_picks_that_dataset_not_that_position(pi, env):
+    env.fake.clients["2"] = NEW_SECRET
+    assert pi.run("add", Scripted(answers=["2", "one", ""], hidden=[NEW_SECRET])) == 0, "added"
+    typed = Scripted(answers=["2", "2"])  # dataset "2" is the second in the list, and also named 2
+    env.fake.clients["1"] = NEW_SECRET
+    pi.run("add", Scripted(answers=["1", "two", ""], hidden=[NEW_SECRET]))
+    typed = Scripted(answers=["1", "1"])  # "1" is the third dataset's name, not the first position
+    assert pi.run("remove", typed) == 0 and "Removed 1." in typed.text
+    assert PROJECT in pi.routing().projects

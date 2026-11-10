@@ -95,7 +95,7 @@ class Organiser:
         if study.state in ("purged", "unrouted"):
             # Sent again: not stable until Orthanc says so, so housekeeping leaves it while it arrives (its login
             # may have a dataset now, and a purge then would cut the study short).
-            self.store.move_study(study.id, "unrouted", stable_at=None, **fields)
+            self.store.move_study(study.id, "unrouted", stable_at=None, operators_name=info.operators_name, **fields)
         elif study.state == "receiving":
             if fields:
                 self.store.update_study(study.id, **fields)
