@@ -358,9 +358,11 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   after saying that scans from its logins will then be deleted on the Pi, not
   uploaded, and asking for the dataset's name to confirm. While images are
   still arriving for it, it waits (try again once the Upload Monitor no longer
-  says it's receiving). If any of its files aren't on GRIP yet (waiting,
-  refused), it says how many and stops unless the person also types
-  `delete them`. Raw data of its sessions still on the scanner (not fetched
+  says it's receiving). If any of its sessions would be deleted on the Pi
+  (not all on GRIP: files waiting or refused, or a session held for a check),
+  it says how many and stops unless the person also types `delete them`. Raw
+  files of its sessions held as unassigned stay on the Pi, flagged, and it
+  says so. Raw data of its sessions still on the scanner (not fetched
   yet) is never fetched once it's removed: it says so and asks for `go on`. Then, with the upload service stopped for a moment, it counts
   again (stopping if more arrived), deletes those sessions on the Pi and in
   Orthanc like a study from a login with no dataset, and only then takes the

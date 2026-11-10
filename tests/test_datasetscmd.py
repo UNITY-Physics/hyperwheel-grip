@@ -224,7 +224,7 @@ def test_remove_refuses_while_files_wait_unless_they_may_be_deleted(pi, env):
     paths = [f.path for f in env.store.files(study.id)]
     typed = Scripted(answers=["1", PROJECT, "no"])
     assert pi.run("remove", typed) == 1
-    assert "3 files from 1 session are on this Pi and not on GRIP yet" in typed.text
+    assert "1 session of SiteA-Sandbox is not all on GRIP yet (3 files on this Pi not uploaded)" in typed.text
     assert "never reach GRIP" in typed.text
     assert PROJECT in pi.routing().projects and all(os.path.exists(p) for p in paths)
     typed = Scripted(answers=["1", PROJECT, "delete them"])
@@ -308,7 +308,7 @@ def test_refused_files_count_as_not_on_grip_and_need_the_second_confirmation(pi,
         env.store.move_file(f.id, "sending")
         env.store.move_file(f.id, "refused")
     typed = Scripted(answers=["1", PROJECT, ""])
-    assert pi.run("remove", typed) == 1 and "2 files from 1 session are on this Pi and not on GRIP" in typed.text
+    assert pi.run("remove", typed) == 1 and "(2 files on this Pi not uploaded)" in typed.text
     assert PROJECT in pi.routing().projects and all(os.path.exists(f.path) for f in env.store.files(study.id))
 
 
@@ -395,7 +395,7 @@ def test_a_session_on_grip_with_a_refused_file_left_is_counted_too(pi, env):
     env.store.move_study(study.id, "uploading")
     env.store.move_study(study.id, "uploaded")
     typed = Scripted(answers=["1", PROJECT, "delete them"])
-    assert pi.run("remove", typed) == 0 and "1 file from 1 session" in typed.text
+    assert pi.run("remove", typed) == 0 and "(1 file on this Pi not uploaded)" in typed.text
     assert not os.path.exists(second.path) and env.store.study(study.id).state == "unrouted"
 
 
@@ -541,11 +541,11 @@ def test_raw_data_still_on_the_scanner_is_said_and_needs_its_own_yes(pi, env):
                        scanner_folder="rrdf_20261027_132802")
     env.store.add_file(kind="rrdf", name="other_rrdf_20261028_090000.h5", state="seen", study_id=None,
                        scanner_folder="rrdf_20261028_090000")  # another session's: not counted
-    typed = Scripted(answers=["1", PROJECT, ""])
+    typed = Scripted(answers=["1", PROJECT, "delete them", ""])
     assert pi.run("remove", typed) == 1
     assert "1 raw file of its sessions is still on the scanner, not fetched yet." in typed.text
     assert PROJECT in pi.routing().projects
-    typed = Scripted(answers=["1", PROJECT, "go on"])
+    typed = Scripted(answers=["1", PROJECT, "delete them", "go on"])
     assert pi.run("remove", typed) == 0 and pi.routing().projects == {}
 
 
@@ -710,3 +710,31 @@ def test_saving_a_new_dataset_cant_be_interrupted_part_way(pi, env, monkeypatch)
     monkeypatch.setattr(env.keys, "write", lambda *a: seen.append(signal.getsignal(signal.SIGINT)) or real(*a))
     assert pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET])) == 0
     assert seen == [signal.SIG_IGN] and signal.getsignal(signal.SIGINT) is not signal.SIG_IGN
+
+
+def test_a_held_session_with_everything_staged_on_grip_still_needs_delete_them(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    f = env.store.files(study.id)[0]
+    env.store.move_file(f.id, "sending")
+    env.store.move_file(f.id, "confirmed")
+    env.store.move_study(study.id, "uploading")
+    env.store.move_study(study.id, "uploaded")
+    env.store.move_study(study.id, "receiving")
+    env.store.move_study(study.id, "stable")
+    env.store.move_study(study.id, "checking")
+    env.store.move_study(study.id, "held")  # images from another login came in, never staged
+    typed = Scripted(answers=["1", PROJECT, ""])
+    assert pi.run("remove", typed) == 1
+    assert "(0 files on this Pi not uploaded, and some held for a check" in typed.text
+    assert PROJECT in pi.routing().projects and env.store.study(study.id).state == "held"
+
+
+def test_unassigned_raw_files_of_its_sessions_are_said_and_kept(pi, env):
+    env.store.add_study("1.2.50", state="uploaded", project=PROJECT, study_date="20261027", study_time="132802",
+                        stable_at=env.clock())
+    kept = env.store.add_file(kind="rrdf", name="x_rrdf_20261027_134000.h5", state="unassigned", study_id=None,
+                              scanner_folder="rrdf_20261027_132802")
+    typed = Scripted(answers=["1", PROJECT])
+    assert pi.run("remove", typed) == 0
+    assert "1 raw file of its sessions is on this Pi, held because the Pi couldn't tell which session" in typed.text
+    assert env.store.file(kept.id).state == "unassigned"

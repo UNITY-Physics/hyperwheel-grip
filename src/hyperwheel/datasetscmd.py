@@ -525,6 +525,8 @@ class Datasets:
             self.c.say("It's the key already stored, so nothing needed to change.")
             return 0
         with self._no_update(), _uninterrupted():
+            if project.name not in self._raw():
+                raise Stop(f"{project.label} was changed meanwhile. Nothing was saved. Try again.")
             if projects is not None:  # read again: another command may have changed it meanwhile
                 projects = self._raw()
                 if project.name not in projects:
@@ -556,7 +558,7 @@ class Datasets:
         project = self._pick(routing, "remove")
         label, logins = project.label, ", ".join(project.logins)
         # Counted with the upload service running, so nothing pauses while the questions wait for an answer.
-        arriving, drop, _, not_on_grip, on_scanner = self._look(project)
+        arriving, drop, _, not_on_grip, on_scanner, unassigned = self._look(project)
         if arriving:
             raise Stop(f"Images are still arriving from the scanner for {label}. Nothing was changed. Try again "
                        "once the Upload Monitor no longer says it's receiving images.")
@@ -565,11 +567,13 @@ class Datasets:
                    "What's already on GRIP stays there.")
         if self.c.ask(f"To remove it, type its name ({label}): ").strip() != label:
             raise Cancelled()
-        if not_on_grip:
-            sessions, n = len([s for s in drop if s[1]]), len(not_on_grip)
-            self.c.say(f"{n} file{'s' if n != 1 else ''} from {sessions} "
-                       f"session{'s' if sessions != 1 else ''} {'are' if n != 1 else 'is'} on this Pi "
-                       "and not on GRIP yet. If you go on, they are deleted on this Pi and never reach GRIP.")
+        if drop:
+            k, n = len(drop), len(not_on_grip)
+            self.c.say(f"{k} session{'s' if k != 1 else ''} of {label} {'are' if k != 1 else 'is'} not all on GRIP "
+                       f"yet ({n} file{'s' if n != 1 else ''} on this Pi not uploaded"
+                       + (", and some held for a check, whose images may not all be counted" if
+                          any(s.state == "held" for s, _ in drop) else "")
+                       + "). If you go on, they are deleted on this Pi and in Orthanc, and never reach GRIP.")
             if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
                 raise Cancelled()
         if on_scanner:
@@ -579,13 +583,19 @@ class Datasets:
                        f"{'them' if on_scanner != 1 else 'it'}.")
             if self.c.ask("To go on without it, type go on: ").strip().lower() != "go on":
                 raise Cancelled()
+        if unassigned:
+            self.c.say(f"{unassigned} raw file{'s' if unassigned != 1 else ''} of its sessions "
+                       f"{'are' if unassigned != 1 else 'is'} on this Pi, held because the Pi couldn't tell which "
+                       f"session {'they belong' if unassigned != 1 else 'it belongs'} to. "
+                       f"{'They stay' if unassigned != 1 else 'It stays'} on the Pi, flagged, for your Hyperwheel "
+                       "admin.")
 
         # From here nothing waits for a person: stop the upload service, count again, then clear. A hang-up
         # (a closed terminal) can't cut it short and leave the service stopped.
         with self._no_update():
-            return self._clear(project, not_on_grip, on_scanner)
+            return self._clear(project, (frozenset(s.id for s, _ in drop), not_on_grip, on_scanner))
 
-    def _clear(self, project: Project, not_on_grip: frozenset, on_scanner: int) -> int:
+    def _clear(self, project: Project, agreed: tuple[frozenset, frozenset, int]) -> int:
         old_handlers = _ignore_interruptions()
         was_running = self.service_active()
         try:
@@ -595,7 +605,7 @@ class Datasets:
                 except Exception:  # noqa: BLE001
                     raise Stop("Hyperwheel couldn't be stopped to clear the dataset, so nothing was changed. Ask "
                                "your Hyperwheel admin.") from None
-                return self._remove(project, (not_on_grip, on_scanner))
+                return self._remove(project, agreed)
             finally:
                 self._start_again(was_running)
         finally:
@@ -624,8 +634,8 @@ class Datasets:
         store = store or self._open_for_change()
         try:
             arriving = self._arriving(store, project)
-            drop, archive, not_on_grip, on_scanner = self._sessions(store, project.name)
-            return arriving, drop, archive, not_on_grip, on_scanner
+            drop, archive, not_on_grip, on_scanner, unassigned = self._sessions(store, project.name)
+            return arriving, drop, archive, not_on_grip, on_scanner, unassigned
         finally:
             if own:
                 self._close(store)
@@ -648,24 +658,25 @@ class Datasets:
                 return True
         return False
 
-    def _remove(self, project: Project, agreed: tuple[frozenset, int]) -> int:
+    def _remove(self, project: Project, agreed: tuple[frozenset, frozenset, int]) -> int:
         """Clear the dataset with the upload service stopped. Its sessions go first, then its routing entry, then
         its key: stopped part-way (a fault, a power cut), the dataset is still there and remove can be run again
         to finish."""
         label = project.label
         store = self._open_for_change()
         try:
-            arriving, drop, archive, not_on_grip, on_scanner = self._look(project, store)
-            if arriving or not not_on_grip <= agreed[0] or on_scanner > agreed[1]:
+            arriving, drop, archive, not_on_grip, on_scanner, _ = self._look(project, store)
+            sessions = frozenset(s.id for s, _ in drop)
+            if arriving or not sessions <= agreed[0] or not not_on_grip <= agreed[1] or on_scanner > agreed[2]:
                 raise Stop(f"More arrived for {label} while you answered. Nothing was changed. Run "
                            "hyperwheel datasets remove again.")
             try:
-                for study in archive:
+                for study, _ in drop:
+                    self._drop_one(store, study, project.name)
+                for study in archive:  # after the drops: stopped part-way, these are still watched
                     # No dataset any more: sent again, it goes wherever its login goes then (if anywhere).
                     store.move_study(study.id, "archived", project=None, patient_id=None, patient_name=None,
                                      patient_sex=None, patient_birth_date=None)
-                for study, _ in drop:
-                    self._drop_one(store, study, project.name)
                 for study in store.studies(states=("archived", "purged", "unrouted")):
                     if study.project == project.name:  # sent again, it goes wherever its login goes then
                         store.update_study(study.id, project=None)
@@ -714,20 +725,22 @@ class Datasets:
                 os.chown(extra, self._db_owner.st_uid, self._db_owner.st_gid)
 
     @staticmethod
-    def _sessions(store: Store | None, name: str) -> tuple[list, list, frozenset, int]:
+    def _sessions(store: Store | None, name: str) -> tuple[list, list, frozenset, int, int]:
         """The dataset's sessions: those to drop (with how many of their files aren't on GRIP), those to stop
         watching (all their files on GRIP), how many files on the Pi aren't on GRIP, and how many raw files are
         still on the scanner (listed, not fetched yet)."""
         if store is None:
-            return [], [], frozenset(), 0
-        drop, archive, total, on_scanner = [], [], set(), 0
+            return [], [], frozenset(), 0, 0
+        drop, archive, total, on_scanner, unassigned = [], [], set(), 0, 0
         listed = store.files(kind="rrdf", states=("seen",))  # on the scanner: no session until fetched
+        held = store.files(kind="rrdf", states=("unassigned",))  # on the Pi, session unknown
         for study in store.studies():
             if study.project != name or study.state in ("unrouted", "purged", "archived"):
                 continue
             folder = f"rrdf_{study.study_date}_{(study.study_time or '')[:6]}"
             files = store.files(study.id)
             on_scanner += len([f for f in listed if f.scanner_folder == folder or f.study_id == study.id])
+            unassigned += len([f for f in held if f.scanner_folder == folder])
             not_done = {f.id for f in files if f.state not in (*DONE_FILE_STATES, "seen")}
             missing = len(not_done)
             if study.state == "uploaded" and not missing:
@@ -735,7 +748,7 @@ class Datasets:
             else:
                 drop.append((study, missing))
                 total |= not_done
-        return drop, archive, frozenset(total), on_scanner
+        return drop, archive, frozenset(total), on_scanner, unassigned
 
     def _drop_one(self, store: Store, study, name: str) -> None:
         """Delete a dropped session on this Pi: its records first, then its local copies, and only copies inside
