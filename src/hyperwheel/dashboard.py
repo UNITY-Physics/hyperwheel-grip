@@ -9,9 +9,10 @@ and on 127.0.0.1 for the Pi's own browser (which works even when the hotspot
 isn't up). Studies from logins with no routing entry are never shown.
 
 On a newly flashed Pi (no site settings yet) it serves one other page instead,
-where the Pi joins Raspberry Pi Connect: a box for the one-use key the admin sent,
-and the sign-in link as the fallback. Pasting a key is the only thing this service
-ever changes, and only until there are site settings.
+where the Pi joins Raspberry Pi Connect: the sign-in link to send to the admin,
+and, as a small extra below it, a box for a one-use key the admin sent. Pasting a
+key is the only thing this service ever changes, and only until there are site
+settings.
 """
 
 from __future__ import annotations
@@ -502,6 +503,10 @@ NOT_SET_UP_PAGE = """<!doctype html>
   button { font-size:17px; padding:10px 18px; border:0; border-radius:8px; background:var(--blue); color:#fff; }
   .link { overflow-wrap:anywhere; font-weight:600; }
   #key-message { margin:10px 0 0; }
+  .small { font-size:15px; padding:14px 20px; }
+  .small input, .small button { font-size:15px; }
+  summary { cursor:pointer; color:var(--blue); }
+  details[open] summary { margin-bottom:10px; }
   .ok { color:var(--ok); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
 </style>
 </head>
@@ -512,19 +517,21 @@ NOT_SET_UP_PAGE = """<!doctype html>
     <p class="sub">Your Hyperwheel admin sets it up over Raspberry Pi Connect, so the Pi has to sign in first.</p>
     <p id="state"></p>
   </section>
-  <section class="card" id="key-card" hidden>
-    <h2>Paste the key</h2>
-    <p>Paste the key your Hyperwheel admin sent you. It works once.</p>
-    <form id="key-form">
-      <input id="key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Key">
-      <button type="submit">Sign in</button>
-    </form>
-    <p id="key-message"></p>
-  </section>
   <section class="card" id="link-card" hidden>
-    <h2>No key?</h2>
-    <p>Send this link to your Hyperwheel admin. Don't open it yourself.</p>
+    <h2>Send this link to your Hyperwheel admin, and only to them</h2>
+    <p>Don't open it yourself. Whoever opens it first gets remote access to this Pi.</p>
     <p class="link" id="link"></p>
+  </section>
+  <section class="card small" id="key-card" hidden>
+    <details id="key-details">
+      <summary>Your Hyperwheel admin sent you a key instead?</summary>
+      <p>Paste it here. It works once.</p>
+      <form id="key-form">
+        <input id="key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Key">
+        <button type="submit">Sign in</button>
+      </form>
+      <p id="key-message"></p>
+    </details>
   </section>
 </main>
 <script src="/setup.js"></script>
@@ -546,8 +553,10 @@ function render(s) {
     state.textContent = "Raspberry Pi Connect: not signed in yet. The Pi needs the scanner cable for the internet.";
   }
   $("key-card").hidden = s.signed_in;
-  $("link-card").hidden = s.signed_in;
+  // While a pasted key is being tried, Connect gives no link, so the card would only say to wait for one.
+  $("link-card").hidden = s.signed_in || s.key_trying;
   const message = $("key-message");
+  if (s.key_refused || s.key_trying) $("key-details").open = true;
   if (s.key_refused) {
     message.className = "bad";
     message.textContent = "That key wasn't accepted. It may be used or out of date. " +

@@ -77,14 +77,21 @@ def post(base, body, content_type="application/json"):
         return e.code, json.loads(data)["message"] if e.code != 404 else ""
 
 
-def test_the_page_has_the_box_the_link_and_nothing_else(page):
+def test_the_page_has_the_link_then_the_box_and_nothing_else(page):
     base, _ = page
     with urllib.request.urlopen(base + "/") as r:
         html = r.read().decode()
         assert "default-src 'self'" in r.headers["Content-Security-Policy"]
-    assert "This Pi isn't set up yet" in html and "Send this link to your Hyperwheel admin." in html
+    assert "This Pi isn't set up yet" in html
+    # The link is the main route, the key box a small extra below it.
+    assert "Send this link to your Hyperwheel admin, and only to them" in html
+    assert html.index('id="link-card"') < html.index('id="key-card"')
+    assert '<details id="key-details">' in html and html.index('id="key-details"') < html.index('id="key-form"')
     with urllib.request.urlopen(base + "/setup.js") as r:
-        assert "innerHTML" not in r.read().decode()
+        script = r.read().decode()
+    assert "innerHTML" not in script
+    # The folded key box opens by itself while a key is tried or refused, and the link card goes while it's tried.
+    assert '$("key-details").open = true' in script and "s.signed_in || s.key_trying" in script
 
 
 def test_pasting_a_key_keeps_it_and_never_sends_it_back(page, folder):
