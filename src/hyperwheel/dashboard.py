@@ -9,10 +9,8 @@ and on 127.0.0.1 for the Pi's own browser (which works even when the hotspot
 isn't up). Studies from logins with no routing entry are never shown.
 
 On a newly flashed Pi (no site settings yet) it serves one other page instead,
-where the Pi joins Raspberry Pi Connect: the sign-in link to send to the admin,
-and, as a small extra below it, a box for a one-use key the admin sent. Pasting a
-key is the only thing this service ever changes, and only until there are site
-settings.
+where the Pi joins Raspberry Pi Connect: the sign-in link for the site to send to
+the admin, who opens it. That page changes nothing either.
 """
 
 from __future__ import annotations
@@ -257,15 +255,12 @@ def serve(site: SiteConfig, routing: Routing, *, bind: str | None = None, port: 
 
 
 def not_set_up_status(state: dict | None, now: float) -> dict:
-    """What the page on a newly flashed Pi shows. The key itself is never in it."""
+    """What the page on a newly flashed Pi shows."""
     signed_in = connect.describe(state, now, set_up=False)[0] == connect.OK
-    key = (state or {}).get("key", "none")
-    return {"signed_in": signed_in, "link": None if signed_in else (state or {}).get("link"),
-            "key_refused": key == "refused" and not signed_in, "key_trying": key == "trying" and not signed_in}
+    return {"signed_in": signed_in, "link": None if signed_in else (state or {}).get("link")}
 
 
 def make_not_set_up_server(*, bind: str, port: int, folder: Path = Path(connect.FOLDER),
-                           site_toml: Path = Path("/etc/hyperwheel/site.toml"),
                            now: Callable[[], float] = time.time) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -281,32 +276,6 @@ def make_not_set_up_server(*, bind: str, port: int, folder: Path = Path(connect.
                 return _send(self, 200, json.dumps(body).encode(), "application/json")
             return _send(self, 404, b"Not found", "text/plain")
 
-        def do_POST(self):
-            # JSON only: a page on another site can't send that to this Pi without the Pi agreeing first.
-            if self.path != "/api/connect-key" or self.headers.get("Content-Type") != "application/json":
-                return _send(self, 404, b"Not found", "text/plain")
-            if site_toml.exists():
-                return _answer(self, 403, "This Pi is set up already.")
-            try:
-                length = int(self.headers.get("Content-Length", ""))
-            except ValueError:
-                return _answer(self, 400, "That didn't arrive. Please try again.")
-            if not 0 < length <= 1024:
-                return _answer(self, 400, connect.key_problem(""))
-            try:
-                key = json.loads(self.rfile.read(length))["key"]
-            except (ValueError, KeyError, TypeError):
-                return _answer(self, 400, "That didn't arrive. Please try again.")
-            if not isinstance(key, str):
-                return _answer(self, 400, connect.key_problem(""))
-            try:
-                problem = connect.accept_key(key, folder)
-            except OSError:
-                return _answer(self, 500, "The Pi couldn't keep the key. Tell your Hyperwheel admin.")
-            if problem:
-                return _answer(self, 400, problem)
-            return _answer(self, 200, "The Pi has the key and is signing in.")
-
     server = Server((bind, port), Handler)
     return server
 
@@ -315,10 +284,6 @@ def serve_not_set_up(*, bind: str | None = None, port: int | None = None) -> Non
     defaults = DashboardSettings()
     _serve_all([make_not_set_up_server(bind=address, port=port or defaults.port)
                 for address in addresses(bind or defaults.bind)])
-
-
-def _answer(handler: BaseHTTPRequestHandler, status: int, message: str) -> None:
-    _send(handler, status, json.dumps({"message": message}).encode(), "application/json")
 
 
 def _send(handler: BaseHTTPRequestHandler, status: int, body: bytes, ctype: str) -> None:
@@ -499,14 +464,7 @@ NOT_SET_UP_PAGE = """<!doctype html>
   h2 { font-size:19px; margin:0 0 8px; }
   p { margin:0 0 10px; }
   .sub { color:var(--sub); }
-  input { width:100%; font-size:17px; padding:10px; border:1px solid #c7c7cc; border-radius:8px; margin-bottom:10px; }
-  button { font-size:17px; padding:10px 18px; border:0; border-radius:8px; background:var(--blue); color:#fff; }
   .link { overflow-wrap:anywhere; font-weight:600; }
-  #key-message { margin:10px 0 0; }
-  .small { font-size:15px; padding:14px 20px; }
-  .small input, .small button { font-size:15px; }
-  summary { cursor:pointer; color:var(--blue); }
-  details[open] summary { margin-bottom:10px; }
   .ok { color:var(--ok); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
 </style>
 </head>
@@ -522,17 +480,6 @@ NOT_SET_UP_PAGE = """<!doctype html>
     <p>Don't open it yourself. Whoever opens it first gets remote access to this Pi.</p>
     <p class="link" id="link"></p>
   </section>
-  <section class="card small" id="key-card" hidden>
-    <details id="key-details">
-      <summary>Your Hyperwheel admin sent you a key instead?</summary>
-      <p>Paste it here. It works once.</p>
-      <form id="key-form">
-        <input id="key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Key">
-        <button type="submit">Sign in</button>
-      </form>
-      <p id="key-message"></p>
-    </details>
-  </section>
 </main>
 <script src="/setup.js"></script>
 </body>
@@ -542,7 +489,6 @@ NOT_SET_UP_PAGE = """<!doctype html>
 NOT_SET_UP_SCRIPT = """
 "use strict";
 const $ = id => document.getElementById(id);
-let answer = "";
 function render(s) {
   const state = $("state");
   if (s.signed_in) {
@@ -552,22 +498,7 @@ function render(s) {
     state.className = "";
     state.textContent = "Raspberry Pi Connect: not signed in yet. The Pi needs the scanner cable for the internet.";
   }
-  $("key-card").hidden = s.signed_in;
-  // While a pasted key is being tried, Connect gives no link, so the card would only say to wait for one.
-  $("link-card").hidden = s.signed_in || s.key_trying;
-  const message = $("key-message");
-  if (s.key_refused || s.key_trying) $("key-details").open = true;
-  if (s.key_refused) {
-    message.className = "bad";
-    message.textContent = "That key wasn't accepted. It may be used or out of date. " +
-                          "Ask your Hyperwheel admin for a new one.";
-  } else if (s.key_trying) {
-    message.className = "";
-    message.textContent = "The Pi is trying the key, and keeps trying until it has the internet.";
-  } else {
-    message.className = "";
-    message.textContent = answer;
-  }
+  $("link-card").hidden = s.signed_in;
   $("link").textContent = s.link || "The link shows here once the Pi has the internet.";
 }
 async function refresh() {
@@ -578,18 +509,6 @@ async function refresh() {
     $("state").textContent = "Can't reach the Pi";
   }
 }
-$("key-form").addEventListener("submit", async event => {
-  event.preventDefault();
-  try {
-    const r = await fetch("/api/connect-key", {method: "POST", headers: {"Content-Type": "application/json"},
-                                               body: JSON.stringify({key: $("key").value})});
-    answer = (await r.json()).message;
-    if (r.ok) $("key").value = "";
-  } catch (e) {
-    answer = "Can't reach the Pi";
-  }
-  $("key-message").textContent = answer;
-});
 refresh();
 setInterval(refresh, 5000);
 """

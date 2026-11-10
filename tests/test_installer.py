@@ -347,13 +347,17 @@ def test_a_normal_install_never_enables_first_boot(tmp_path, key, signers, pi):
     assert (root / "etc/hyperwheel/orthanc.json").exists()
 
 
-def test_the_upload_monitor_may_write_only_to_connects_inbox(tmp_path, key, signers, pi):
+def test_the_upload_monitor_writes_nothing_and_an_old_pasted_connect_key_is_deleted(tmp_path, key, signers, pi):
     root, _ = pi
-    installer(make_release(tmp_path, key), signers, pi, []).install()
     var = root / "var/lib/hyperwheel"
-    assert mode(var / "connect") == 0o755 and mode(var / "connect" / "inbox") == 0o730
+    (var / "connect" / "inbox").mkdir(parents=True)  # left by a release before 0.1.15
+    (var / "connect" / "inbox" / "key").write_text("rpoak_test0123456789")
+    (var / "connect" / "state.json").write_text("{}")
+    installer(make_release(tmp_path, key), signers, pi, []).install()
+    assert mode(var / "connect") == 0o755 and not (var / "connect" / "inbox").exists()
+    assert (var / "connect" / "state.json").exists()
     unit = (root / "etc/systemd/system/hyperwheel-dashboard.service").read_text()
-    assert "ReadWritePaths=/var/lib/hyperwheel/connect/inbox\n" in unit and "ProtectSystem=strict" in unit
+    assert "ReadWritePaths" not in unit and "ProtectSystem=strict" in unit
 
 
 def test_each_pi_makes_its_own_viewer_certificate_once(tmp_path, key, signers, pi):

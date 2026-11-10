@@ -1,10 +1,8 @@
-"""Raspberry Pi Connect: the key box on a newly flashed Pi's page, the watcher that signs it in, and its state."""
+"""Raspberry Pi Connect: the sign-in link on a newly flashed Pi's page, the watcher that keeps it ready, and its state."""
 
 from __future__ import annotations
 
 import json
-import logging
-import stat
 import threading
 import urllib.error
 import urllib.request
@@ -17,121 +15,57 @@ from hyperwheel.connect import OK, PROBLEM, Watcher
 from hyperwheel.dashboard import make_not_set_up_server, not_set_up_status
 from hyperwheel.installer import DATA_MANAGER, UNITS, Layout
 
-KEY = "rpoak_test0123456789abcdef"
 UID = 1001
 GID = 2002  # not the uid, so the test sees which one is used
 
 
-def mode(path: Path) -> int:
-    return stat.S_IMODE(path.stat().st_mode)
-
-
 @pytest.fixture
 def folder(tmp_path) -> Path:
-    (tmp_path / "connect" / "inbox").mkdir(parents=True)
+    (tmp_path / "connect").mkdir(parents=True)
     return tmp_path / "connect"
-
-
-# ---- the key box ------------------------------------------------------------------------------------------
-
-
-def test_an_organisation_key_is_kept_root_readable_only(folder):
-    assert connect.accept_key(f"  {KEY}\n", folder) is None
-    key = folder / "inbox" / "key"
-    assert key.read_text() == KEY and mode(key) == 0o600
-
-
-@pytest.mark.parametrize("text", ["", "hello", "rpoak_", "rpoak_short", f"{KEY} extra", f"{KEY}\n{KEY}",
-                                  "rporg_abcdefghijkl"])
-def test_anything_else_is_refused_and_not_kept(folder, text):
-    assert "starts with rpoak_" in connect.accept_key(text, folder)
-    assert not (folder / "inbox" / "key").exists()
-
-
-def test_a_personal_key_is_refused_so_a_pi_cant_join_someones_own_account(folder):
-    assert "personal key" in connect.accept_key("rpuak_test0123456789abcdef", folder)
-    assert not (folder / "inbox" / "key").exists()
 
 
 # ---- the page ---------------------------------------------------------------------------------------------
 
 
 @pytest.fixture
-def page(folder, tmp_path):
-    site_toml = tmp_path / "site.toml"
-    server = make_not_set_up_server(bind="127.0.0.1", port=0, folder=folder, site_toml=site_toml, now=lambda: 1000.0)
+def page(folder):
+    server = make_not_set_up_server(bind="127.0.0.1", port=0, folder=folder, now=lambda: 1000.0)
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_address[1]}", site_toml
+    yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
     server.server_close()
 
 
-def post(base, body, content_type="application/json"):
-    request = urllib.request.Request(base + "/api/connect-key", data=body, method="POST",
-                                     headers={"Content-Type": content_type})
-    try:
-        with urllib.request.urlopen(request) as r:
-            return r.status, json.loads(r.read())["message"]
-    except urllib.error.HTTPError as e:
-        data = e.read()
-        return e.code, json.loads(data)["message"] if e.code != 404 else ""
-
-
-def test_the_page_has_the_link_then_the_box_and_nothing_else(page):
-    base, _ = page
-    with urllib.request.urlopen(base + "/") as r:
+def test_the_page_has_the_link_and_no_key_box(page, folder):
+    with urllib.request.urlopen(page + "/") as r:
         html = r.read().decode()
         assert "default-src 'self'" in r.headers["Content-Security-Policy"]
     assert "This Pi isn't set up yet" in html
-    # The link is the main route, the key box a small extra below it.
-    assert "Send this link to your Hyperwheel admin, and only to them" in html
-    assert html.index('id="link-card"') < html.index('id="key-card"')
-    assert '<details id="key-details">' in html and html.index('id="key-details"') < html.index('id="key-form"')
-    with urllib.request.urlopen(base + "/setup.js") as r:
+    assert "Send this link to your Hyperwheel admin, and only to them" in html and 'id="link-card"' in html
+    assert "<form" not in html and "<input" not in html and "key" not in html.lower()
+    with urllib.request.urlopen(page + "/setup.js") as r:
         script = r.read().decode()
-    assert "innerHTML" not in script
-    # The folded key box opens by itself while a key is tried or refused, and the link card goes while it's tried.
-    assert '$("key-details").open = true' in script and "s.signed_in || s.key_trying" in script
+    assert "innerHTML" not in script and "POST" not in script and "key" not in script.lower()
+    (folder / "state.json").write_text(json.dumps({"signed_in": False, "checked_at": 1000.0,
+                                                   "link": "https://connect.raspberrypi.com/x"}))
+    with urllib.request.urlopen(page + "/api/status") as r:
+        assert json.loads(r.read()) == {"signed_in": False, "link": "https://connect.raspberrypi.com/x"}
 
 
-def test_pasting_a_key_keeps_it_and_never_sends_it_back(page, folder):
-    base, _ = page
-    status, message = post(base, json.dumps({"key": KEY}).encode())
-    assert status == 200 and KEY not in message
-    assert (folder / "inbox" / "key").read_text() == KEY
-    (folder / "state.json").write_text(json.dumps({"signed_in": False, "checked_at": 1000.0, "key": "trying"}))
-    with urllib.request.urlopen(base + "/api/status") as r:
-        assert KEY not in r.read().decode()
-
-
-def test_a_bad_key_is_explained(page, folder):
-    base, _ = page
-    status, message = post(base, json.dumps({"key": "rpuak_test0123456789"}).encode())
-    assert status == 400 and "personal key" in message and not (folder / "inbox" / "key").exists()
-    for body in (b"not json", b'{"nokey": 1}', json.dumps({"key": ["x"]}).encode(), b"x" * 2000):
-        assert post(base, body)[0] == 400
-    assert not (folder / "inbox" / "key").exists()
-
-
-def test_only_json_is_taken_so_another_web_page_cant_send_a_key(page, folder):
-    base, _ = page
-    assert post(base, f"key={KEY}".encode(), "application/x-www-form-urlencoded")[0] == 404
-    assert not (folder / "inbox" / "key").exists()
-
-
-def test_the_box_stops_once_the_pi_has_site_settings(page, folder):
-    base, site_toml = page
-    site_toml.write_text("")
-    assert post(base, json.dumps({"key": KEY}).encode())[0] == 403
-    assert not (folder / "inbox" / "key").exists()
+def test_the_page_takes_nothing(page, folder):
+    request = urllib.request.Request(page + "/api/connect-key", data=b'{"key": "rpoak_test0123456789"}',
+                                     method="POST", headers={"Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(request)
+    assert e.value.code >= 400
+    assert not list(folder.iterdir())
 
 
 def test_status_shows_the_link_until_the_pi_is_signed_in():
-    state = {"signed_in": False, "checked_at": 1000.0, "key": "none", "link": "https://connect.raspberrypi.com/x"}
-    assert not_set_up_status(state, 1000.0) == {"signed_in": False, "link": state["link"], "key_refused": False,
-                                                "key_trying": False}
-    assert not_set_up_status({**state, "key": "refused"}, 1000.0)["key_refused"]
-    assert not_set_up_status({**state, "key": "trying"}, 1000.0)["key_trying"]
+    # A state file from an older release may still say how a pasted key went: that's ignored.
+    state = {"signed_in": False, "checked_at": 1000.0, "key": "refused", "link": "https://connect.raspberrypi.com/x"}
+    assert not_set_up_status(state, 1000.0) == {"signed_in": False, "link": state["link"]}
     assert not_set_up_status({**state, "signed_in": True}, 1000.0)["link"] is None
     assert not_set_up_status(None, 1000.0)["signed_in"] is False
 
@@ -172,26 +106,16 @@ class Pi:
         self.now = 1000.0
         self.ran: list[list[str]] = []
         self.signed = False
-        self.sign_in_code = 0
-        self.key_seen: str | None = None
-        self.is_online = True
         self.sessions: list[FakeSession] = []
-        for folder in ("var/lib/hyperwheel/connect/inbox", f"run/user/{UID}", f"home/{DATA_MANAGER}", "etc/hyperwheel"):
+        for folder in ("var/lib/hyperwheel/connect", f"run/user/{UID}", f"home/{DATA_MANAGER}", "etc/hyperwheel"):
             (root / folder).mkdir(parents=True)
-        self.watcher = Watcher(layout=self.layout, run=self.run, spawn=self.spawn, online=lambda: self.is_online,
-                               clock=lambda: self.now, uid_of=lambda a: UID if a == DATA_MANAGER else None,
+        self.watcher = Watcher(layout=self.layout, run=self.run, spawn=self.spawn, clock=lambda: self.now, uid_of=lambda a: UID if a == DATA_MANAGER else None,
                                gid_of=lambda a: GID if a == DATA_MANAGER else None)
 
     def run(self, cmd, timeout=60.0):
         self.ran.append(list(cmd))
         if "status" in cmd:
             return 0, f"Signed in: {'yes' if self.signed else 'no'}\nScreen sharing: allowed\n"
-        for word in cmd:
-            if word.startswith("--auth-key=@"):
-                self.key_seen = Path(word.split("@", 1)[1]).read_text()
-                if self.sign_in_code == 0:
-                    self.signed = True
-                return self.sign_in_code, ""
         if cmd[-1] == "on":
             link = self.layout.p(f"/home/{DATA_MANAGER}") / connect.ENABLED_LINK
             link.parent.mkdir(parents=True, exist_ok=True)
@@ -201,13 +125,6 @@ class Pi:
     def spawn(self, cmd):
         self.sessions.append(FakeSession(cmd))
         return self.sessions[-1]
-
-    def paste(self, key=KEY):
-        assert connect.accept_key(key, self.layout.p(connect.FOLDER)) is None
-
-    @property
-    def key_file(self) -> Path:
-        return self.layout.p(connect.FOLDER) / "inbox" / "key"
 
     @property
     def state(self) -> dict:
@@ -251,58 +168,13 @@ def test_a_new_link_when_the_old_one_ends(pi):
     assert len(pi.sessions) == 2
 
 
-def test_a_pasted_key_signs_in_and_is_deleted_and_never_on_a_command_line(pi):
+def test_the_link_goes_once_the_admin_has_opened_it(pi):
     pi.tick()
-    pi.paste()
-    pi.tick(connect.TICK_S)
-    assert pi.key_seen == KEY and pi.signed and not pi.key_file.exists()
-    assert pi.sessions[0].stopped  # the link is gone
-    assert pi.state["signed_in"] is True and pi.state["link"] is None and pi.state["key"] == "none"
-    assert not any(KEY in word for cmd in pi.ran for word in cmd)
-    signin = next(c for c in pi.ran if any(w.startswith("--auth-key=@") for w in c))
-    assert signin[:6] == ["setpriv", f"--reuid={UID}", f"--regid={GID}", "--init-groups", "env", "-i"]
-    assert not list((pi.layout.p(f"/run/user/{UID}")).iterdir())  # the temporary copy is gone
-    assert KEY not in json.dumps(pi.state)
-
-
-def test_with_no_internet_the_key_is_kept_and_tried_again(pi):
-    pi.sign_in_code, pi.is_online = 1, False
-    pi.paste()
-    for _ in range(5):
-        pi.tick()
-        assert pi.state["key"] == "trying"
-    assert pi.key_file.exists()
-    pi.sign_in_code, pi.is_online = 0, True
+    assert pi.state["link"]
+    pi.signed = True  # the admin opened the link
     pi.tick()
-    assert pi.signed and not pi.key_file.exists() and pi.state["signed_in"] is True
-
-
-def test_the_key_isnt_tried_every_few_seconds(pi):
-    pi.sign_in_code, pi.is_online = 1, False
-    pi.paste()
-    pi.tick()
-    tried = len([c for c in pi.ran if any("--auth-key" in w for w in c)])
-    pi.tick(connect.TICK_S)
-    pi.tick(connect.TICK_S)
-    assert len([c for c in pi.ran if any("--auth-key" in w for w in c)]) == tried
-
-
-def test_a_key_refused_with_the_internet_working_is_given_up_after_a_few_tries(pi, caplog):
-    pi.sign_in_code = 1
-    pi.paste()
-    with caplog.at_level(logging.INFO):
-        for _ in range(connect.REFUSALS_BEFORE_GIVING_UP - 1):
-            pi.tick()
-            assert pi.state["key"] == "trying" and pi.key_file.exists()
-        pi.tick()
-    assert pi.state["key"] == "refused" and not pi.key_file.exists()
-    assert KEY not in caplog.text
-    pi.tick()  # the link is back, and the message stays until a new key
-    assert pi.state["key"] == "refused" and pi.state["link"]
-    pi.sign_in_code = 0
-    pi.paste("rpoak_another0123456789")
-    pi.tick()
-    assert pi.state["signed_in"] is True and pi.state["key"] == "none"
+    assert pi.sessions[0].stopped and pi.state["signed_in"] is True and pi.state["link"] is None
+    assert not any(w.startswith("--auth-key") for c in pi.ran + [s.cmd for s in pi.sessions] for w in c)
 
 
 def test_once_set_up_it_only_reads_the_state(pi):
@@ -311,9 +183,6 @@ def test_once_set_up_it_only_reads_the_state(pi):
     assert pi.state["signed_in"] is False and pi.state["link"] is None
     assert not pi.sessions and not any(c[0] == "loginctl" or c[-1] == "on" for c in pi.ran)
     assert all("status" in c for c in pi.ran)
-    (pi.key_file).write_text(KEY)  # nothing signs a set-up Pi in
-    pi.tick()
-    assert pi.key_seen is None
 
 
 def test_it_uses_the_account_that_has_connect_enabled(pi):
