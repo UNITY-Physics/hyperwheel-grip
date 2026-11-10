@@ -19,6 +19,7 @@ from hyperwheel.installer import DATA_MANAGER, UNITS, Layout
 
 KEY = "rpoak_test0123456789abcdef"
 UID = 1001
+GID = 2002  # not the uid, so the test sees which one is used
 
 
 def mode(path: Path) -> int:
@@ -171,7 +172,8 @@ class Pi:
         for folder in ("var/lib/hyperwheel/connect/inbox", f"run/user/{UID}", f"home/{DATA_MANAGER}", "etc/hyperwheel"):
             (root / folder).mkdir(parents=True)
         self.watcher = Watcher(layout=self.layout, run=self.run, spawn=self.spawn, online=lambda: self.is_online,
-                               clock=lambda: self.now, uid_of=lambda a: UID if a == DATA_MANAGER else None)
+                               clock=lambda: self.now, uid_of=lambda a: UID if a == DATA_MANAGER else None,
+                               gid_of=lambda a: GID if a == DATA_MANAGER else None)
 
     def run(self, cmd, timeout=60.0):
         self.ran.append(list(cmd))
@@ -224,9 +226,11 @@ def test_a_new_pi_turns_connect_on_with_nobody_logged_in_and_offers_the_link(pi)
     assert pi.state["signed_in"] is False and pi.state["link"] == pi.sessions[0].link
     assert pi.state["account"] == DATA_MANAGER
     on = [c for c in pi.ran if c[-1] == "on"]
-    assert len(on) == 1 and on[0][:4] == ["setpriv", f"--reuid={UID}", f"--regid={UID}", "--init-groups"]
+    assert len(on) == 1 and on[0][:6] == ["setpriv", f"--reuid={UID}", f"--regid={GID}", "--init-groups", "env", "-i"]
     assert f"HOME=/home/{DATA_MANAGER}" in on[0] and on[0][-2:] == ["rpi-connect", "on"]
-    assert not any(c[0] == "runuser" for c in pi.ran)  # no login session, so nothing in the journal
+    # no login session, so nothing in the journal: every command, and the link's, goes through setpriv
+    assert all(c[0] == "setpriv" for c in pi.ran if "rpi-connect" in c)
+    assert pi.sessions[0].cmd[:6] == on[0][:6] and pi.sessions[0].cmd[-2:] == ["rpi-connect", "signin"]
     assert f"XDG_RUNTIME_DIR=/run/user/{UID}" in on[0]
     pi.tick()
     assert len([c for c in pi.ran if c[-1] == "on"]) == 1  # asked once
@@ -248,6 +252,8 @@ def test_a_pasted_key_signs_in_and_is_deleted_and_never_on_a_command_line(pi):
     assert pi.sessions[0].stopped  # the link is gone
     assert pi.state["signed_in"] is True and pi.state["link"] is None and pi.state["key"] == "none"
     assert not any(KEY in word for cmd in pi.ran for word in cmd)
+    signin = next(c for c in pi.ran if any(w.startswith("--auth-key=@") for w in c))
+    assert signin[:6] == ["setpriv", f"--reuid={UID}", f"--regid={GID}", "--init-groups", "env", "-i"]
     assert not list((pi.layout.p(f"/run/user/{UID}")).iterdir())  # the temporary copy is gone
     assert KEY not in json.dumps(pi.state)
 
@@ -308,6 +314,7 @@ def test_it_uses_the_account_that_has_connect_enabled(pi):
     (other / connect.ENABLED_LINK).parent.mkdir(parents=True)
     (other / connect.ENABLED_LINK).write_text("")
     pi.watcher.uid_of = lambda a: 1000 if a == "someone" else (UID if a == DATA_MANAGER else None)
+    pi.watcher.gid_of = pi.watcher.uid_of
     assert pi.watcher.account() == "someone"
     link = pi.layout.p(f"/home/{DATA_MANAGER}") / connect.ENABLED_LINK
     link.parent.mkdir(parents=True)

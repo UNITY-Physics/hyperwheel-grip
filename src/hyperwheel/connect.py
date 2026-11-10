@@ -165,6 +165,7 @@ class Watcher:
     online: Callable[[], bool] = lambda: reach.tcp_answers(API_HOST, 443)
     clock: Callable[[], float] = time.time
     uid_of: Callable[[str], int | None] = None  # type: ignore[assignment]
+    gid_of: Callable[[str], int | None] = None  # type: ignore[assignment]
     session: LinkSession | None = None
     refusals: int = 0
     next_check: float = 0.0
@@ -174,6 +175,8 @@ class Watcher:
     def __post_init__(self):
         if self.uid_of is None:
             self.uid_of = _uid_of
+        if self.gid_of is None:
+            self.gid_of = _gid_of
 
     @property
     def folder(self) -> Path:
@@ -197,9 +200,8 @@ class Watcher:
     def _as(self, account: str, *words: str) -> list[str]:
         """rpi-connect run as the account. setpriv, not runuser: runuser opens a login session, and each one
         puts two lines in the journal, every few minutes for good."""
-        uid = self.uid_of(account)
-        gid = _gid_of(account)
-        return ["setpriv", f"--reuid={uid}", f"--regid={uid if gid is None else gid}", "--init-groups",
+        uid, gid = self.uid_of(account), self.gid_of(account)
+        return ["setpriv", f"--reuid={uid}", f"--regid={gid}", "--init-groups",
                 "env", "-i", f"HOME=/home/{account}", f"USER={account}", f"LOGNAME={account}",
                 "PATH=/usr/local/bin:/usr/bin:/bin", f"XDG_RUNTIME_DIR=/run/user/{uid}",
                 f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus", "rpi-connect", *words]
