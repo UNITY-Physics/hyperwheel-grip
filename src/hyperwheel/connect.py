@@ -6,16 +6,12 @@ account: the one that has it enabled, or, on a new Pi, ``datamanager``.
 **Until the Pi is set up** the watcher:
 
 - turns lingering and Connect on for that account, so Connect runs from every boot with nobody logged in;
-- signs in with a key the site pasted on the Upload Monitor, if there is one. An organisation key works
-  once. Without the internet the key is kept and tried again. Refused repeatedly while the Pi is online,
-  it's deleted, and the Monitor asks for a new one;
-- otherwise keeps a sign-in link ready for the Monitor, which the site sends to the admin.
+- keeps a sign-in link ready for the Upload Monitor, which the site sends to the admin, who opens it.
 
 **Once the Pi is set up** it only reads the state. Nothing signs the Pi in or out.
 
-It writes the state to a small file that holds no key, which the Upload Monitor and ``hyperwheel doctor``
-read. A key is never logged or put on a command line: Connect reads it from a file (``@path``) that's
-deleted straight after, and Connect's own output isn't kept, in case it repeats the key.
+It writes the state to a small file, which the Upload Monitor and ``hyperwheel doctor`` read. Connect's
+own output isn't logged.
 """
 
 from __future__ import annotations
@@ -32,61 +28,22 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import reach
 from .installer import DATA_MANAGER, Layout, is_set_up
 
 log = logging.getLogger("hyperwheel.connect")
 
 FOLDER = "/var/lib/hyperwheel/connect"
-INBOX = "inbox"
-KEY_FILE = "key"
 STATE_FILE = "state.json"
 
-API_HOST = "api.connect.raspberrypi.com"
 SIGN_IN_LINK = re.compile(r"https://connect\.raspberrypi\.com/\S+")
-ORGANISATION_KEY = re.compile(r"rpoak_[A-Za-z0-9_-]{8,200}")
 ENABLED_LINK = ".config/systemd/user/default.target.wants/rpi-connect.service"
 
 TICK_S = 5.0
 CHECK_EVERY_S = 30.0
 CHECK_EVERY_SIGNED_IN_S = 300.0
 STALE_S = 900.0
-# Refused this many times in a row while online, a key is taken as used or out of date. One refusal could
-# be a passing fault on Connect's side, and the site would have to ask for a new key for nothing.
-REFUSALS_BEFORE_GIVING_UP = 3
 
 OK, PROBLEM, NOTE = "OK", "PROBLEM", "NOTE"
-
-
-# ---- the key box on the Upload Monitor -------------------------------------------------------------------
-
-
-def key_problem(text: str) -> str | None:
-    """Why this can't be used as a key, in words for the person pasting it, or None."""
-    if text.startswith("rpuak_"):
-        return ("That's a personal key, so this Pi would join someone's own account. Use the organisation key your "
-                "Hyperwheel admin sent you.")
-    if not ORGANISATION_KEY.fullmatch(text):
-        return "That doesn't look like a key. Copy the whole key your Hyperwheel admin sent you. It starts with rpoak_."
-    return None
-
-
-def accept_key(text: str, folder: Path = Path(FOLDER)) -> str | None:
-    """Keep a pasted key for the watcher. Returns what's wrong with it, or None. Never logs the key."""
-    text = text.strip()
-    problem = key_problem(text)
-    if problem:
-        return problem
-    inbox = folder / INBOX
-    tmp = inbox / f".{KEY_FILE}.new"
-    tmp.unlink(missing_ok=True)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, inbox / KEY_FILE)
-    return None
 
 
 # ---- the state -------------------------------------------------------------------------------------------
@@ -162,14 +119,11 @@ class Watcher:
     layout: Layout = field(default_factory=Layout)
     run: Callable[..., tuple[int, str]] = run_quietly
     spawn: Callable[[Sequence[str]], LinkSession] = LinkSession
-    online: Callable[[], bool] = lambda: reach.tcp_answers(API_HOST, 443)
     clock: Callable[[], float] = time.time
     uid_of: Callable[[str], int | None] = None  # type: ignore[assignment]
     gid_of: Callable[[str], int | None] = None  # type: ignore[assignment]
     session: LinkSession | None = None
-    refusals: int = 0
     next_check: float = 0.0
-    next_key_try: float = 0.0
     last: dict = field(default_factory=dict)
 
     def __post_init__(self):
@@ -181,10 +135,6 @@ class Watcher:
     @property
     def folder(self) -> Path:
         return self.layout.p(FOLDER)
-
-    @property
-    def inbox_key(self) -> Path:
-        return self.folder / INBOX / KEY_FILE
 
     def account(self) -> str | None:
         """The account Connect runs under: one that has it enabled, or datamanager on a new Pi."""
@@ -229,80 +179,31 @@ class Watcher:
             self.session.stop()
             self.session = None
 
-    def try_key(self, account: str) -> tuple[bool, str]:
-        """Sign in with the pasted key. Returns whether it worked, and what to tell the site."""
-        self.stop_link()
-        uid = self.uid_of(account)
-        temporary = self.layout.p(f"/run/user/{uid}/hyperwheel-connect-key")
-        try:
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        except OSError:
-            return False, "trying"  # the account's session isn't up yet
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write(self.inbox_key.read_text())
-            if os.geteuid() == 0:
-                os.chown(temporary, uid, -1)
-            code, _ = self.run(self._as(account, "signin", f"--auth-key=@{temporary}"))
-        finally:
-            temporary.unlink(missing_ok=True)
-        if code == 0:
-            self.inbox_key.unlink(missing_ok=True)  # it works once
-            self.refusals = 0
-            return True, "none"
-        if not self.online():
-            self.refusals = 0
-            return False, "trying"
-        self.refusals += 1
-        if self.refusals < REFUSALS_BEFORE_GIVING_UP:
-            return False, "trying"
-        self.inbox_key.unlink(missing_ok=True)
-        self.refusals = 0
-        log.warning("Connect: a pasted key was refused %d times with the internet working, so it was deleted.",
-                    REFUSALS_BEFORE_GIVING_UP)
-        return False, "refused"
-
     def round(self) -> None:
-        """One check. Cheap enough to run every few seconds: it does nothing until a check is due or a key arrives."""
+        """One check. Cheap enough to run every few seconds: it does nothing until a check is due."""
         now = self.clock()
-        key_waiting = self.inbox_key.exists() and now >= self.next_key_try
-        if now < self.next_check and not key_waiting:
+        if now < self.next_check:
             return
         account = self.account()
         set_up = is_set_up(self.layout.etc)
-        state = {"account": account, "checked_at": now, "signed_in": None, "key": self.last.get("key", "none"),
-                 "link": None}
+        state = {"account": account, "checked_at": now, "signed_in": None, "link": None}
         if account is not None:
             if not set_up:
                 self.turn_on(account)
             state["signed_in"] = self.signed_in(account)
-        if state["signed_in"] is True:  # any key still waiting is left over
+        if state["signed_in"] is True:
             self.stop_link()
-            self.inbox_key.unlink(missing_ok=True)
-            state["key"] = "none"
             self.next_check = now + CHECK_EVERY_SIGNED_IN_S
         else:
             self.next_check = now + CHECK_EVERY_S
             if account is not None and not set_up:
-                state.update(self._sign_in(account, key_waiting))
+                if self.session is None or not self.session.running():
+                    self.session = self.spawn(self._as(account, "signin"))
+                state["link"] = self.session.link
         if state["signed_in"] != self.last.get("signed_in"):
             log.info("Connect: %s.", describe(state, now, set_up=set_up)[1])
         self.last = state
         _write_state(self.folder, state)
-
-    def _sign_in(self, account: str, key_waiting: bool) -> dict:
-        if key_waiting:
-            self.next_key_try = self.clock() + CHECK_EVERY_S
-            worked, key = self.try_key(account)
-            if worked:
-                self.next_check = 0.0  # check straight away
-                return {"key": "none", "signed_in": self.signed_in(account)}
-            return {"key": key}
-        if self.inbox_key.exists():  # tried a moment ago, and it's tried again soon
-            return {"key": "trying"}
-        if self.session is None or not self.session.running():
-            self.session = self.spawn(self._as(account, "signin"))
-        return {"link": self.session.link}
 
     def forever(self, sleep: Callable[[float], None] = time.sleep) -> None:
         while True:

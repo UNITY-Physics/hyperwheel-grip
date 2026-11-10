@@ -279,13 +279,15 @@ class Installer:
         self.layout.var.mkdir(parents=True, exist_ok=True)
         self.layout.var.chmod(0o750)
         self.chown(self.layout.var, self.service_user, self.service_user)
-        # Connect's state is written by root. The Upload Monitor reads it, and leaves a pasted key in the inbox.
-        connect, inbox = self.layout.var / "connect", self.layout.var / "connect" / "inbox"
-        inbox.mkdir(parents=True, exist_ok=True)
+        # Connect's state is written by root, and the Upload Monitor reads it.
+        connect = self.layout.var / "connect"
+        connect.mkdir(parents=True, exist_ok=True)
         connect.chmod(0o755)
         self.chown(connect, "root", "root")
-        inbox.chmod(0o730)
-        self.chown(inbox, "root", self.service_user)
+        # Releases before 0.1.15 kept a Connect key pasted on the Upload Monitor here. Sign-in is by link only now.
+        inbox = connect / "inbox"
+        if inbox.is_dir() and not inbox.is_symlink():
+            shutil.rmtree(inbox)
         self.layout.orthanc_conf.mkdir(exist_ok=True)
         self.layout.orthanc_conf.chmod(0o750)
         self.chown(self.layout.orthanc_conf, "root", ORTHANC_USER)
@@ -450,6 +452,9 @@ class Installer:
                       "hyperwheel-viewer.service"])
             self.say("Update checks: on (every 6 hours). Connect's state: watched. Orthanc Explorer 2: at "
                      "https://192.168.99.1:8443")
+        if self.start and not configured:
+            # A Pi not set up yet shows the not-set-up page. If it's running, it takes this release's page too.
+            self.run(["systemctl", "try-restart", "hyperwheel-dashboard.service"])
         if not (configured and self.start):
             return
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
@@ -644,9 +649,8 @@ ExecStart=/opt/hyperwheel/current/venv/bin/hyperwheel dashboard
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes
+# It writes nothing.
 ProtectSystem=strict
-# The one place it writes: a Connect key pasted before setup.
-ReadWritePaths=/var/lib/hyperwheel/connect/inbox
 ProtectHome=yes
 PrivateTmp=yes
 

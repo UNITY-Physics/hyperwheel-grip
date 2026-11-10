@@ -136,23 +136,18 @@ password stays in `/etc/hyperwheel`, and `"StableAge": 60`.
 New Pis join the UNITY organisation on Connect. The image holds no key, and
 sites answer No to Imager's customisation, so a Pi can't end up in someone's own
 account. Before setup, the Upload Monitor shows the sign-in link, which the
-site sends to the admin, and only to them, to open. Below it, folded, is a box
-where the site can paste a one-use organisation key the admin sends instead
-(`rpoak_...`, a personal key is refused). While a pasted key is being tried, the
-link is hidden, since Connect gives none then. Connect starts at every boot with nobody logged in (lingering is
-on) and keeps retrying until it's signed in. Its state shows on the Upload
-Monitor, in `hyperwheel status` and in `hyperwheel doctor`.
+site sends to the admin, and only to them. The admin opens it, picks the UNITY
+organisation and names the Pi. The link is the only way in: there's no key to
+paste. Connect starts at every boot with nobody logged in (lingering is on) and
+keeps retrying until it's signed in. Its state shows on the Upload Monitor, in
+`hyperwheel status` and in `hyperwheel doctor`.
 
-`hyperwheel-connect.service` does this. Before setup, it signs in with a pasted key
-or keeps a sign-in link ready. A key is kept while the Pi has no internet, and is
-deleted once it has worked, or after it's been refused three times with the internet
-working, when the page asks for a new one. Once the Pi is set up, the service only
-reads the state, and nothing signs the Pi in or out. An organisation key works
-once, so a reflashed Pi needs a new key or the link.
+`hyperwheel-connect.service` does this. Before setup, it keeps a sign-in link
+ready. Once the Pi is set up, the service only reads the state, and nothing signs
+the Pi in or out.
 
-The Upload Monitor changes nothing, with one exception: until the Pi has site
-settings, it keeps a pasted key for this service. It accepts only organisation keys
-(`rpoak_...`), never logs one and never sends one back.
+The Upload Monitor changes nothing. Releases before 0.1.15 let a site paste a
+Connect key on it. The installer deletes any such key left on a Pi.
 
 ## Logins, SSH and the firewall
 
