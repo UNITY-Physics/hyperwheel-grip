@@ -165,6 +165,7 @@ class Watcher:
     online: Callable[[], bool] = lambda: reach.tcp_answers(API_HOST, 443)
     clock: Callable[[], float] = time.time
     uid_of: Callable[[str], int | None] = None  # type: ignore[assignment]
+    gid_of: Callable[[str], int | None] = None  # type: ignore[assignment]
     session: LinkSession | None = None
     refusals: int = 0
     next_check: float = 0.0
@@ -174,6 +175,8 @@ class Watcher:
     def __post_init__(self):
         if self.uid_of is None:
             self.uid_of = _uid_of
+        if self.gid_of is None:
+            self.gid_of = _gid_of
 
     @property
     def folder(self) -> Path:
@@ -195,8 +198,13 @@ class Watcher:
         return DATA_MANAGER if self.uid_of(DATA_MANAGER) is not None else None
 
     def _as(self, account: str, *words: str) -> list[str]:
-        return ["runuser", "-u", account, "--", "env", f"XDG_RUNTIME_DIR=/run/user/{self.uid_of(account)}",
-                f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{self.uid_of(account)}/bus", "rpi-connect", *words]
+        """rpi-connect run as the account. setpriv, not runuser: runuser opens a login session, and each one
+        puts two lines in the journal, every few minutes for good."""
+        uid, gid = self.uid_of(account), self.gid_of(account)
+        return ["setpriv", f"--reuid={uid}", f"--regid={gid}", "--init-groups",
+                "env", "-i", f"HOME=/home/{account}", f"USER={account}", f"LOGNAME={account}",
+                "PATH=/usr/local/bin:/usr/bin:/bin", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus", "rpi-connect", *words]
 
     def signed_in(self, account: str) -> bool | None:
         code, out = self.run(self._as(account, "status"))
@@ -308,6 +316,13 @@ class Watcher:
 def _uid_of(account: str) -> int | None:
     try:
         return pwd.getpwnam(account).pw_uid
+    except KeyError:
+        return None
+
+
+def _gid_of(account: str) -> int | None:
+    try:
+        return pwd.getpwnam(account).pw_gid
     except KeyError:
         return None
 
