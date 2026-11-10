@@ -104,6 +104,8 @@ check sh -c "! grep -rqsE '^[[:space:]]*pi[[:space:]]' '$mnt/etc/sudoers.d'"
 label="no password-free sudo outside Hyperwheel's own rule"
 check sh -c "! grep -lsE '^[^#]*NOPASSWD' '$mnt'/etc/sudoers.d/* '$mnt/etc/sudoers' | grep -v '/etc/sudoers.d/hyperwheel$'"
 check grep -qx "autologin-user=datamanager" "$mnt/etc/lightdm/lightdm.conf"
+label="/etc/hosts has the 127.0.1.1 line that setup renames the Pi in"
+check grep -qE '^127\.0\.1\.1[[:space:]]+raspberrypi$' "$mnt/etc/hosts"
 label="nothing in it differs from one Pi to the next"
 for f in orthanc.json orthanc.d/users.json hotspot.json viewer site.toml routing.toml scanner.json \
          scanner_known_hosts setup.json setup-done first-boot-done; do
