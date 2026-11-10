@@ -81,6 +81,45 @@ def test_counts_say_receiving_until_they_mean_something(env):
     assert snap(env)["studies"][0]["dicom"]["text"] == "DICOM 0/1 on GRIP"
 
 
+def test_files_waiting_for_a_key_say_so_not_uploading(env):
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    study = env.store.add_study("1.2.5", state="ready", project=PROJECT, raw_checked_at=env.clock())
+    env.store.add_file(kind="dicom", name="a.dcm", state="staged", study_id=study.id, sop_uid="1.2.5.1")
+    assert snap(env)["headline"] == "Uploading to GRIP"  # the key not checked yet: nothing known to stop it
+    for status in ("missing", "unreadable", "rejected"):
+        env.store.set_key_status(PROJECT, status, "test")
+        s = snap(env)
+        assert s["headline"] == "Waiting for a GRIP key", status
+        assert f"Uploads for {PROJECT} start once a working GRIP key is set" in s["subline"]
+        assert s["safe_to_switch_off"] and ";" not in s["subline"]
+    # Leaving the scanner on can't help without a key, so even a low disk doesn't ask for it.
+    s = snapshot(env.store, env.site, env.routing, now=env.clock(), free_bytes=lambda p: 1024 ** 3,
+                 connect_state=lambda: None, update_hold=lambda: None)
+    assert s["headline"] == "Waiting for a GRIP key" and s["safe_to_switch_off"]
+    assert any("nearly full" in g["text"] for g in s["general"])
+    # Another project's files still go up, so the Pi is uploading (the key alert names the one that isn't).
+    env.routing.projects["Other"] = env.routing.projects[PROJECT]
+    other = env.store.add_study("1.2.6", state="ready", project="Other", raw_checked_at=env.clock())
+    env.store.add_file(kind="dicom", name="b.dcm", state="staged", study_id=other.id, sop_uid="1.2.6.1")
+    env.store.set_key_status("Other", "working")
+    assert snap(env)["headline"] == "Uploading to GRIP"
+    env.store.set_key_status("Other", "missing")
+    s = snap(env)
+    assert s["headline"] == "Waiting for a GRIP key"
+    assert f"Uploads for Other and {PROJECT} start" in s["subline"]
+    env.store.set_key_status("Other", "working")
+    env.store.set_key_status(PROJECT, "working")
+    assert snap(env)["headline"] == "Uploading to GRIP"
+    # A project taken out of the routing settings can't get a key, so the headline doesn't ask for one.
+    env.store.set_key_status("Other", "missing")
+    env.store.set_key_status(PROJECT, "missing")
+    assert snap(env)["headline"] == "Waiting for a GRIP key"
+    gone = env.store.add_study("1.2.7", state="ready", project="Gone", raw_checked_at=env.clock())
+    env.store.add_file(kind="dicom", name="c.dcm", state="staged", study_id=gone.id, sop_uid="1.2.7.1")
+    env.store.set_key_status("Gone", "missing")
+    assert snap(env)["headline"] == "Uploading to GRIP"
+
+
 def test_a_study_with_no_raw_data_says_so(env):
     env.store.add_study("1.2.4", state="ready", project=PROJECT, raw_checked_at=env.clock())
     assert snap(env)["studies"][0]["raw"]["text"] == "No raw data"
