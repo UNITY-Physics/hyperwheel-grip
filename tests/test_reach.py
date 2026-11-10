@@ -153,7 +153,7 @@ def test_service_records_both(env):
 
 
 def test_keep_the_scanner_on_shows_once(env):
-    env.store.add_study("1.2.3", state="receiving", project=None)
+    env.store.add_study("1.2.3", state="receiving", project=None, operators_name="site_a/sandbox")
     s = snap(env)
     assert s["headline"] == "Receiving images from the scanner" and s["subline"] == ""
     assert s["badge"] == "Please keep the scanner on"
