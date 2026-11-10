@@ -42,7 +42,25 @@ rm -f "$root/etc/xdg/autostart/piwiz.desktop"
 install -m 755 "$here/files/etc/chromium.d/hyperwheel" "$root/etc/chromium.d/hyperwheel"
 install -d -m 755 "$root/etc/chromium/policies/managed"
 install -m 644 "$here/files/etc/chromium/policies/managed/hyperwheel.json" "$root/etc/chromium/policies/managed/"
-say "datamanager logged in automatically, Chromium's bookmarks, no keyring prompt"
+# Chromium's first start: Raspberry Pi OS's preferences (from rpi-chromium-mods) add its own bookmarks and open its
+# welcome page. They're diverted, so a package update puts its copy beside ours and never over it, and ours start
+# with the three Hyperwheel bookmarks on the bar and the Upload Monitor.
+install -m 644 -D "$here/files/usr/local/share/hyperwheel/chromium-bookmarks.html" \
+  "$root/usr/local/share/hyperwheel/chromium-bookmarks.html"
+for f in initial_preferences master_preferences; do
+  in_image dpkg-divert --quiet --local --rename --divert "/etc/chromium/$f.rpi" --add "/etc/chromium/$f"
+done
+python3 - "$root/etc/chromium/initial_preferences.rpi" > "$root/etc/chromium/initial_preferences" <<'PY'
+import json, sys
+prefs = json.load(open(sys.argv[1]))
+prefs["distribution"]["import_bookmarks_from_file"] = "/usr/local/share/hyperwheel/chromium-bookmarks.html"
+prefs["first_run_tabs"] = ["http://127.0.0.1:5000/"]
+print(json.dumps(prefs, indent=2))
+PY
+cp "$root/etc/chromium/initial_preferences" "$root/etc/chromium/master_preferences"
+chmod 644 "$root/etc/chromium/initial_preferences" "$root/etc/chromium/master_preferences"
+say "datamanager logged in automatically, no keyring prompt"
+say "Chromium: the Hyperwheel bookmarks on the bar, the Upload Monitor as its start page, no sign-in prompt"
 
 echo "== No other way in"
 # Answering Yes to Raspberry Pi Imager's customisation by mistake changes nothing: cloud-init, the user

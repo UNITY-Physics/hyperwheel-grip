@@ -1,9 +1,10 @@
 {
   "BookmarkBarEnabled": true,
-  "ManagedBookmarks": [
-    {"toplevel_name": "Hyperwheel"},
-    {"name": "Scanner", "url": "https://10.42.0.1:8080/"},
-    {"name": "Upload Monitor", "url": "http://127.0.0.1:5000/"},
-    {"name": "Orthanc Explorer 2", "url": "http://127.0.0.1:8442/ui/app/"}
-  ]
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "HomepageLocation": "http://127.0.0.1:5000/",
+  "HomepageIsNewTabPage": false,
+  "ShowHomeButton": true,
+  "RestoreOnStartup": 4,
+  "RestoreOnStartupURLs": ["http://127.0.0.1:5000/"]
 }
