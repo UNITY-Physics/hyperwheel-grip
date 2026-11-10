@@ -45,6 +45,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -484,29 +485,39 @@ def summary(paths: Paths) -> str:
     return f"{held} {text[0].upper()}{text[1:]}" if held else text
 
 
+_TABLE = re.compile(r"^\s*\[\s*([A-Za-z0-9_.-]+)\s*\]\s*(#.*)?$")
+_CHANNEL_LINE = re.compile(r"^(\s*channel\s*=\s*)(\"[^\"]*\"|'[^']*')(\s*(#.*)?)$")
+
+
 def set_channel(site_toml: Path, channel: str) -> str:
-    """Point this Pi at another update channel, in its site settings. Only the channel line changes, and the
-    file is checked before it replaces the old one. Returns what happened, in plain words."""
+    """Point this Pi at another update channel, in its site settings. Only the channel's value changes, and
+    the file is checked before it replaces the old one (in one step, flushed to disk first, so a power cut
+    leaves the old file or the new one). Returns what happened, in plain words."""
     from .config import ConfigError, load_site
 
     if channel not in CHANNELS:
         raise UpdateError(f"there's no channel {channel!r}. Use dev, pilot or stable")
     if not site_toml.exists():
         raise UpdateError("this Pi isn't set up yet, so it has no site settings to change")
-    before = load_site(site_toml).updates.channel
+    try:
+        before = load_site(site_toml).updates.channel
+    except ConfigError as e:
+        raise UpdateError(f"the site settings can't be read ({e}). Fix them first") from None
     if before == channel:
         return f"This Pi is already on the {channel} channel. Nothing was changed."
     lines = site_toml.read_text().splitlines(keepends=True)
     section, header, done = None, None, False
     for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            section = stripped[1:-1].strip()
+        body = line.rstrip("\r\n")
+        table = _TABLE.match(body)
+        if table:
+            section = table.group(1)
             if section == "updates":
                 header = i
             continue
-        if section == "updates" and stripped.split("=", 1)[0].strip() == "channel":
-            lines[i] = f'channel = "{channel}"\n'
+        found = _CHANNEL_LINE.match(body) if section == "updates" else None
+        if found:
+            lines[i] = f'{found.group(1)}"{channel}"{found.group(3)}' + line[len(body):]
             done = True
             break
     if not done:
@@ -515,15 +526,26 @@ def set_channel(site_toml: Path, channel: str) -> str:
             header = len(lines) - 1
         lines.insert(header + 1, f'channel = "{channel}"\n')
     tmp = site_toml.with_name(f".{site_toml.name}.new")
-    tmp.write_text("".join(lines))
-    tmp.chmod(site_toml.stat().st_mode & 0o777)
     try:
+        tmp.unlink(missing_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, site_toml.stat().st_mode & 0o777)
+        with os.fdopen(fd, "w") as f:
+            f.write("".join(lines))
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, site_toml.stat().st_mode & 0o777)  # the umask may have taken bits off
         if load_site(tmp).updates.channel != channel:
             raise ConfigError("the new channel didn't take")
-    except ConfigError as e:
+        os.replace(tmp, site_toml)
+        folder = os.open(site_toml.parent, os.O_RDONLY)
+        try:
+            os.fsync(folder)
+        finally:
+            os.close(folder)
+    except (ConfigError, OSError) as e:
         tmp.unlink(missing_ok=True)
-        raise UpdateError(f"the site settings couldn't be changed ({e}). They are as they were") from None
-    os.replace(tmp, site_toml)
+        why = str(e).replace(str(tmp), "the new site settings")
+        raise UpdateError(f"the site settings couldn't be changed ({why}). They are as they were") from None
     return (f"This Pi now takes releases from the {channel} channel (it was on {before}), from the next update "
             "check. A channel that names an older release than this Pi's leaves it on its version until the "
             "channel names a newer one.")
