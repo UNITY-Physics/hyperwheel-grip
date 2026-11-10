@@ -262,10 +262,15 @@ def test_the_hotspot_address_binds_before_the_hotspot_is_up():
         server.server_close()
 
 
-def test_the_pis_own_bookmark_opens_the_upload_monitor_on_127_0_0_1():
+def test_the_pis_own_bookmark_and_start_page_open_the_upload_monitor_on_127_0_0_1():
+    import re
     from pathlib import Path
-    policy = json.loads((Path(__file__).resolve().parents[1] / "image/files/etc/chromium/policies/managed/"
-                         "hyperwheel.json").read_text())
-    urls = {b.get("name"): b.get("url") for b in policy["ManagedBookmarks"]}
-    assert urls["Upload Monitor"] == "http://127.0.0.1:5000/"
-    assert urls["Orthanc Explorer 2"].startswith("http://127.0.0.1:")
+    files = Path(__file__).resolve().parents[1] / "image/files"
+    bookmarks = (files / "usr/local/share/hyperwheel/chromium-bookmarks.html").read_text()
+    urls = {name: url for url, name in re.findall(r'<DT><A HREF="([^"]+)">([^<]+)</A>', bookmarks)}
+    assert urls == {"Scanner": "https://10.42.0.1:8080/", "Upload Monitor": "http://127.0.0.1:5000/",
+                    "Orthanc Explorer 2": "http://127.0.0.1:8442/ui/app/"}
+    policy = json.loads((files / "etc/chromium/policies/managed/hyperwheel.json").read_text())
+    assert policy["HomepageLocation"] == "http://127.0.0.1:5000/"
+    assert policy["RestoreOnStartup"] == 4 and policy["RestoreOnStartupURLs"] == ["http://127.0.0.1:5000/"]
+    assert policy["BrowserSignin"] == 0 and policy["SyncDisabled"] is True

@@ -143,10 +143,13 @@ assert prefs["first_run_tabs"] == ["http://127.0.0.1:5000/"]
 PY
 done
 check [ "$(grep -c '<DT><A HREF=' "$mnt/usr/local/share/hyperwheel/chromium-bookmarks.html")" = 3 ]
+check grep -q 'HREF="http://127.0.0.1:5000/">Upload Monitor<' "$mnt/usr/local/share/hyperwheel/chromium-bookmarks.html"
+check sh -c "! ls '$mnt'/etc/chromium/policies/managed/ | grep -vx hyperwheel.json"
 check python3 - "$mnt/etc/chromium/policies/managed/hyperwheel.json" <<'PY'
 import json, sys
 policy = json.load(open(sys.argv[1]))
-assert policy["BrowserSignin"] == 0 and policy["RestoreOnStartupURLs"] == ["http://127.0.0.1:5000/"]
+assert policy["BrowserSignin"] == 0 and policy["SyncDisabled"] is True and policy["RestoreOnStartup"] == 4
+assert policy["RestoreOnStartupURLs"] == ["http://127.0.0.1:5000/"]
 assert policy["HomepageLocation"] == "http://127.0.0.1:5000/" and "ManagedBookmarks" not in policy
 PY
 label="the sudo rule passes visudo, and lets datamanager run setup until the Pi is set up"

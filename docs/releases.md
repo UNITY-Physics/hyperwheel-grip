@@ -41,7 +41,9 @@ It contains (`image/customise.sh`):
   (`http://127.0.0.1:8442/ui/app/`), both only reachable on the Pi itself. The
   Upload Monitor is Chromium's start page and home page, Raspberry Pi OS's own
   bookmarks and welcome page are left out (its first-start preferences are
-  diverted with `dpkg-divert`, so a package update can't bring them back),
+  diverted with `dpkg-divert`, so a package update can't bring them back. Ours
+  are a copy of the package's file made when the image is built, so a release
+  that ships a newer `rpi-chromium-mods` should check whether it changed),
   Chromium never asks to sign in, and there's no keyring prompt
   (`--password-store=basic`);
 - **Raspberry Pi Connect** (`rpi-connect`), signed out;
