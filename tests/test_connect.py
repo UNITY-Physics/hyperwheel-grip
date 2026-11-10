@@ -224,7 +224,9 @@ def test_a_new_pi_turns_connect_on_with_nobody_logged_in_and_offers_the_link(pi)
     assert pi.state["signed_in"] is False and pi.state["link"] == pi.sessions[0].link
     assert pi.state["account"] == DATA_MANAGER
     on = [c for c in pi.ran if c[-1] == "on"]
-    assert len(on) == 1 and on[0][:4] == ["runuser", "-u", DATA_MANAGER, "--"]
+    assert len(on) == 1 and on[0][:4] == ["setpriv", f"--reuid={UID}", f"--regid={UID}", "--init-groups"]
+    assert f"HOME=/home/{DATA_MANAGER}" in on[0] and on[0][-2:] == ["rpi-connect", "on"]
+    assert not any(c[0] == "runuser" for c in pi.ran)  # no login session, so nothing in the journal
     assert f"XDG_RUNTIME_DIR=/run/user/{UID}" in on[0]
     pi.tick()
     assert len([c for c in pi.ran if c[-1] == "on"]) == 1  # asked once
