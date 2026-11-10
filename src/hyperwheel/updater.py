@@ -57,7 +57,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from .installer import Layout, _atomic_link
-from .release import (CHANNEL_FILE, CHANNEL_SIGNATURE, MANIFEST, Channel, ReleaseError, sha256_file,
+from .release import (CHANNELS, CHANNEL_FILE, CHANNEL_SIGNATURE, MANIFEST, Channel, ReleaseError, sha256_file,
                       verify_channel, verify_release, version_key)
 
 log = logging.getLogger("hyperwheel.updater")
@@ -484,6 +484,51 @@ def summary(paths: Paths) -> str:
     return f"{held} {text[0].upper()}{text[1:]}" if held else text
 
 
+def set_channel(site_toml: Path, channel: str) -> str:
+    """Point this Pi at another update channel, in its site settings. Only the channel line changes, and the
+    file is checked before it replaces the old one. Returns what happened, in plain words."""
+    from .config import ConfigError, load_site
+
+    if channel not in CHANNELS:
+        raise UpdateError(f"there's no channel {channel!r}. Use dev, pilot or stable")
+    if not site_toml.exists():
+        raise UpdateError("this Pi isn't set up yet, so it has no site settings to change")
+    before = load_site(site_toml).updates.channel
+    if before == channel:
+        return f"This Pi is already on the {channel} channel. Nothing was changed."
+    lines = site_toml.read_text().splitlines(keepends=True)
+    section, header, done = None, None, False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1].strip()
+            if section == "updates":
+                header = i
+            continue
+        if section == "updates" and stripped.split("=", 1)[0].strip() == "channel":
+            lines[i] = f'channel = "{channel}"\n'
+            done = True
+            break
+    if not done:
+        if header is None:
+            lines += ([] if not lines or lines[-1].endswith("\n") else ["\n"]) + ["\n[updates]\n"]
+            header = len(lines) - 1
+        lines.insert(header + 1, f'channel = "{channel}"\n')
+    tmp = site_toml.with_name(f".{site_toml.name}.new")
+    tmp.write_text("".join(lines))
+    tmp.chmod(site_toml.stat().st_mode & 0o777)
+    try:
+        if load_site(tmp).updates.channel != channel:
+            raise ConfigError("the new channel didn't take")
+    except ConfigError as e:
+        tmp.unlink(missing_ok=True)
+        raise UpdateError(f"the site settings couldn't be changed ({e}). They are as they were") from None
+    os.replace(tmp, site_toml)
+    return (f"This Pi now takes releases from the {channel} channel (it was on {before}), from the next update "
+            "check. A channel that names an older release than this Pi's leaves it on its version until the "
+            "channel names a newer one.")
+
+
 def _write(path: Path, text: str) -> None:
     tmp = path.with_name(f".{path.name}.new")
     tmp.write_text(text)
@@ -640,6 +685,8 @@ def main(argv: list[str], paths: Paths | None = None) -> int:
     h.add_argument("--reason", default="")
     sub.add_parser("release-hold", help="let this Pi take updates again")
     sub.add_parser("status", help="show the last update check")
+    c = sub.add_parser("channel", help="take releases from another channel")
+    c.add_argument("name", choices=CHANNELS)
     args = ap.parse_args(argv)
     paths = paths or Paths()
 
@@ -660,6 +707,14 @@ def main(argv: list[str], paths: Paths | None = None) -> int:
     if args.action == "hold":
         _write(paths.hold, json.dumps({"reason": args.reason, "since": time.strftime("%Y-%m-%d %H:%M")}) + "\n")
         print("This Pi is on hold: it keeps its version until 'hyperwheel update release-hold'.")
+        return 0
+    if args.action == "channel":
+        try:
+            print(set_channel(paths.site, args.name))
+        except UpdateError as e:
+            print(f"The channel wasn't changed: {e}.", file=sys.stderr)
+            return 1
+        print("To check for an update now, type: hyperwheel update now")
         return 0
     if args.action == "release-hold":
         paths.hold.unlink(missing_ok=True)
