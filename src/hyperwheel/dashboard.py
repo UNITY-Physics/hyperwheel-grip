@@ -539,7 +539,8 @@ function render(s) {
     state.textContent = "Raspberry Pi Connect: not signed in yet. The Pi needs the scanner cable for the internet.";
   }
   $("key-card").hidden = s.signed_in;
-  $("link-card").hidden = s.signed_in;
+  // While a pasted key is being tried, Connect gives no link, so the card would only say to wait for one.
+  $("link-card").hidden = s.signed_in || s.key_trying;
   const message = $("key-message");
   if (s.key_refused || s.key_trying) $("key-details").open = true;
   if (s.key_refused) {

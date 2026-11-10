@@ -88,7 +88,10 @@ def test_the_page_has_the_link_then_the_box_and_nothing_else(page):
     assert html.index('id="link-card"') < html.index('id="key-card"')
     assert '<details id="key-details">' in html and html.index('id="key-details"') < html.index('id="key-form"')
     with urllib.request.urlopen(base + "/setup.js") as r:
-        assert "innerHTML" not in r.read().decode()
+        script = r.read().decode()
+    assert "innerHTML" not in script
+    # The folded key box opens by itself while a key is tried or refused, and the link card goes while it's tried.
+    assert '$("key-details").open = true' in script and "s.signed_in || s.key_trying" in script
 
 
 def test_pasting_a_key_keeps_it_and_never_sends_it_back(page, folder):
