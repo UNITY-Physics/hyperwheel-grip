@@ -33,9 +33,10 @@ def test_the_admin_sees_the_admin_commands_too_in_their_own_section():
     head, admin = text.split("\n\nAdmin commands:\n")
     squeeze = lambda lines: [" ".join(line.split()) for line in lines]  # noqa: E731
     assert squeeze(head.splitlines()) == squeeze(DATA_MANAGER_HELP.split("\n\n")[0].splitlines())
-    assert [line.split("   ")[0].strip() for line in admin.splitlines()[:3]] == [
-        "hyperwheel update now", "hyperwheel update hold", "hyperwheel update release-hold"]
-    starts = {re.match(r"  hyperwheel [a-z -]+?\s{3,}", line).end() for line in text.splitlines()
+    assert [line.split("   ")[0].strip() for line in admin.splitlines()[:4]] == [
+        "hyperwheel update now", "hyperwheel update hold", "hyperwheel update release-hold",
+        "hyperwheel update channel <dev|pilot|stable>"]
+    starts = {re.match(r"  hyperwheel [a-z <|>-]+?\s{3,}", line).end() for line in text.splitlines()
               if line.startswith("  hyperwheel")}
     assert len(starts) == 1  # the descriptions line up in one column
 

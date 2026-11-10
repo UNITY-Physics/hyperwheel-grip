@@ -36,6 +36,7 @@ ADMIN = (
     ("update now", "Look for an update now, and install it once the Pi is idle"),
     ("update hold", "Keep this Pi on its version until the hold is released"),
     ("update release-hold", "Let this Pi take updates again"),
+    ("update channel <dev|pilot|stable>", "Take releases from another channel"),
 )
 
 # run, dashboard, viewer, firewall and connect-watch are the services, and first-boot runs once on a newly flashed Pi
@@ -43,7 +44,7 @@ COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "setup", "r
             "connect-watch", "viewer", "firewall"}
 KEYS_ACTIONS = {"list", "set"}
 SCANNER_ACTIONS = {"password"}
-UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status"}
+UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status", "channel"}
 
 
 def is_admin() -> bool:

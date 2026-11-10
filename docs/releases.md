@@ -495,7 +495,13 @@ signer is accepted.
   `--dry-run`, except `channel-file`, which only writes a local file.
 - Each Pi's channel is a site setting (`[updates] channel` in `site.toml`):
   the dev Pi on `dev`, the pilot site on `pilot`, every other Pi on
-  `stable`.
+  `stable`. To move a Pi to another channel (for example the pilot site to
+  `stable` after the pilot): `hyperwheel update channel stable` (admin; it
+  asks for the admin password). Only that line of `site.toml` changes, and the
+  file is checked before it replaces the old one. The Pi takes the new
+  channel's release at its next check, or straight away with
+  `hyperwheel update now`. It never moves backwards: on a channel that names
+  an older release, it keeps its version until the channel names a newer one.
 - **Holding a Pi:** `hyperwheel update hold --reason "..."` (admin, over
   Connect or SSH; it asks for the admin password) writes
   `/etc/hyperwheel/update-hold`. A held Pi keeps its version, and downloads

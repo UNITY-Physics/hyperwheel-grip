@@ -427,3 +427,103 @@ def test_the_upload_monitor_and_the_doctor_show_a_hold(pi):
 def test_the_update_command_works_without_site_settings():
     r = subprocess.run([sys.executable, "-m", "hyperwheel", "update", "--help"], capture_output=True, text=True)
     assert r.returncode == 0 and "release-hold" in r.stdout
+
+
+# ---- hyperwheel update channel -----------------------------------------------------------------------------
+
+
+def _site_toml(tmp_path: Path) -> Path:
+    from hyperwheel.sitesetup import render_site_toml
+    path = tmp_path / "etc" / "hyperwheel" / "site.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_site_toml({"site": "site-a", "time_zone": "Europe/London", "wifi_country": "GB",
+                                      "update_channel": "pilot"}))
+    path.chmod(0o644)
+    return path
+
+
+def test_update_channel_changes_only_the_channel_line(tmp_path, capsys):
+    from hyperwheel.config import load_site
+    from hyperwheel.updater import Paths, main
+    site = _site_toml(tmp_path)
+    before = site.read_text()
+    assert main(["channel", "stable"], Paths(Layout(tmp_path))) == 0
+    out = capsys.readouterr().out
+    assert "now takes releases from the stable channel (it was on pilot)" in out and ";" not in out
+    assert load_site(site).updates.channel == "stable"
+    assert site.read_text() == before.replace('channel = "pilot"', 'channel = "stable"')
+    assert oct(site.stat().st_mode & 0o777) == "0o644" and not list(site.parent.glob(".*.new"))
+    assert main(["channel", "stable"], Paths(Layout(tmp_path))) == 0
+    assert "already on the stable channel" in capsys.readouterr().out
+    site.chmod(0o640)
+    assert main(["channel", "dev"], Paths(Layout(tmp_path))) == 0
+    assert oct(site.stat().st_mode & 0o777) == "0o640"  # the file keeps its own mode
+
+
+def test_update_channel_adds_the_setting_when_the_site_file_has_none(tmp_path):
+    from hyperwheel.config import load_site
+    from hyperwheel.updater import set_channel
+    site = _site_toml(tmp_path)
+    text = site.read_text()
+    site.write_text(text.replace('[updates]\nchannel = "pilot"\n', ""))
+    assert load_site(site).updates.channel == "stable"  # the default
+    set_channel(site, "dev")
+    assert load_site(site).updates.channel == "dev"
+    site.write_text(text.replace('channel = "pilot"\n', ""))  # the section, without the line
+    set_channel(site, "pilot")
+    assert load_site(site).updates.channel == "pilot"
+
+
+def test_update_channel_refuses_other_names_and_a_pi_not_set_up(tmp_path, capsys):
+    from hyperwheel.updater import Paths, main
+    with pytest.raises(SystemExit):
+        main(["channel", "beta"], Paths(Layout(tmp_path)))
+    assert main(["channel", "stable"], Paths(Layout(tmp_path))) == 1
+    assert "isn't set up yet" in capsys.readouterr().err
+
+
+def test_update_channel_is_an_admin_command_only():
+    from hyperwheel import cli
+    from hyperwheel.installer import SUDO_RULE
+    assert cli.problem(["update", "channel", "stable"]) is None and cli.needs_root(["update", "channel", "stable"])
+    assert "update channel" in cli.help_text(True) and "update channel" not in cli.help_text(False)
+    assert "update channel" not in SUDO_RULE  # the data-manager account can't run it
+
+
+def test_update_channel_keeps_comments_on_its_lines(tmp_path):
+    from hyperwheel.config import load_site
+    from hyperwheel.updater import set_channel
+    site = _site_toml(tmp_path)
+    site.write_text(site.read_text().replace('[updates]\nchannel = "pilot"\n',
+                                             '[updates]  # where releases come from\nchannel = "pilot"  # pilot site\n'))
+    set_channel(site, "stable")
+    assert '[updates]  # where releases come from\nchannel = "stable"  # pilot site\n' in site.read_text()
+    assert load_site(site).updates.channel == "stable"
+
+
+def test_update_channel_leaves_the_file_as_it_was_if_the_new_one_fails_its_check(tmp_path, monkeypatch, capsys):
+    from hyperwheel import config
+    from hyperwheel.updater import Paths, main
+    site = _site_toml(tmp_path)
+    before = site.read_text()
+    real = config.load_site
+
+    def failing(path, *a, **kw):
+        if path.name.endswith(".new"):
+            raise config.ConfigError(f"{path}: made to fail")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(config, "load_site", failing)
+    assert main(["channel", "stable"], Paths(Layout(tmp_path))) == 1
+    err = capsys.readouterr().err
+    assert "They are as they were" in err and ".new" not in err
+    assert site.read_text() == before and not list(site.parent.glob(".*.new"))
+
+
+def test_update_channel_says_plainly_when_the_site_settings_cant_be_read(tmp_path, capsys):
+    from hyperwheel.updater import Paths, main
+    site = _site_toml(tmp_path)
+    site.write_text(site.read_text() + "\n[bogus]\nx = 1\n")
+    before = site.read_text()
+    assert main(["channel", "stable"], Paths(Layout(tmp_path))) == 1
+    assert "can't be read" in capsys.readouterr().err and site.read_text() == before

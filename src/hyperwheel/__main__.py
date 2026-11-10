@@ -64,7 +64,7 @@ def _main(argv: list[str]) -> int:
     keys.add_argument("action", choices=["list", "set"])
     scanner = sub.add_parser("scanner", help="set the scanner's raw-data password (as root)")
     scanner.add_argument("action", choices=["password"])
-    sub.add_parser("update", help="updates: check, now, hold, release-hold, status (as root)")
+    sub.add_parser("update", help="updates: check, now, hold, release-hold, status, channel (as root)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
