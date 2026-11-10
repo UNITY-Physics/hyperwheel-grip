@@ -192,8 +192,9 @@ straight away for a login with no routing entry.
 ## Upload Monitor
 
 The page shows one headline for the operator ("Receiving images", "Fetching
-raw data", "Uploading to GRIP", "Everything is on GRIP", or "Hyperwheel is
-not running") and whether everything from the scanner is on the Pi. Below
+raw data", "Uploading to GRIP", "Waiting for a GRIP key" when every file
+still to upload belongs to a project with no working key, "Everything is on
+GRIP", or "Hyperwheel is not running") and whether everything from the scanner is on the Pi. Below
 that, for each session: the project, the Patient ID as sent, its state, how
 many DICOM and raw files are on GRIP, and its flags in plain language; then
 each project's key status. Studies from logins with no routing entry are

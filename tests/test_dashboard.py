@@ -81,6 +81,31 @@ def test_counts_say_receiving_until_they_mean_something(env):
     assert snap(env)["studies"][0]["dicom"]["text"] == "DICOM 0/1 on GRIP"
 
 
+def test_files_waiting_for_a_key_say_so_not_uploading(env):
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    study = env.store.add_study("1.2.5", state="ready", project=PROJECT, raw_checked_at=env.clock())
+    env.store.add_file(kind="dicom", name="a.dcm", state="staged", study_id=study.id, sop_uid="1.2.5.1")
+    assert snap(env)["headline"] == "Uploading to GRIP"  # the key not checked yet: nothing known to stop it
+    for status in ("missing", "unreadable", "rejected"):
+        env.store.set_key_status(PROJECT, status, "test")
+        s = snap(env)
+        assert s["headline"] == "Waiting for a GRIP key", status
+        assert f"Uploads for {PROJECT} start once a working GRIP key is set" in s["subline"]
+        assert s["safe_to_switch_off"] and ";" not in s["subline"]
+    # Another project's files still go up, so the Pi is uploading (the key alert names the one that isn't).
+    other = env.store.add_study("1.2.6", state="ready", project="Other", raw_checked_at=env.clock())
+    env.store.add_file(kind="dicom", name="b.dcm", state="staged", study_id=other.id, sop_uid="1.2.6.1")
+    env.store.set_key_status("Other", "working")
+    assert snap(env)["headline"] == "Uploading to GRIP"
+    env.store.set_key_status("Other", "missing")
+    s = snap(env)
+    assert s["headline"] == "Waiting for a GRIP key"
+    assert f"Uploads for Other and {PROJECT} start" in s["subline"]
+    env.store.set_key_status("Other", "working")
+    env.store.set_key_status(PROJECT, "working")
+    assert snap(env)["headline"] == "Uploading to GRIP"
+
+
 def test_a_study_with_no_raw_data_says_so(env):
     env.store.add_study("1.2.4", state="ready", project=PROJECT, raw_checked_at=env.clock())
     assert snap(env)["studies"][0]["raw"]["text"] == "No raw data"
