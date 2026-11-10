@@ -36,10 +36,11 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 import tomllib
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
@@ -55,6 +56,10 @@ SERVICE = "hyperwheel.service"
 DASHBOARD = "hyperwheel-dashboard.service"
 ROUTING = Path("/etc/hyperwheel/routing.toml")
 UPDATE_LOCK = Path("/var/lib/hyperwheel-update/.installing")  # held by the updater while it installs
+CHECK_LOCK = Path("/var/lib/hyperwheel-update/.lock")  # held by the updater for its whole check
+CURRENT = Path("/opt/hyperwheel/current")
+# An update check still running this soon after the release switched may be checking it, and may roll back.
+SETTLING_S = 30 * 60
 STATUS_TEXT = {
     "working": "working",
     "rejected": "refused by GRIP (wrong, revoked or disabled). Uploads for this dataset are paused",
@@ -162,6 +167,8 @@ class Datasets:
     restart_dashboard: Callable[[], None] = lambda: subprocess.run(["systemctl", "try-restart", DASHBOARD],
                                                                     capture_output=True)
     update_lock: Path = UPDATE_LOCK
+    check_lock: Path = CHECK_LOCK
+    current: Path = CURRENT
 
     def __post_init__(self):
         self.keys = self.keys or KeyStore(self.site.keys_dir)
@@ -217,6 +224,22 @@ class Datasets:
             why = e.strerror if isinstance(e, OSError) and e.strerror else \
                 str(e).replace(f"{tmp} ", "").replace(str(tmp), "the new settings")
             raise Stop(f"The dataset settings couldn't be saved ({why}). They are as they were.") from None
+
+    @contextmanager
+    def _no_update(self):
+        """No release installs or rolls back while datasets change. This release's updater holds the install lock
+        while it does. An earlier release's updater (the one installing this release) knows no install lock: an
+        update check still running within half an hour of the switch counts as installing too."""
+        with _no_update(self.update_lock):
+            if _held(self.check_lock) and self._switched_recently():
+                raise Stop(_UPDATING)
+            yield
+
+    def _switched_recently(self) -> bool:
+        try:
+            return time.time() - os.lstat(self.current).st_mtime < SETTLING_S
+        except OSError:
+            return False
 
     # ---- what's known ----
 
@@ -409,7 +432,7 @@ class Datasets:
         project = Project(name, tuple(logins), self.site.grip.api_base_url, self.site.grip.token_url,
                           client_id=client_id)
         self._check(project, creds, "The dataset wasn't added.")
-        with _no_update(self.update_lock), _uninterrupted():
+        with self._no_update(), _uninterrupted():
             projects = self._raw()
             projects[name] = {"client_id": client_id, "logins": logins}
             try:
@@ -452,13 +475,15 @@ class Datasets:
         dropped = [x for x in project.logins if x not in logins]
         store = self._open_for_change()
         try:
-            if dropped and self._arriving(store, replace(project, logins=tuple(dropped))):
+            if dropped and self._arriving(store, project, only=tuple(dropped)):
                 raise Stop(f"Images are still arriving from the scanner for {', '.join(dropped)}. Nothing was "
                            "changed. Try again once the Upload Monitor no longer says it's receiving images.")
         finally:
             self._close(store)
-        with _no_update(self.update_lock), _uninterrupted():
+        with self._no_update(), _uninterrupted():
             projects = self._raw()
+            if project.name not in projects:
+                raise Stop(f"{project.label} was changed meanwhile. Nothing was saved. Try again.")
             projects[project.name] = {**projects[project.name], "logins": logins}
             self._write(projects)
         self.c.say(f"{project.label} now takes scans from {', '.join(logins)}. Sessions already on this Pi stay "
@@ -499,7 +524,7 @@ class Datasets:
         if old == creds and project.client_id:
             self.c.say("It's the key already stored, so nothing needed to change.")
             return 0
-        with _no_update(self.update_lock), _uninterrupted():
+        with self._no_update(), _uninterrupted():
             if projects is not None:  # read again: another command may have changed it meanwhile
                 projects = self._raw()
                 if project.name not in projects:
@@ -557,7 +582,7 @@ class Datasets:
 
         # From here nothing waits for a person: stop the upload service, count again, then clear. A hang-up
         # (a closed terminal) can't cut it short and leave the service stopped.
-        with _no_update(self.update_lock):
+        with self._no_update():
             return self._clear(project, not_on_grip, on_scanner)
 
     def _clear(self, project: Project, not_on_grip: frozenset, on_scanner: int) -> int:
@@ -606,16 +631,20 @@ class Datasets:
                 self._close(store)
 
     @staticmethod
-    def _arriving(store: Store | None, project: Project) -> bool:
-        """A session of this dataset still receiving images, or not yet routed but from one of its logins."""
+    def _arriving(store: Store | None, project: Project, only: tuple[str, ...] | None = None) -> bool:
+        """A session of this dataset still receiving images, or not yet routed but from one of its logins. With
+        ``only``, just sessions from those logins."""
         if store is None:
             return False
         for study in store.studies(states=("receiving", "stable", "unrouted")):
             if study.state == "unrouted" and study.stable_at is not None:
                 continue  # waiting to be deleted, not arriving
+            login = login_from_operators_name(study.operators_name)
+            if only is not None and login not in only:
+                continue
             if study.project == project.name:
                 return True
-            if study.project is None and login_from_operators_name(study.operators_name) in project.logins:
+            if study.project is None and login in project.logins:
                 return True
         return False
 
@@ -692,11 +721,13 @@ class Datasets:
         if store is None:
             return [], [], frozenset(), 0
         drop, archive, total, on_scanner = [], [], set(), 0
+        listed = store.files(kind="rrdf", states=("seen",))  # on the scanner: no session until fetched
         for study in store.studies():
             if study.project != name or study.state in ("unrouted", "purged", "archived"):
                 continue
+            folder = f"rrdf_{study.study_date}_{(study.study_time or '')[:6]}"
             files = store.files(study.id)
-            on_scanner += len([f for f in files if f.state == "seen"])
+            on_scanner += len([f for f in listed if f.scanner_folder == folder or f.study_id == study.id])
             not_done = {f.id for f in files if f.state not in (*DONE_FILE_STATES, "seen")}
             missing = len(not_done)
             if study.state == "uploaded" and not missing:
@@ -720,6 +751,24 @@ class Datasets:
                 target.unlink(missing_ok=True)
         if is_uid(study.study_uid) and not (base / study.study_uid).is_symlink():
             shutil.rmtree(base / study.study_uid, ignore_errors=True)
+
+
+_UPDATING = ("An update is being installed just now, or another hyperwheel datasets command is saving. Nothing "
+             "was changed. Try again in a few minutes.")
+
+
+def _held(lock: Path) -> bool:
+    """Whether someone holds this lock just now (it isn't taken)."""
+    try:
+        with open(lock, "r") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return False
 
 
 _INTERRUPTIONS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGTSTP)
@@ -752,8 +801,7 @@ def _no_update(lock: Path):
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            raise Stop("An update is being installed just now, or another hyperwheel datasets command is "
-                       "saving. Nothing was changed. Try again in a few minutes.") from None
+            raise Stop(_UPDATING) from None
         yield
 
 

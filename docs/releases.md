@@ -382,9 +382,12 @@ every key when it starts, so a minute later `hyperwheel datasets list` and the
 Upload Monitor show the key as working.
 
 A release before 0.1.16 can't read dataset settings written by these commands
-(a dataset with no address of its own, or a client ID). An automatic rollback
-comes straight after an update, before anyone could use them, but don't
-install an older release by hand on a Pi whose datasets were changed.
+(a dataset with no address of its own, or a client ID). So while a release is
+being installed and checked, which is when it may roll back, the commands
+change nothing and say to try again. That includes the update that installs
+0.1.16 itself, run by the earlier release's updater: for half an hour after a
+release switch, a running update check counts as installing. Don't install an
+older release by hand on a Pi whose datasets were changed.
 
 The old commands, `hyperwheel keys list` and `keys set`, now say which
 `datasets` command replaced them.

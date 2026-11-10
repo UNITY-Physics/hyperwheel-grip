@@ -67,7 +67,8 @@ class Pi:
                     service_stop=lambda: self.service.append("stop"),
                     service_start=lambda: self.service.append("start"),
                     restart_dashboard=lambda: self.service.append("dashboard"),
-                    update_lock=self.env.tmp / "update" / ".lock")
+                    update_lock=self.env.tmp / "update" / ".lock", check_lock=self.env.tmp / "update" / ".check",
+                    current=self.env.tmp / "current")
 
     def routing(self):
         return load_routing(self.routing_path, test_mode=True, grip=self.site.grip)
@@ -528,14 +529,18 @@ def _main(pi, env, typed, **kw):
     defaults = dict(routing_path=pi.routing_path, console=typed.console(), keys=env.keys, is_root=lambda: True,
                     service_active=lambda: True, service_stop=lambda: pi.service.append("stop"),
                     service_start=lambda: pi.service.append("start"), restart_dashboard=lambda: None,
-                    update_lock=env.tmp / "update" / ".lock")
+                    update_lock=env.tmp / "update" / ".lock", check_lock=env.tmp / "update" / ".check",
+                    current=env.tmp / "current")
     return main(pi.site, ["remove"], **{**defaults, **kw})
 
 
 def test_raw_data_still_on_the_scanner_is_said_and_needs_its_own_yes(pi, env):
-    study = env.stage_study(n_dicom=0, raw_sizes=())
-    env.store.add_file(kind="rrdf", name="fse_rrdf_20261027_134000.h5", state="seen", study_id=study.id,
-                       scanner_folder="rrdf_20261027_132801")
+    env.stage_study(n_dicom=0, raw_sizes=())
+    # as the raw-data puller lists it: in the session's scanner folder, with no session until it's fetched
+    env.store.add_file(kind="rrdf", name="fse_rrdf_20261027_134000.h5", state="seen", study_id=None,
+                       scanner_folder="rrdf_20261027_132802")
+    env.store.add_file(kind="rrdf", name="other_rrdf_20261028_090000.h5", state="seen", study_id=None,
+                       scanner_folder="rrdf_20261028_090000")  # another session's: not counted
     typed = Scripted(answers=["1", PROJECT, ""])
     assert pi.run("remove", typed) == 1
     assert "1 raw file of its sessions is still on the scanner, not fetched yet." in typed.text
@@ -625,7 +630,7 @@ def test_dropping_a_login_waits_while_its_images_arrive(pi, env):
     typed = Scripted(answers=[NEW_CLIENT, "1", "one", ""])
     assert pi.run("change", typed) == 1 and "Images are still arriving from the scanner for two." in typed.text
     assert pi.routing().projects[NEW_CLIENT].logins == ("one", "two")
-    typed = Scripted(answers=[NEW_CLIENT, "1", "two", ""])  # dropping "one", which has nothing arriving
+    typed = Scripted(answers=[NEW_CLIENT, "1", "two", ""])  # dropping "one": what arrives from "two" doesn't matter
     assert pi.run("change", typed) == 0 and "New scans from one are deleted on this Pi" in typed.text
 
 
@@ -680,3 +685,28 @@ def test_a_shown_name_that_is_a_number_picks_that_dataset_not_that_position(pi, 
     typed = Scripted(answers=["1", "1"])  # "1" is the third dataset's name, not the first position
     assert pi.run("remove", typed) == 0 and "Removed 1." in typed.text
     assert PROJECT in pi.routing().projects
+
+
+def test_an_update_check_running_just_after_a_release_switch_counts_as_installing(pi, env):
+    import fcntl
+    check = env.tmp / "update" / ".check"
+    check.parent.mkdir()
+    check.write_text("")
+    (env.tmp / "release").mkdir()
+    (env.tmp / "current").symlink_to(env.tmp / "release")  # switched just now
+    with open(check, "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)  # the earlier release's updater, still checking what it installed
+        typed = Scripted(answers=["1", PROJECT])
+        assert _main(pi, env, typed) == 1 and "An update is being installed just now" in typed.text
+        old = __import__("time").time() - 3600
+        os.utime(env.tmp / "current", (old, old), follow_symlinks=False)  # an hour ago: it's waiting, not installing
+        assert _main(pi, env, Scripted(answers=["1", PROJECT])) == 0
+
+
+def test_saving_a_new_dataset_cant_be_interrupted_part_way(pi, env, monkeypatch):
+    import signal
+    seen = []
+    real = env.keys.write
+    monkeypatch.setattr(env.keys, "write", lambda *a: seen.append(signal.getsignal(signal.SIGINT)) or real(*a))
+    assert pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET])) == 0
+    assert seen == [signal.SIG_IGN] and signal.getsignal(signal.SIGINT) is not signal.SIG_IGN
