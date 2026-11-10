@@ -567,7 +567,7 @@ class LivePi(Pi):
         from .config import load_routing, load_site
         self.paths = paths
         self.site = load_site(paths.site) if paths.site.exists() else None
-        self.routing = (load_routing(paths.routing, test_mode=self.site.test_mode)
+        self.routing = (load_routing(paths.routing, test_mode=self.site.test_mode, grip=self.site.grip)
                         if self.site and paths.routing.exists() else None)
 
     def _store(self):

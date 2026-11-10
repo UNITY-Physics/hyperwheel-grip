@@ -31,7 +31,7 @@ from pathlib import Path
 from . import reach
 from .config import SiteConfig
 from .keys import KeyMissing, KeyProblem, read_secret_json
-from .keyscmd import Console, restart_service
+from .datasetscmd import Console, restart_service
 from .rawpull import LoginRefused, ScannerError, SshScanner
 
 PASSWORD_FILE = Path("/etc/hyperwheel/scanner.json")

@@ -7,10 +7,12 @@ refuses to run once the Pi is set up. The steps:
 
 1. **The site file.** The admin pastes the site's file (a template is in
    ``config/examples/site-file.toml``): the site name, time zone, Wi-Fi
-   country, update channel, phantom Patient ID, and which scanner logins go to
-   which GRIP project. It is checked and shown back to confirm, then written as
-   ``site.toml`` and ``routing.toml``. Site settings already on the Pi are never
-   overwritten.
+   country, update channel, phantom Patient ID, and optionally which scanner
+   logins go to which GRIP dataset (datasets are usually added after setup, with
+   ``hyperwheel datasets add``). GRIP's address is the release's, unless the
+   site file's ``[grip]`` gives another. It is checked and shown back to
+   confirm, then written as ``site.toml`` and ``routing.toml``. Site settings
+   already on the Pi are never overwritten.
 2. **The Pi's name, time zone and Wi-Fi country**, from the site file. The name
    is ``hyperwheel-`` and the site's (``hyperwheel-site-a``), so each Pi has its
    own in the prompt, on the network and in Connect. The time zone makes times
@@ -64,7 +66,7 @@ from .adminpw import AdminError, AdminPassword
 from .config import ConfigError, Routing, SiteConfig, is_time_zone_name, load_routing, load_site
 from .installer import (DATA_MANAGER, SETUP_DONE, SETUP_PROGRESS, InstallError, Layout, is_set_up,
                         write_sudo_rule)
-from .keyscmd import Console
+from .datasetscmd import Console
 from .rawpull import LoginRefused, ScannerError
 
 ADMIN = "admin"
@@ -82,7 +84,7 @@ HOTSPOT_FILE = "Hyperwheel.nmconnection"
 CABLE_FILE = "Hyperwheel-scanner-cable.nmconnection"
 END_OF_SITE_FILE = "# end of site file"
 SITE_FILE_KEYS = {"schema_version", "site", "time_zone", "wifi_country", "update_channel", "phantom_patient_id",
-                  "hotspot_routing", "projects"}
+                  "hotspot_routing", "projects", "grip"}
 CLEAR_SCREEN = "\x1b[H\x1b[2J\x1b[3J"  # also clears the scroll-back
 STEPS = 8
 _SITE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
@@ -135,17 +137,20 @@ def render_site_toml(data: dict) -> str:
         "# sudo systemctl reload hyperwheel-firewall",
         f"routing = {'false' if data.get('hotspot_routing') is False else 'true'}",
         "",
+        *(["[grip]", "# GRIP's address for this site only, from the site file (every other Pi uses the release's).",
+           *(f"{key} = {_q(str(value))}" for key, value in data["grip"].items()), ""]
+          if isinstance(data.get("grip"), dict) and data["grip"] else []),
     ])
 
 
 def render_routing_toml(projects: dict) -> str:
-    out = ["# /etc/hyperwheel/routing.toml: written by hyperwheel setup from the site file.",
-           "# Which scanner logins go to which GRIP project. Each project's key is stored with",
-           "# hyperwheel keys set, never here.",
+    out = ["# /etc/hyperwheel/routing.toml: which scanner logins go to which GRIP dataset. Written by",
+           "# hyperwheel setup and hyperwheel datasets, which check it first: change it with those commands.",
+           "# Keys are stored with hyperwheel datasets add and change, never here.",
            "schema_version = 1"]
     for name, entry in projects.items():
         out += ["", f"[projects.{name}]"]
-        for key in ("logins", "api_base_url", "token_url", "patient_id_pattern"):
+        for key in ("client_id", "logins", "api_base_url", "token_url", "patient_id_pattern"):
             if key in entry:
                 out.append(f"{key} = {json.dumps(entry[key])}")
     return "\n".join(out) + "\n"
@@ -173,11 +178,11 @@ def parse_site_file(text: str, *, zoneinfo: Path) -> SiteFile:
         raise SetupError(f"wifi_country {country!r} isn't a two-letter country code, such as \"GB\" or \"KE\"")
     if "hotspot_routing" in data and not isinstance(data["hotspot_routing"], bool):
         raise SetupError("hotspot_routing must be true or false, or left out")
-    projects = data.get("projects")
-    if not isinstance(projects, dict) or not projects:
-        raise SetupError("the site file lists no projects. Add at least one [projects.<name>] with its logins")
-    if any(not isinstance(entry, dict) for entry in projects.values()):
-        raise SetupError("each project must be a [projects.<name>] table")
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict) or any(not isinstance(entry, dict) for entry in projects.values()):
+        raise SetupError("each dataset must be a [projects.<name>] table")
+    if "grip" in data and not isinstance(data["grip"], dict):
+        raise SetupError("grip must be a [grip] table with api_base_url and token_url, or left out")
     site_toml, routing_toml = render_site_toml(data), render_routing_toml(projects)
     with tempfile.TemporaryDirectory() as tmp:
         site_path, routing_path = Path(tmp) / "site.toml", Path(tmp) / "routing.toml"
@@ -185,7 +190,7 @@ def parse_site_file(text: str, *, zoneinfo: Path) -> SiteFile:
         routing_path.write_text(routing_toml)
         try:
             config = load_site(site_path)
-            routing = load_routing(routing_path)
+            routing = load_routing(routing_path, grip=config.grip)
         except ConfigError as e:
             message = str(e).replace(str(site_path), "the site file").replace(str(routing_path), "the site file")
             raise SetupError(message) from None
@@ -222,10 +227,11 @@ def summary(site: SiteConfig, routing: Routing, now: float | None = None) -> lis
            f"  Updates: {site.updates.channel}",
            f"  Phantom Patient ID: {site.phantom_patient_id or 'none'}",
            f"  Hotspot devices reach the scanner and the internet: {'yes' if site.hotspot.routing else 'no'}",
-           "  Projects:"]
+           f"  GRIP: {_host(site.grip.api_base_url)}",
+           "  Datasets:" if routing.projects else "  Datasets: none yet (added after setup)"]
     for p in routing.projects.values():
-        out.append(f"    {p.name}: login{'s' if len(p.logins) != 1 else ''} {', '.join(p.logins)}, "
-                   f"at {_host(p.api_base_url)}")
+        out.append(f"    {p.label}: login{'s' if len(p.logins) != 1 else ''} {', '.join(p.logins)}"
+                   + (f", at {_host(p.api_base_url)}" if p.api_base_url != site.grip.api_base_url else ""))
     return out
 
 
@@ -353,8 +359,8 @@ class Setup:
     def main(self) -> int:
         if is_set_up(self.etc):
             if (self.etc / SETUP_DONE).exists():
-                self.say("This Pi is already set up, so setup won't change it. To store a GRIP key, type: "
-                         "hyperwheel keys set")
+                self.say("This Pi is already set up, so setup won't change it. To see its GRIP datasets, type: "
+                         "hyperwheel datasets list")
             else:
                 self.say("This Pi was set up before hyperwheel setup existed, so setup won't change it.")
             return 1
@@ -370,7 +376,7 @@ class Setup:
         self.admin_account(site)
         done = self.lock_down()
         self.start_hyperwheel()
-        return self.finish(site, done)
+        return self.finish(site, done, bool(routing.projects))
 
     # ---- progress (no secrets in it) ----
 
@@ -417,7 +423,7 @@ class Setup:
         if site_path.exists() and routing_path.exists():
             try:
                 site = load_site(site_path)
-                routing = load_routing(routing_path, test_mode=site.test_mode)
+                routing = load_routing(routing_path, test_mode=site.test_mode, grip=site.grip)
             except ConfigError as e:
                 raise SetupError(f"the site settings already on this Pi can't be read ({e})") from None
             self.say("The site settings are already on this Pi, and are kept as they are:")
@@ -737,13 +743,15 @@ class Setup:
         self.run(["systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.say("Hyperwheel and the Upload Monitor: started.")
 
-    def finish(self, site: SiteConfig, done: bool) -> int:
+    def finish(self, site: SiteConfig, done: bool, has_datasets: bool = False) -> int:
         self.say("")
         if done:
             self.say(f"This Pi is set up for {site.site}.")
         else:
             self.say(f"This Pi is set up for {site.site}, except for administrator rights (step 8).")
-        self.say("Next, the data manager stores each project's GRIP key. Type: hyperwheel keys set")
+        self.say("Next, the data manager adds each GRIP dataset and its key. Type: hyperwheel datasets add"
+                 if not has_datasets else
+                 "Next, the data manager stores each dataset's GRIP key. Type: hyperwheel datasets change")
         self.say("The scanner cable address and the Wi-Fi country take effect when the Pi restarts.")
         if self.console.ask("Restart the Pi now? Type yes to restart: ").strip().lower() == "yes":
             self.say("Restarting.")

@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from test_keyscmd import Scripted
+from test_datasetscmd import Scripted
 from test_release import keypair, signers_file
 from test_sitesetup import DM_PW, FakePi, make, template_lines
 

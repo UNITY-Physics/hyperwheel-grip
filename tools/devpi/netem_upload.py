@@ -37,7 +37,7 @@ for noisy in ("urllib3", "requests"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 log = logging.getLogger("netem-test")
 site = load_site(conf / "site.toml")
-routing = load_routing(conf / "routing.toml", test_mode=site.test_mode)
+routing = load_routing(conf / "routing.toml", test_mode=site.test_mode, grip=site.grip)
 PROJECT = next(iter(routing.projects))
 end = time.time() + args.minutes * 60
 stop = threading.Event()

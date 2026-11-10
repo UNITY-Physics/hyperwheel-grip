@@ -612,6 +612,31 @@ class Store:
                 (project, status, detail, self.clock()),
             )
 
+    def forget_project(self, project: str) -> None:
+        """A dataset taken off this Pi: its key status and its open key flags go."""
+        with self.transaction() as db:
+            db.execute("DELETE FROM key_status WHERE project = ?", (project,))
+            db.execute("UPDATE flags SET cleared_at = ? WHERE cleared_at IS NULL AND project = ?",
+                       (self.clock(), project))
+
+    def drop_study(self, study_id: int) -> list[str]:
+        """Drop a study that was waiting to upload to a dataset just removed from this Pi, after the person
+        removing it confirmed its files may go. Its file records and flags are deleted, and it becomes unrouted
+        with no dataset, so the organiser deletes it from Orthanc as it does a study from a login with no
+        dataset. Returns the paths of its local copies, for the caller to delete (after this, so a crash leaves
+        at worst a stray file, never a record of a file that's gone)."""
+        with self.transaction() as db:
+            study = self._study(db, study_id)
+            paths = [r["path"] for r in db.execute("SELECT path FROM files WHERE study_id = ?", (study_id,))
+                     if r["path"]]
+            db.execute("DELETE FROM flags WHERE study_id = ? OR file_id IN (SELECT id FROM files WHERE study_id = ?)",
+                       (study_id, study_id))
+            db.execute("DELETE FROM files WHERE study_id = ?", (study_id,))
+            now = self.clock()
+            db.execute("UPDATE studies SET state = 'unrouted', project = NULL, updated_at = ?, "
+                       "stable_at = COALESCE(stable_at, ?) WHERE id = ?", (now, now, study.id))
+        return paths
+
     def key_status(self, project: str) -> tuple[str, str | None, float] | None:
         row = self._db.execute("SELECT status, detail, checked_at FROM key_status WHERE project = ?",
                                (project,)).fetchone()

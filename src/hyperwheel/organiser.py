@@ -153,8 +153,9 @@ class Organiser:
         project = self.routing.project_for_login(login)
         if study.project and (project is None or project.name != study.project):
             # The routing changed after this study was routed: keep it with its first project.
-            self.store.raise_flag("ROUTING_CHANGED", f"This study's login now routes to "
-                                  f"{project.name if project else 'nothing'}. It stays with {study.project}.",
+            self.store.raise_flag("ROUTING_CHANGED", f"This study's login now goes to "
+                                  f"{project.label if project else 'no dataset'}. It stays with "
+                                  f"{self.routing.label(study.project)}.",
                                   study_id=study.id, level="alert")
             project = self.routing.projects.get(study.project)
         if project is None:

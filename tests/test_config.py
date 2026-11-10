@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from hyperwheel.config import ConfigError, load_routing, load_site
+from hyperwheel.config import GRIP_API_BASE_URL, GRIP_TOKEN_URL, ConfigError, GripSettings, load_routing, load_site
 
 EXAMPLES = Path(__file__).parent.parent / "config" / "examples"
 
@@ -17,8 +17,11 @@ def test_examples_load():
     site = load_site(EXAMPLES / "site.toml")
     assert site.upload.chunk_bytes == 8 * 1024 * 1024
     assert site.phantom_patient_id is None and site.test_mode is False
-    routing = load_routing(EXAMPLES / "routing.toml")
-    assert routing.project_for_login("example").name == "Example-Project"
+    assert site.grip == GripSettings(GRIP_API_BASE_URL, GRIP_TOKEN_URL)  # the release's GRIP address
+    routing = load_routing(EXAMPLES / "routing.toml", grip=site.grip)
+    dataset = routing.project_for_login("example")
+    assert dataset.name == "site-a-study-one" and dataset.label == "site-a-study-one"
+    assert dataset.api_base_url == GRIP_API_BASE_URL and dataset.token_url == GRIP_TOKEN_URL
     assert routing.project_for_login("clinical") is None
 
 
@@ -91,7 +94,39 @@ def test_routing_requires_https_unless_local_test_mode(tmp_path):
      '[projects.B]\nlogins=["x"]\napi_base_url="https://h"\ntoken_url="https://h"', "already routed"),
     ('schema_version = 1\n[projects.A]\nlogins=["x"]\napi_base_url="https://h"\ntoken_url="https://h"\nkey="s"',
      "unknown"),
+    ('schema_version = 1\n[projects.A]\nlogins=["x"]\napi_base_url="https://h"', "both api_base_url and token_url"),
+    ('schema_version = 1\n[projects.A]\nclient_id="c"\nlogins=["x"]\n[projects.B]\nclient_id="c"\nlogins=["y"]',
+     "listed twice"),
+    ('schema_version = 1\n[projects.A]\nclient_id="two words"\nlogins=["x"]', "client ID"),
 ])
 def test_bad_routing(tmp_path, text, message):
     with pytest.raises(ConfigError, match=message):
         load_routing(write(tmp_path, text))
+
+
+def test_a_dataset_uses_the_sites_grip_address_unless_it_has_its_own(tmp_path):
+    text = ('schema_version = 1\n[projects.a]\nclient_id="a"\nlogins=["x"]\n'
+            '[projects.B]\nlogins=["y"]\napi_base_url="https://own.example.org/api"\n'
+            'token_url="https://own.example.org/api/get/token"\n')
+    site_grip = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token")
+    routing = load_routing(write(tmp_path, text), grip=site_grip)
+    assert routing.projects["a"].api_base_url == "https://grip.example.org/api"
+    assert routing.projects["a"].token_url == "https://grip.example.org/api/get/token"
+    assert routing.projects["B"].api_base_url == "https://own.example.org/api"
+    assert load_routing(write(tmp_path, text)).projects["a"].api_base_url == GRIP_API_BASE_URL  # the default
+    assert routing.label("a") == "a" and routing.label("gone") == "gone" and routing.label(None) == ""
+
+
+def test_a_site_may_override_grips_address_with_both_settings(tmp_path):
+    base = ('schema_version = 1\nsite = "s"\nstaging_dir = "/s"\nstate_db = "/s.db"\nkeys_dir = "/k"\n')
+    site = load_site(write(tmp_path, base + '[grip]\napi_base_url = "https://g.example.org/api"\n'
+                                            'token_url = "https://g.example.org/token"\n'))
+    assert site.grip == GripSettings("https://g.example.org/api", "https://g.example.org/token")
+    with pytest.raises(ConfigError, match="give both"):
+        load_site(write(tmp_path, base + '[grip]\napi_base_url = "https://g.example.org/api"\n'))
+    with pytest.raises(ConfigError, match="https"):
+        load_site(write(tmp_path, base + '[grip]\napi_base_url = "http://g.example.org/api"\n'
+                                         'token_url = "https://g.example.org/token"\n'))
+    with pytest.raises(ConfigError, match="unknown"):
+        load_site(write(tmp_path, base + '[grip]\nurl = "https://g.example.org"\n'))
+    assert load_site(write(tmp_path, base)).grip == GripSettings()

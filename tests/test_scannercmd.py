@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 from test_hostkeys import Scanner
-from test_keyscmd import Scripted
+from test_datasetscmd import Scripted
 
 from hyperwheel import scannercmd
 from hyperwheel.config import ScannerSettings, SiteConfig

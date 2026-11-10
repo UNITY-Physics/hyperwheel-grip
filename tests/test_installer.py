@@ -277,8 +277,10 @@ def test_the_data_manager_sudo_rule_is_checked_by_visudo_then_put_in_place(tmp_p
     assert lines == ["datamanager ALL = (root) NOPASSWD: HYPERWHEEL_LOOK", "datamanager ALL = (root) HYPERWHEEL_KEYS"]
     assert "ALL = (root) ALL" not in SUDO_RULE and "*" not in SUDO_RULE
     # the commands that change something ask for the data manager's password
-    asks = SUDO_RULE.split("Cmnd_Alias HYPERWHEEL_KEYS = ")[1].splitlines()[0]
-    assert asks == "/usr/local/bin/hyperwheel keys set, /usr/local/bin/hyperwheel scanner password"
+    asks = SUDO_RULE.split("Cmnd_Alias HYPERWHEEL_KEYS = ")[1].split("\n" + "datamanager")[0]
+    assert " ".join(asks.replace("\\", "").split()) == (
+        "/usr/local/bin/hyperwheel datasets add, /usr/local/bin/hyperwheel datasets change, "
+        "/usr/local/bin/hyperwheel datasets remove, /usr/local/bin/hyperwheel scanner password")
 
 
 def test_a_sudo_rule_visudo_rejects_is_never_put_in_place(tmp_path, key, signers, pi):

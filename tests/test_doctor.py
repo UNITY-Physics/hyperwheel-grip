@@ -141,3 +141,23 @@ def test_a_refused_raw_data_login_says_how_to_set_the_new_password(env):
     assert r["Scanner"][0] == OK  # the scanner answers; only its raw-data login is refused
     assert r["Raw data from the scanner"][0] == PROBLEM
     assert "hyperwheel scanner password" in r["Raw data from the scanner"][1]
+
+
+def test_it_shows_the_grip_address_the_pi_uses_and_checks_it_with_no_datasets_yet(env):
+    from hyperwheel.config import GripSettings, Routing
+    env.site = replace(env.site, grip=GripSettings("https://grip.example.org/api", "https://grip.example.org/t"))
+    r, _ = run(env)
+    # the env's one dataset still has its own address (a Pi set up before the address was site-wide)
+    assert r["GRIP address"] == (NOTE, f"https://grip.example.org/api (and for some datasets: {env.fake.base_url})")
+    env.routing = Routing(projects={})
+    seen = []
+    site = replace(env.site, scanner=replace(env.site.scanner, host="10.42.0.1"))
+    probes = Probes(link=lambda i: True, answers=lambda h, p: seen.append((h, p)) or True, lookup=lambda n: 0.01,
+                    connect_state=lambda: None, viewer_answers=lambda: True, firewall_on=lambda: True,
+                    etc=site.state_db.parent, orthanc_answers=lambda url: True, synced=lambda: True,
+                    free_bytes=lambda p: 50 * 1024 ** 3, now=env.clock)
+    results, _ = doctor.run(site, env.routing, probes)
+    r = {what: (result, detail) for result, what, detail in results}
+    assert r["GRIP address"] == (NOTE, "https://grip.example.org/api")
+    assert ("grip.example.org", 443) in seen and r["GRIP over the internet"][0] == OK
+    assert r["GRIP datasets"] == (NOTE, "none yet. To add one, type: hyperwheel datasets add")
