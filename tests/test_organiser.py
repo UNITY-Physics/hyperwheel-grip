@@ -246,3 +246,30 @@ def test_a_study_deleted_before_its_login_had_a_dataset_goes_through_when_sent_a
     assert len(env.store.files(study.id, kind="dicom")) == 3
     organiser(env).housekeeping()
     assert env.store.study_by_uid(uid).state == "ready"  # not purged again
+
+
+def test_a_re_sent_study_isnt_purged_while_it_arrives(env):
+    uid = scan(env, operators="site_a/later")
+    organiser(env).follow()
+    assert env.store.study_by_uid(uid).state == "purged"
+    later = Project("SiteA-Later", ("later",), env.fake.base_url, env.fake.token_url)
+    env.routing = Routing(projects={**env.routing.projects, later.name: later})
+    scan(env, n=2, study_uid=uid, operators="site_a/later", stable=False)  # the first images of the re-send
+    organiser(env).follow()
+    deleted = list(env.orthanc.deleted_studies)
+    organiser(env).housekeeping()  # runs while the rest is still arriving
+    assert env.orthanc.deleted_studies == deleted and env.store.study_by_uid(uid).state == "unrouted"
+    scan(env, n=3, study_uid=uid, operators="site_a/later")  # the rest, then stable
+    organiser(env).follow()
+    study = env.store.study_by_uid(uid)
+    assert study.state == "ready" and len(env.store.files(study.id, kind="dicom")) == 5
+
+
+def test_a_re_sent_study_whose_login_still_has_no_dataset_is_purged_once_stable(env):
+    uid = scan(env, operators="hospital/clinical")
+    organiser(env).follow()
+    scan(env, n=1, study_uid=uid, operators="hospital/clinical")
+    organiser(env).follow()
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "purged"
+    assert env.orthanc.deleted_studies.count(env.orthanc.study_id(uid)) == 2

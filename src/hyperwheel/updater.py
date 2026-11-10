@@ -102,6 +102,8 @@ class Paths:
     @property
     def lock(self) -> Path: return self.state / ".lock"
     @property
+    def installing(self) -> Path: return self.state / ".installing"  # held only while a release installs
+    @property
     def request(self) -> Path: return self.state / "now-requested"
     @property
     def service_unit(self) -> Path: return self.layout.units / "hyperwheel.service"
@@ -309,6 +311,13 @@ class Updater:
     # ---- 7-10. install, check, roll back ----------------------------------------------------
 
     def apply(self, folder: Path, version: str, before: str | None) -> str:
+        """Install, then check it, holding the install lock: ``hyperwheel datasets`` waits for it before it
+        changes anything, so no dataset changes during an install or its rollback."""
+        with open(self.paths.installing, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)  # a datasets command holds it only for a moment
+            return self._apply(folder, version, before)
+
+    def _apply(self, folder: Path, version: str, before: str | None) -> str:
         user = self.service_user()
         worked = self.pi.working_keys()
         previous = self.previous_version()

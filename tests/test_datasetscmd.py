@@ -210,7 +210,7 @@ def test_a_refused_new_key_leaves_the_old_one(pi, env):
 def test_remove_asks_for_its_name_then_deletes_the_dataset_and_key(pi, env):
     typed = Scripted(answers=["1", "wrong name"])
     assert pi.run("remove", typed) == 1 and PROJECT in pi.routing().projects
-    assert "Scans from sandbox will then be deleted on this Pi, not uploaded." in typed.text
+    assert "Scans from sandbox will then be deleted on this Pi, not uploaded, and raw data" in typed.text
     typed = Scripted(answers=["1", PROJECT])
     assert pi.run("remove", typed, active=True) == 0, typed.text
     assert pi.routing().projects == {} and not env.keys.path(PROJECT).exists()
@@ -577,15 +577,49 @@ def test_nothing_changes_while_an_update_is_being_installed(pi, env):
     import fcntl
     lock = env.tmp / "update" / ".lock"
     lock.parent.mkdir()
+    before = pi.routing_path.read_text()
     with open(lock, "a") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         typed = Scripted(answers=["1", PROJECT])
-        assert _main(pi, env, typed) == 1 and "An update is being installed just now" in typed.text
-        assert PROJECT in pi.routing().projects and typed.prompts == []
+        assert _main(pi, env, typed) == 1 and "An update is being installed just now. Nothing was changed." in typed.text
+        assert pi.service == []  # not stopped
+        typed = Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET])
+        assert pi.run("add", typed) == 1 and "An update is being installed" in typed.text
+        assert not env.keys.path(NEW_CLIENT).exists()
+        typed = Scripted(answers=["1", "1", "sandbox", "extra", ""])
+        assert pi.run("change", typed) == 1 and "An update is being installed" in typed.text
+        assert pi.routing_path.read_text() == before
         listed = Scripted()
-        assert main(pi.site, ["list"], routing_path=pi.routing_path, console=listed.console(), keys=env.keys,
-                    is_root=lambda: True, update_lock=lock) == 0  # looking is fine
+        assert pi.run("list", listed) == 0  # looking is fine
     assert _main(pi, env, Scripted(answers=["1", PROJECT])) == 0
+
+
+def test_the_updater_holds_the_install_lock_only_while_it_installs():
+    import inspect
+    from hyperwheel import datasetscmd, updater
+    assert datasetscmd.UPDATE_LOCK.name == ".installing" == updater.Paths().installing.name
+    assert "self.paths.installing" in inspect.getsource(updater.Updater.apply)
+    assert "installing" not in inspect.getsource(updater.Updater.check)
+
+
+def test_a_session_on_grip_of_a_removed_dataset_goes_through_when_sent_again_after_it_is_added_back(pi, env):
+    from hyperwheel.organiser import Organiser
+    from conftest import make_dicom
+    from pydicom.uid import generate_uid
+    done = env.store.add_study("1.2.40", state="uploaded", project=PROJECT, stable_at=env.clock(),
+                               operators_name="site_a/sandbox")
+    assert pi.run("remove", Scripted(answers=["1", PROJECT])) == 0
+    assert env.store.study(done.id).state == "archived" and env.store.study(done.id).project is None
+    env.fake.clients["site-a-sandbox-client"] = OLD_SECRET
+    assert pi.run("add", Scripted(answers=["site-a-sandbox-client", "sandbox", ""], hidden=[OLD_SECRET])) == 0
+    series = generate_uid()
+    for i in range(2):
+        _, data = make_dicom("1.2.40", series, acq=f"13341{i}")
+        env.orthanc.receive(data)
+    env.orthanc.stable("1.2.40")
+    Organiser(env.store, env.site, pi.routing(), env.orthanc, clock=env.clock).follow()
+    again = env.store.study(done.id)
+    assert again.project == "site-a-sandbox-client" and again.state == "ready"
 
 
 def test_dropping_a_login_waits_while_its_images_arrive(pi, env):

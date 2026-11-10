@@ -54,7 +54,7 @@ from .state import DONE_FILE_STATES, Store
 SERVICE = "hyperwheel.service"
 DASHBOARD = "hyperwheel-dashboard.service"
 ROUTING = Path("/etc/hyperwheel/routing.toml")
-UPDATE_LOCK = Path("/var/lib/hyperwheel-update/.lock")  # the updater's (see updater.Paths.lock)
+UPDATE_LOCK = Path("/var/lib/hyperwheel-update/.installing")  # held by the updater while it installs
 STATUS_TEXT = {
     "working": "working",
     "rejected": "refused by GRIP (wrong, revoked or disabled). Uploads for this dataset are paused",
@@ -297,7 +297,10 @@ class Datasets:
             if answer.isdigit() and 1 <= int(answer) <= len(names):
                 return routing.projects[names[int(answer) - 1]]
             for project in routing.projects.values():
-                if answer in (project.label, project.name):
+                if answer == project.label:
+                    return project
+            for project in routing.projects.values():
+                if answer == project.name:
                     return project
             self.c.say(f"  There's no dataset {answer!r}. Type a number from 1 to {len(names)}.")
         raise Cancelled()
@@ -404,17 +407,19 @@ class Datasets:
         project = Project(name, tuple(logins), self.site.grip.api_base_url, self.site.grip.token_url,
                           client_id=client_id)
         self._check(project, creds, "The dataset wasn't added.")
-        projects = self._raw()
-        projects[name] = {"client_id": client_id, "logins": logins}
-        try:
-            self.keys.write(name, creds)
-        except OSError as e:
-            raise Stop(f"The key works, but it couldn't be saved ({e.strerror}). The dataset wasn't added.") from None
-        try:
-            self._write(projects)
-        except Stop:
-            self.keys.path(name).unlink(missing_ok=True)
-            raise
+        with _no_update(self.update_lock):
+            projects = self._raw()
+            projects[name] = {"client_id": client_id, "logins": logins}
+            try:
+                self.keys.write(name, creds)
+            except OSError as e:
+                raise Stop(f"The key works, but it couldn't be saved ({e.strerror}). The dataset wasn't "
+                           "added.") from None
+            try:
+                self._write(projects)
+            except Stop:
+                self.keys.path(name).unlink(missing_ok=True)
+                raise
         self.c.say(f"Added {client_id}, for scans from {', '.join(logins)}.")
         code = self._restarted()
         self.c.say("In a minute, check its key shows as working with: hyperwheel datasets list")
@@ -450,9 +455,10 @@ class Datasets:
                            "changed. Try again once the Upload Monitor no longer says it's receiving images.")
         finally:
             self._close(store)
-        projects = self._raw()
-        projects[project.name] = {**projects[project.name], "logins": logins}
-        self._write(projects)
+        with _no_update(self.update_lock):
+            projects = self._raw()
+            projects[project.name] = {**projects[project.name], "logins": logins}
+            self._write(projects)
         self.c.say(f"{project.label} now takes scans from {', '.join(logins)}. Sessions already on this Pi stay "
                    "with the dataset they went to."
                    + (f" New scans from {', '.join(dropped)} are deleted on this Pi, not uploaded." if dropped else ""))
@@ -491,19 +497,20 @@ class Datasets:
         if old == creds and project.client_id:
             self.c.say("It's the key already stored, so nothing needed to change.")
             return 0
-        try:
-            self.keys.write(project.name, creds)
-        except OSError as e:
-            raise Stop(f"The key works, but it couldn't be saved ({e.strerror}). {kept}") from None
-        if projects is not None:
+        with _no_update(self.update_lock):
             try:
-                self._write(projects)
-            except Stop:
-                if old is not None:
-                    self.keys.write(project.name, old)
-                else:
-                    self.keys.path(project.name).unlink(missing_ok=True)
-                raise
+                self.keys.write(project.name, creds)
+            except OSError as e:
+                raise Stop(f"The key works, but it couldn't be saved ({e.strerror}). {kept}") from None
+            if projects is not None:
+                try:
+                    self._write(projects)
+                except Stop:
+                    if old is not None:
+                        self.keys.write(project.name, old)
+                    else:
+                        self.keys.path(project.name).unlink(missing_ok=True)
+                    raise
         self.c.say(f"Saved the new key for {client_id}.")
         code = self._restarted()
         self.c.say("In a minute, check it shows as working with: hyperwheel datasets list")
@@ -521,13 +528,14 @@ class Datasets:
             raise Stop(f"Images are still arriving from the scanner for {label}. Nothing was changed. Try again "
                        "once the Upload Monitor no longer says it's receiving images.")
         self.c.say(f"Removing {label} deletes its GRIP key from this Pi. Scans from {logins} will then be deleted "
-                   "on this Pi, not uploaded. What's already on GRIP stays there.")
+                   "on this Pi, not uploaded, and raw data of its sessions not fetched yet stays on the scanner. "
+                   "What's already on GRIP stays there.")
         if self.c.ask(f"To remove it, type its name ({label}): ").strip() != label:
             raise Cancelled()
         if not_on_grip:
-            sessions = len([s for s in drop if s[1]])
-            self.c.say(f"{not_on_grip} file{'s' if not_on_grip != 1 else ''} from {sessions} "
-                       f"session{'s' if sessions != 1 else ''} {'are' if not_on_grip != 1 else 'is'} on this Pi "
+            sessions, n = len([s for s in drop if s[1]]), len(not_on_grip)
+            self.c.say(f"{n} file{'s' if n != 1 else ''} from {sessions} "
+                       f"session{'s' if sessions != 1 else ''} {'are' if n != 1 else 'is'} on this Pi "
                        "and not on GRIP yet. If you go on, they are deleted on this Pi and never reach GRIP.")
             if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
                 raise Cancelled()
@@ -541,6 +549,10 @@ class Datasets:
 
         # From here nothing waits for a person: stop the upload service, count again, then clear. A hang-up
         # (a closed terminal) can't cut it short and leave the service stopped.
+        with _no_update(self.update_lock):
+            return self._clear(project, not_on_grip, on_scanner)
+
+    def _clear(self, project: Project, not_on_grip: frozenset, on_scanner: int) -> int:
         old_handlers = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)}
         was_running = self.service_active()
         try:
@@ -597,7 +609,7 @@ class Datasets:
                 return True
         return False
 
-    def _remove(self, project: Project, agreed: tuple[int, int]) -> int:
+    def _remove(self, project: Project, agreed: tuple[frozenset, int]) -> int:
         """Clear the dataset with the upload service stopped. Its sessions go first, then its routing entry, then
         its key: stopped part-way (a fault, a power cut), the dataset is still there and remove can be run again
         to finish."""
@@ -605,13 +617,14 @@ class Datasets:
         store = self._open_for_change()
         try:
             arriving, drop, archive, not_on_grip, on_scanner = self._look(project, store)
-            if arriving or not_on_grip > agreed[0] or on_scanner > agreed[1]:
+            if arriving or not not_on_grip <= agreed[0] or on_scanner > agreed[1]:
                 raise Stop(f"More arrived for {label} while you answered. Nothing was changed. Run "
                            "hyperwheel datasets remove again.")
             try:
                 for study in archive:
-                    store.move_study(study.id, "archived", patient_id=None, patient_name=None, patient_sex=None,
-                                     patient_birth_date=None)
+                    # No dataset any more: sent again, it goes wherever its login goes then (if anywhere).
+                    store.move_study(study.id, "archived", project=None, patient_id=None, patient_name=None,
+                                     patient_sex=None, patient_birth_date=None)
                 for study, _ in drop:
                     self._drop_one(store, study, project.name)
                 store.forget_project(project.name)
@@ -659,42 +672,48 @@ class Datasets:
                 os.chown(extra, self._db_owner.st_uid, self._db_owner.st_gid)
 
     @staticmethod
-    def _sessions(store: Store | None, name: str) -> tuple[list, list, int, int]:
+    def _sessions(store: Store | None, name: str) -> tuple[list, list, frozenset, int]:
         """The dataset's sessions: those to drop (with how many of their files aren't on GRIP), those to stop
         watching (all their files on GRIP), how many files on the Pi aren't on GRIP, and how many raw files are
         still on the scanner (listed, not fetched yet)."""
         if store is None:
-            return [], [], 0, 0
-        drop, archive, total, on_scanner = [], [], 0, 0
+            return [], [], frozenset(), 0
+        drop, archive, total, on_scanner = [], [], set(), 0
         for study in store.studies():
             if study.project != name or study.state in ("unrouted", "purged", "archived"):
                 continue
             files = store.files(study.id)
             on_scanner += len([f for f in files if f.state == "seen"])
-            missing = len([f for f in files if f.state not in (*DONE_FILE_STATES, "seen")])
+            not_done = {f.id for f in files if f.state not in (*DONE_FILE_STATES, "seen")}
+            missing = len(not_done)
             if study.state == "uploaded" and not missing:
                 archive.append(study)
             else:
                 drop.append((study, missing))
-                total += missing
-        return drop, archive, total, on_scanner
+                total |= not_done
+        return drop, archive, frozenset(total), on_scanner
 
     def _drop_one(self, store: Store, study, name: str) -> None:
         """Delete a dropped session on this Pi: its records first, then its local copies, and only copies inside
         the dataset's own staging folder (a path in the state store is never trusted further than that)."""
-        own = (self.site.staging_dir / name).resolve()
+        base = self.site.staging_dir / name
         paths = store.drop_study(study.id)
+        if base.is_symlink() or not base.is_dir():
+            return  # nothing of ours to delete there, and never through a link
+        own = base.resolve()
         for path in paths:
-            target = Path(path).resolve()
-            if target.is_relative_to(own):
+            target = Path(path)
+            if not target.is_symlink() and target.resolve().is_relative_to(own):
                 target.unlink(missing_ok=True)
-        if is_uid(study.study_uid):
-            shutil.rmtree(own / study.study_uid, ignore_errors=True)
+        if is_uid(study.study_uid) and not (base / study.study_uid).is_symlink():
+            shutil.rmtree(base / study.study_uid, ignore_errors=True)
 
 
 @contextmanager
 def _no_update(lock: Path):
-    """Hold the updater's lock while datasets change, so no update installs (or rolls back) meanwhile."""
+    """Hold the updater's install lock for the moment datasets change, so no release installs or rolls back
+    meanwhile. The updater holds it only while it installs and checks a release (minutes), not while it waits
+    for the Pi to be idle, and this holds it only after every question is answered."""
     if not lock.parent.is_dir():
         yield
         return
@@ -720,10 +739,7 @@ def main(site: SiteConfig, args: list[str], routing_path: Path = ROUTING, **kw) 
         run.c.say(f"'hyperwheel datasets {action}' needs administrator rights. Run it as root.")
         return 2
     try:
-        if action == "list":
-            return run.list()
-        with _no_update(run.update_lock):
-            return getattr(run, action)()
+        return getattr(run, action)()
     except Stop as e:
         for line in str(e).splitlines():
             run.c.say(line)

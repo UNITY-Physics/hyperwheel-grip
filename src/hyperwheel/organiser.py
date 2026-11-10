@@ -92,9 +92,11 @@ class Organiser:
         fields = {}
         if info.acquisition and (study.last_acquisition is None or _iso(info.acquisition) > study.last_acquisition):
             fields["last_acquisition"] = _iso(info.acquisition)
-        if study.state == "purged":
-            self.store.move_study(study.id, "unrouted", **fields)
-        elif study.state in ("receiving", "unrouted"):
+        if study.state in ("purged", "unrouted"):
+            # Sent again: not stable until Orthanc says so, so housekeeping leaves it while it arrives (its login
+            # may have a dataset now, and a purge then would cut the study short).
+            self.store.move_study(study.id, "unrouted", stable_at=None, **fields)
+        elif study.state == "receiving":
             if fields:
                 self.store.update_study(study.id, **fields)
         else:
