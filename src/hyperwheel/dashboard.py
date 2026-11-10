@@ -27,6 +27,7 @@ from pathlib import Path
 
 from . import connect, hostkeys, reach
 from .config import DashboardSettings, Routing, SiteConfig
+from .ids import login_from_operators_name
 from .state import PENDING_FILE_STATES, Store
 
 log = logging.getLogger("hyperwheel.dashboard")
@@ -65,6 +66,12 @@ def _count_texts(state: str, dicom: list, rrdf: list, raw_pending: bool) -> tupl
     return dicom_text, raw_text
 
 
+def _routed_project(routing: Routing, operators_name: str | None) -> str | None:
+    """The project a study's login routes to, for a study not routed yet (its images are still arriving)."""
+    project = routing.project_for_login(login_from_operators_name(operators_name))
+    return project.name if project else None
+
+
 def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
              free_bytes: Callable[[Path], int] | None = None, clock_synced: bool | None = None,
              update_hold: Callable[[], str | None] | None = None,
@@ -77,6 +84,13 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     studies = [s for s in store.studies() if s.state not in _HIDDEN]
     cards, receiving, fetching = [], False, False
     for s in sorted(studies, key=lambda s: (s.study_date or "", s.study_time or ""), reverse=True):
+        project = s.project or _routed_project(routing, s.operators_name)
+        if project is None and s.state in ("receiving", "stable"):
+            # Images still arriving from a login with no routing entry: never shown. They still count as
+            # arriving, so the page never says it's safe to switch off while the scanner is sending (the first
+            # image's login may not be every image's).
+            receiving = True
+            continue
         files = store.files(s.id)
         dicom = [f for f in files if f.kind == "dicom"]
         rrdf = [f for f in files if f.kind == "rrdf" and f.state != "seen"]
@@ -91,7 +105,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         dicom_text, raw_text = _count_texts(s.state, dicom, rrdf, raw_pending)
         cards.append({
             "session": _label(s.study_date, s.study_time),
-            "project": s.project or "",
+            "project": project or "",
             "patient_id": s.patient_id if s.patient_id is not None else "",
             "state": _STATE_TEXT.get(s.state, s.state),
             "dicom": {"total": len(dicom), "on_grip": _on_grip(dicom),
@@ -425,7 +439,7 @@ function render(s) {
   for (const st of s.studies) {
     const card = el("section", "card");
     const head = el("div", "study-head");
-    head.appendChild(el("span", "study-title", st.session + " · " + st.project));
+    head.appendChild(el("span", "study-title", st.project ? st.session + " · " + st.project : st.session));
     head.appendChild(el("span", "meta", st.state));
     card.appendChild(head);
     card.appendChild(el("div", "meta", "Patient ID: " + (st.patient_id.trim() ? st.patient_id : "(blank)")));

@@ -72,9 +72,10 @@ def test_states_an_operator_sees(env, scanner):
 
 
 def test_counts_say_receiving_until_they_mean_something(env):
-    study = env.store.add_study("1.2.3", state="receiving", project=None)
+    study = env.store.add_study("1.2.3", state="receiving", project=None, operators_name="site_a/sandbox")
     card = snap(env)["studies"][0]
     assert card["dicom"]["text"] == "DICOM receiving" and card["raw"]["text"] == "Raw data still to come"
+    assert card["project"] == PROJECT  # from the routing, before the study is routed
     # More images arriving for a study already counted: the count still means something.
     env.store.add_file(kind="dicom", name="a.dcm", state="staged", study_id=study.id, sop_uid="1.2.3.4")
     assert snap(env)["studies"][0]["dicom"]["text"] == "DICOM 0/1 on GRIP"
@@ -97,6 +98,28 @@ def test_connect_state_is_shown(env):
 def test_unrouted_studies_are_never_shown(env):
     phantom_study(env, operators="hospital/clinical")
     assert snap(env)["studies"] == []
+
+
+def test_unrouted_studies_are_not_shown_while_their_images_arrive(env):
+    env.store.add_study("1.2.5", state="receiving", project=None, operators_name="hospital/clinical")
+    env.store.add_study("1.2.6", state="stable", project=None, operators_name=None)
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    s = snap(env)
+    assert s["studies"] == []
+    # Hidden, but still arriving: never "safe to switch off" while they are.
+    assert s["headline"] == "Receiving images from the scanner" and not s["safe_to_switch_off"]
+
+
+def test_the_row_leaves_out_the_dot_with_no_project():
+    assert 'st.project ? st.session + " · " + st.project : st.session' in dashboard.SCRIPT
+
+
+def test_a_held_study_with_no_project_is_still_shown(env):
+    # Held for images from two logins, before it was routed: the data manager has to see it.
+    study = env.store.add_study("1.2.7", state="held", project=None, operators_name="hospital/clinical")
+    env.store.raise_flag("MIXED_LOGINS", "Images from more than one login.", study_id=study.id, level="hold")
+    card = snap(env)["studies"][0]
+    assert card["project"] == "" and card["flags"][0]["level"] == "hold"
 
 
 def test_attention_and_key_problems(env):
