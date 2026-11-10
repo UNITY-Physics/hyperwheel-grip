@@ -230,3 +230,19 @@ def test_patient_data_not_logged(env, caplog):
     scan(env, n=1, operators="hospital/clinical")
     organiser(env).follow()
     assert PATIENT_ID not in caplog.text and "DONOTLOG" not in caplog.text
+
+
+def test_a_study_deleted_before_its_login_had_a_dataset_goes_through_when_sent_again(env):
+    uid = scan(env, operators="site_a/later")
+    organiser(env).follow()
+    study = env.store.study_by_uid(uid)
+    assert study.state == "purged" and env.store.files(study.id) == []
+    later = Project("SiteA-Later", ("later",), env.fake.base_url, env.fake.token_url)
+    env.routing = Routing(projects={**env.routing.projects, later.name: later})
+    scan(env, study_uid=uid, operators="site_a/later")  # the scanner sends it again
+    organiser(env).follow()
+    study = env.store.study_by_uid(uid)
+    assert study.state == "ready" and study.project == "SiteA-Later" and study.patient_id == PATIENT_ID
+    assert len(env.store.files(study.id, kind="dicom")) == 3
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "ready"  # not purged again

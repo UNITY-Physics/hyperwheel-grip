@@ -68,8 +68,8 @@ FILE_STATES = (
 _STUDY_MOVES = {
     "receiving": {"stable"},
     "stable": {"unrouted", "checking"},
-    "unrouted": {"purged"},
-    "purged": {"unrouted"},
+    "unrouted": {"purged", "stable"},
+    "purged": {"unrouted", "stable"},  # stable: sent again once its login has a dataset
     "checking": {"held", "ready"},
     "held": {"ready", "checking"},
     "ready": {"uploading"},

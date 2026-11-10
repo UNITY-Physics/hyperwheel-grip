@@ -29,6 +29,7 @@ the dataset after.
 
 from __future__ import annotations
 
+import fcntl
 import getpass
 import os
 import re
@@ -37,7 +38,8 @@ import signal
 import subprocess
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import requests
@@ -52,6 +54,7 @@ from .state import DONE_FILE_STATES, Store
 SERVICE = "hyperwheel.service"
 DASHBOARD = "hyperwheel-dashboard.service"
 ROUTING = Path("/etc/hyperwheel/routing.toml")
+UPDATE_LOCK = Path("/var/lib/hyperwheel-update/.lock")  # the updater's (see updater.Paths.lock)
 STATUS_TEXT = {
     "working": "working",
     "rejected": "refused by GRIP (wrong, revoked or disabled). Uploads for this dataset are paused",
@@ -158,6 +161,7 @@ class Datasets:
                                                                 capture_output=True)
     restart_dashboard: Callable[[], None] = lambda: subprocess.run(["systemctl", "try-restart", DASHBOARD],
                                                                     capture_output=True)
+    update_lock: Path = UPDATE_LOCK
 
     def __post_init__(self):
         self.keys = self.keys or KeyStore(self.site.keys_dir)
@@ -210,7 +214,8 @@ class Datasets:
                 os.close(folder)
         except (ConfigError, OSError) as e:
             tmp.unlink(missing_ok=True)
-            why = str(e).replace(f"{tmp} ", "").replace(str(tmp), "the new settings")
+            why = e.strerror if isinstance(e, OSError) and e.strerror else \
+                str(e).replace(f"{tmp} ", "").replace(str(tmp), "the new settings")
             raise Stop(f"The dataset settings couldn't be saved ({why}). They are as they were.") from None
 
     # ---- what's known ----
@@ -239,6 +244,8 @@ class Datasets:
                 store.close()
         if self.site.staging_dir.is_dir():
             names |= {p.name for p in self.site.staging_dir.iterdir()}
+        if self.keys.directory.is_dir():
+            names |= {p.stem for p in self.keys.directory.glob("*.json")}
         return names
 
     def _store(self, readonly: bool = True) -> Store | None:
@@ -435,11 +442,20 @@ class Datasets:
         if logins == list(project.logins):
             self.c.say("Those are its logins already. Nothing was changed.")
             return 0
+        dropped = [x for x in project.logins if x not in logins]
+        store = self._open_for_change()
+        try:
+            if dropped and self._arriving(store, replace(project, logins=tuple(dropped))):
+                raise Stop(f"Images are still arriving from the scanner for {', '.join(dropped)}. Nothing was "
+                           "changed. Try again once the Upload Monitor no longer says it's receiving images.")
+        finally:
+            self._close(store)
         projects = self._raw()
         projects[project.name] = {**projects[project.name], "logins": logins}
         self._write(projects)
         self.c.say(f"{project.label} now takes scans from {', '.join(logins)}. Sessions already on this Pi stay "
-                   "with the dataset they went to.")
+                   "with the dataset they went to."
+                   + (f" New scans from {', '.join(dropped)} are deleted on this Pi, not uploaded." if dropped else ""))
         return self._restarted()
 
     def _replace_key(self, project: Project) -> int:
@@ -448,6 +464,13 @@ class Datasets:
         if project.client_id and client_id != project.client_id:
             raise Stop(f"That's another client ID. Each client ID is its own dataset, and this one is "
                        f"{project.client_id}. To add {client_id} as a new dataset, type: hyperwheel datasets add")
+        try:
+            stored = self.keys.read(project.name).client_id
+        except KeyProblem:
+            stored = None
+        if not project.client_id and stored and client_id != stored:
+            raise Stop(f"That's another client ID. This dataset's key is for {stored}, and each client ID is its own "
+                       f"dataset. To add {client_id} as a new dataset, type: hyperwheel datasets add")
         routing = self.routing()
         owner = self._client_ids(routing).get(client_id)
         if owner is not None and owner != project.name:
@@ -493,7 +516,7 @@ class Datasets:
         project = self._pick(routing, "remove")
         label, logins = project.label, ", ".join(project.logins)
         # Counted with the upload service running, so nothing pauses while the questions wait for an answer.
-        arriving, drop, _, not_on_grip = self._look(project)
+        arriving, drop, _, not_on_grip, on_scanner = self._look(project)
         if arriving:
             raise Stop(f"Images are still arriving from the scanner for {label}. Nothing was changed. Try again "
                        "once the Upload Monitor no longer says it's receiving images.")
@@ -508,26 +531,46 @@ class Datasets:
                        "and not on GRIP yet. If you go on, they are deleted on this Pi and never reach GRIP.")
             if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
                 raise Cancelled()
+        if on_scanner:
+            self.c.say(f"{on_scanner} raw file{'s' if on_scanner != 1 else ''} of its sessions "
+                       f"{'are' if on_scanner != 1 else 'is'} still on the scanner, not fetched yet. If you go on, "
+                       f"{'they are' if on_scanner != 1 else 'it is'} never fetched or uploaded. The scanner keeps "
+                       f"{'them' if on_scanner != 1 else 'it'}.")
+            if self.c.ask("To go on without it, type go on: ").strip().lower() != "go on":
+                raise Cancelled()
 
         # From here nothing waits for a person: stop the upload service, count again, then clear. A hang-up
         # (a closed terminal) can't cut it short and leave the service stopped.
-        old_handlers = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGHUP, signal.SIGINT)}
+        old_handlers = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)}
         was_running = self.service_active()
         try:
             try:
-                self.service_stop()
-            except Exception:  # noqa: BLE001
-                raise Stop("Hyperwheel couldn't be stopped to clear the dataset, so nothing was changed. Ask "
-                           "your Hyperwheel admin.") from None
-            try:
-                return self._remove(project, not_on_grip)
+                try:
+                    self.service_stop()
+                except Exception:  # noqa: BLE001
+                    raise Stop("Hyperwheel couldn't be stopped to clear the dataset, so nothing was changed. Ask "
+                               "your Hyperwheel admin.") from None
+                return self._remove(project, (not_on_grip, on_scanner))
             finally:
-                if was_running:
-                    self.service_start()
-                self.restart_dashboard()
+                self._start_again(was_running)
         finally:
             for s, handler in old_handlers.items():
                 signal.signal(s, handler)
+
+    def _start_again(self, was_running: bool) -> None:
+        problems = []
+        if was_running:
+            try:
+                self.service_start()
+            except Exception:  # noqa: BLE001
+                problems.append("Hyperwheel")
+        try:
+            self.restart_dashboard()
+        except Exception:  # noqa: BLE001
+            problems.append("the Upload Monitor")
+        if problems:
+            self.c.say(f"{' and '.join(problems)} couldn't be started again. Restart the Pi, or ask your Hyperwheel "
+                       "admin.")
 
     def _look(self, project: Project, store: Store | None = None):
         """What removing this dataset would touch: whether images are still arriving for it, the sessions to drop
@@ -536,8 +579,8 @@ class Datasets:
         store = store or self._open_for_change()
         try:
             arriving = self._arriving(store, project)
-            drop, archive, not_on_grip = self._sessions(store, project.name)
-            return arriving, drop, archive, not_on_grip
+            drop, archive, not_on_grip, on_scanner = self._sessions(store, project.name)
+            return arriving, drop, archive, not_on_grip, on_scanner
         finally:
             if own:
                 self._close(store)
@@ -554,15 +597,15 @@ class Datasets:
                 return True
         return False
 
-    def _remove(self, project: Project, agreed: int) -> int:
+    def _remove(self, project: Project, agreed: tuple[int, int]) -> int:
         """Clear the dataset with the upload service stopped. Its sessions go first, then its routing entry, then
         its key: stopped part-way (a fault, a power cut), the dataset is still there and remove can be run again
         to finish."""
         label = project.label
         store = self._open_for_change()
         try:
-            arriving, drop, archive, not_on_grip = self._look(project, store)
-            if arriving or not_on_grip > agreed:
+            arriving, drop, archive, not_on_grip, on_scanner = self._look(project, store)
+            if arriving or not_on_grip > agreed[0] or on_scanner > agreed[1]:
                 raise Stop(f"More arrived for {label} while you answered. Nothing was changed. Run "
                            "hyperwheel datasets remove again.")
             try:
@@ -616,22 +659,25 @@ class Datasets:
                 os.chown(extra, self._db_owner.st_uid, self._db_owner.st_gid)
 
     @staticmethod
-    def _sessions(store: Store | None, name: str) -> tuple[list, list, int]:
+    def _sessions(store: Store | None, name: str) -> tuple[list, list, int, int]:
         """The dataset's sessions: those to drop (with how many of their files aren't on GRIP), those to stop
-        watching (all their files on GRIP), and how many files in all aren't on GRIP."""
+        watching (all their files on GRIP), how many files on the Pi aren't on GRIP, and how many raw files are
+        still on the scanner (listed, not fetched yet)."""
         if store is None:
-            return [], [], 0
-        drop, archive, total = [], [], 0
+            return [], [], 0, 0
+        drop, archive, total, on_scanner = [], [], 0, 0
         for study in store.studies():
             if study.project != name or study.state in ("unrouted", "purged", "archived"):
                 continue
-            missing = len([f for f in store.files(study.id) if f.state not in (*DONE_FILE_STATES, "seen")])
+            files = store.files(study.id)
+            on_scanner += len([f for f in files if f.state == "seen"])
+            missing = len([f for f in files if f.state not in (*DONE_FILE_STATES, "seen")])
             if study.state == "uploaded" and not missing:
                 archive.append(study)
             else:
                 drop.append((study, missing))
                 total += missing
-        return drop, archive, total
+        return drop, archive, total, on_scanner
 
     def _drop_one(self, store: Store, study, name: str) -> None:
         """Delete a dropped session on this Pi: its records first, then its local copies, and only copies inside
@@ -644,6 +690,21 @@ class Datasets:
                 target.unlink(missing_ok=True)
         if is_uid(study.study_uid):
             shutil.rmtree(own / study.study_uid, ignore_errors=True)
+
+
+@contextmanager
+def _no_update(lock: Path):
+    """Hold the updater's lock while datasets change, so no update installs (or rolls back) meanwhile."""
+    if not lock.parent.is_dir():
+        yield
+        return
+    with open(lock, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise Stop("An update is being installed just now. Nothing was changed. Try again in a few "
+                       "minutes.") from None
+        yield
 
 
 USAGE = "Usage: hyperwheel datasets list | add | change | remove"
@@ -659,7 +720,10 @@ def main(site: SiteConfig, args: list[str], routing_path: Path = ROUTING, **kw) 
         run.c.say(f"'hyperwheel datasets {action}' needs administrator rights. Run it as root.")
         return 2
     try:
-        return getattr(run, action)()
+        if action == "list":
+            return run.list()
+        with _no_update(run.update_lock):
+            return getattr(run, action)()
     except Stop as e:
         for line in str(e).splitlines():
             run.c.say(line)

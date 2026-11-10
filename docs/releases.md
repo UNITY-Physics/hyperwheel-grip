@@ -349,7 +349,9 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   token with the key **before** saving anything. If GRIP refuses it, or can't
   be reached to check it, nothing is saved.
 - `hyperwheel datasets change` changes a dataset's logins (only for scans that
-  finish after the change, and logins left out are then deleted on the Pi), or
+  finish after the change, and logins left out are then deleted on the Pi. It
+  waits while images are still arriving from a login being left out. To move a
+  login to another dataset, take it off one, then add it to the other), or
   replaces its key (the client ID stays the dataset's: another client ID is
   another dataset). A new key is checked with GRIP the same way.
 - `hyperwheel datasets remove` deletes a dataset and its key from the Pi,
@@ -358,11 +360,16 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   still arriving for it, it waits (try again once the Upload Monitor no longer
   says it's receiving). If any of its files aren't on GRIP yet (waiting,
   refused), it says how many and stops unless the person also types
-  `delete them`. Then, with the upload service stopped for a moment, it counts
+  `delete them`. Raw data of its sessions still on the scanner (not fetched
+  yet) is never fetched once it's removed: it says so and asks for `go on`. Then, with the upload service stopped for a moment, it counts
   again (stopping if more arrived), deletes those sessions on the Pi and in
   Orthanc like a study from a login with no dataset, and only then takes the
   dataset and its key off the Pi. Stopped part-way, the dataset is still
   there, and running `remove` again finishes it. What's on GRIP stays there.
+- `add`, `change` and `remove` wait while an update is being installed.
+- A session deleted on the Pi because its login had no dataset (or its
+  dataset was removed) goes through as a new one if the scanner sends it again
+  once its login has a dataset.
 
 Every command asks for the data-manager password (except `list`). The secret
 is typed hidden and never shown, logged or put on a command line. Pressing

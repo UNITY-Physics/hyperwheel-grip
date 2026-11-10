@@ -66,7 +66,8 @@ class Pi:
                     is_root=lambda: root, service_active=lambda: active,
                     service_stop=lambda: self.service.append("stop"),
                     service_start=lambda: self.service.append("start"),
-                    restart_dashboard=lambda: self.service.append("dashboard"))
+                    restart_dashboard=lambda: self.service.append("dashboard"),
+                    update_lock=self.env.tmp / "update" / ".lock")
 
     def routing(self):
         return load_routing(self.routing_path, test_mode=True, grip=self.site.grip)
@@ -447,7 +448,8 @@ def test_a_client_id_already_in_an_older_datasets_key_is_not_added_again(pi, env
 def test_replacing_an_older_datasets_key_with_another_datasets_client_id_changes_nothing(pi, env):
     pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET]))
     typed = Scripted(answers=[PROJECT, "2", NEW_CLIENT], hidden=[NEW_SECRET])
-    assert pi.run("change", typed) == 1 and f"That client ID is the dataset {NEW_CLIENT}'s." in typed.text
+    assert pi.run("change", typed) == 1 and "That's another client ID." in typed.text
+    assert "This dataset's key is for site-a-sandbox-client" in typed.text
     assert env.keys.read(PROJECT).client_id == "site-a-sandbox-client"
 
 
@@ -517,3 +519,80 @@ def test_replacing_an_older_datasets_key_puts_the_old_key_back_if_the_routing_fi
     assert pi.run("change", typed) == 1 and "couldn't be saved" in typed.text
     assert env.keys.read(PROJECT).client_secret == OLD_SECRET
     assert pi.routing().projects[PROJECT].client_id is None
+
+
+# ---- raw data on the scanner, logins changed while arriving, the service and the updater ----
+
+
+def _main(pi, env, typed, **kw):
+    defaults = dict(routing_path=pi.routing_path, console=typed.console(), keys=env.keys, is_root=lambda: True,
+                    service_active=lambda: True, service_stop=lambda: pi.service.append("stop"),
+                    service_start=lambda: pi.service.append("start"), restart_dashboard=lambda: None,
+                    update_lock=env.tmp / "update" / ".lock")
+    return main(pi.site, ["remove"], **{**defaults, **kw})
+
+
+def test_raw_data_still_on_the_scanner_is_said_and_needs_its_own_yes(pi, env):
+    study = env.stage_study(n_dicom=0, raw_sizes=())
+    env.store.add_file(kind="rrdf", name="fse_rrdf_20261027_134000.h5", state="seen", study_id=study.id,
+                       scanner_folder="rrdf_20261027_132801")
+    typed = Scripted(answers=["1", PROJECT, ""])
+    assert pi.run("remove", typed) == 1
+    assert "1 raw file of its sessions is still on the scanner, not fetched yet." in typed.text
+    assert PROJECT in pi.routing().projects
+    typed = Scripted(answers=["1", PROJECT, "go on"])
+    assert pi.run("remove", typed) == 0 and pi.routing().projects == {}
+
+
+def test_more_arriving_once_the_service_is_stopped_also_stops_remove(pi, env):
+    env.stage_study(n_dicom=1, raw_sizes=())
+
+    def arrives():
+        env.store.add_study("1.2.12", state="receiving", operators_name="site_a/sandbox")
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    assert _main(pi, env, typed, service_stop=arrives) == 1 and "More arrived" in typed.text
+    assert PROJECT in pi.routing().projects
+
+
+def test_hang_ups_are_ignored_while_it_clears(pi, env):
+    import signal
+    seen = []
+    typed = Scripted(answers=["1", PROJECT])
+    assert _main(pi, env, typed, service_stop=lambda: seen.append(
+        [signal.getsignal(s) for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)])) == 0
+    assert seen == [[signal.SIG_IGN] * 3] and signal.getsignal(signal.SIGINT) is not signal.SIG_IGN
+
+
+def test_a_service_that_wont_start_again_is_said_plainly(pi, env):
+    import subprocess
+
+    def wont():
+        raise subprocess.CalledProcessError(1, "systemctl")
+    typed = Scripted(answers=["1", PROJECT])
+    assert _main(pi, env, typed, service_start=wont) == 0
+    assert "Hyperwheel couldn't be started again. Restart the Pi, or ask your Hyperwheel admin." in typed.text
+
+
+def test_nothing_changes_while_an_update_is_being_installed(pi, env):
+    import fcntl
+    lock = env.tmp / "update" / ".lock"
+    lock.parent.mkdir()
+    with open(lock, "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        typed = Scripted(answers=["1", PROJECT])
+        assert _main(pi, env, typed) == 1 and "An update is being installed just now" in typed.text
+        assert PROJECT in pi.routing().projects and typed.prompts == []
+        listed = Scripted()
+        assert main(pi.site, ["list"], routing_path=pi.routing_path, console=listed.console(), keys=env.keys,
+                    is_root=lambda: True, update_lock=lock) == 0  # looking is fine
+    assert _main(pi, env, Scripted(answers=["1", PROJECT])) == 0
+
+
+def test_dropping_a_login_waits_while_its_images_arrive(pi, env):
+    pi.run("add", Scripted(answers=[NEW_CLIENT, "one", "two", ""], hidden=[NEW_SECRET]))
+    env.store.add_study("1.2.13", state="receiving", operators_name="site_b/two")
+    typed = Scripted(answers=[NEW_CLIENT, "1", "one", ""])
+    assert pi.run("change", typed) == 1 and "Images are still arriving from the scanner for two." in typed.text
+    assert pi.routing().projects[NEW_CLIENT].logins == ("one", "two")
+    typed = Scripted(answers=[NEW_CLIENT, "1", "two", ""])  # dropping "one", which has nothing arriving
+    assert pi.run("change", typed) == 0 and "New scans from one are deleted on this Pi" in typed.text

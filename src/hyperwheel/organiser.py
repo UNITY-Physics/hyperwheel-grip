@@ -161,6 +161,16 @@ class Organiser:
         if project is None:
             self._purge(study, login)
             return
+        if study.state in ("unrouted", "purged"):
+            # Deleted on the Pi while its login had no dataset (or after its dataset was removed), and sent again
+            # now that the login has one: it goes through as a new study does, with its details from the images.
+            first = infos[0]
+            study = self.store.move_study(study.id, "stable", project=None, patient_id=first.patient_id,
+                                          patient_name=first.patient_name, patient_sex=first.patient_sex,
+                                          patient_birth_date=first.patient_birth_date,
+                                          operators_name=first.operators_name)
+            self.store.clear_study_flags(study.id, ["ROUTING_CHANGED"])
+            log.info("study %s: sent again, and its login now goes to %s", uid, project.name)
 
         if study.project is None:
             study = self.store.update_study(study.id, project=project.name)
