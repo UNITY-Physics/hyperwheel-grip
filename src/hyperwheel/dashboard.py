@@ -71,14 +71,17 @@ def _count_texts(state: str, dicom: list, rrdf: list, raw_pending: bool) -> tupl
 _KEY_BLOCKED = ("missing", "unreadable", "rejected")
 
 
-def _waiting_for_key(store: Store, pending_files: list) -> list[str]:
+def _waiting_for_key(store: Store, routing: Routing, pending_files: list) -> list[str]:
     """The projects whose files wait for a working GRIP key, if every file still to upload is one of them
-    (otherwise something is uploading, and the key alert names the project that isn't)."""
+    (otherwise something is uploading, and the key alert names the project that isn't). A project no longer
+    in the routing settings doesn't count: a key can't be set for it, and its own alert says so."""
     project_of = {s.id: s.project for s in store.studies()}
     projects = {project_of.get(f.study_id) for f in pending_files}
     if None in projects:
         return []
     for name in projects:
+        if name not in routing.projects:
+            return []
         status = store.key_status(name)
         if not (status and status[0] in _KEY_BLOCKED):
             return []
@@ -178,7 +181,9 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         headline, sub = "Receiving images from the scanner", ""  # the badge says to keep the scanner on
     elif fetching:
         headline, sub = "Fetching raw data from the scanner", ""
-    elif pending and (no_key := _waiting_for_key(store, pending_files)):
+    elif pending and (no_key := _waiting_for_key(store, routing, pending_files)):
+        # Leaving the scanner on can't help without a key, so the badge says it's safe to switch off even with
+        # a long wait or a low disk (that has its own alert).
         headline = "Waiting for a GRIP key"
         sub = (f"Everything from the scanner is on the Pi. {files} still to upload. Uploads for "
                f"{_and_list(no_key)} start once a working GRIP key is set. The Pi keeps the files, so you can "
