@@ -319,7 +319,7 @@ freshly flashed card. The SOP will give each step with pictures. So far:
 
 One API key per GRIP dataset, agreed with GRIP. Keys don't expire. They are
 rotated or revoked by hand. Each dataset is named by its **client ID**, the
-one GRIP gives with its key (for example `prisma-kenya`): that's the name
+one GRIP gives with its key (for example `site-a-study-one`): that's the name
 `hyperwheel datasets list` and the Upload Monitor show. On the Pi, a client ID
 that can't be a folder name gets a safe one made from it, which people never
 need to see.
@@ -328,7 +328,11 @@ GRIP's address is the same for every dataset and every Pi: it comes with the
 release (for now GRIP's test gateway, then production's once GRIP sends it,
 reaching every Pi as a normal update). A site file's `[grip]` section can give
 another for one site, just in case. `hyperwheel doctor` shows the address a Pi
-uses. Nobody types it.
+uses. Nobody types it. On a Pi set up before 0.1.16, each dataset still has
+GRIP's address in its own entry. The first `hyperwheel datasets` change drops
+that entry's address if it's the site's, and from then on the dataset follows
+the site's. An entry whose address differs keeps it (doctor lists it), so
+before the release that changes the default, check those Pis.
 
 Each site's data managers own their datasets and keys, and manage them through
 the **data-manager account**, which can run only the dataset, scanner-password

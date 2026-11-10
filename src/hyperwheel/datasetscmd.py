@@ -46,7 +46,7 @@ from .grip.errors import GripError, KeyRejected
 from .grip.http import TokenManager
 from .ids import is_login, is_project_name, is_uid, login_from_operators_name
 from .keys import Credentials, KeyMissing, KeyProblem, KeyStore
-from .state import PENDING_FILE_STATES, Store
+from .state import DONE_FILE_STATES, Store
 
 SERVICE = "hyperwheel.service"
 DASHBOARD = "hyperwheel-dashboard.service"
@@ -58,8 +58,6 @@ STATUS_TEXT = {
     "unreadable": "the key file can't be read. Uploads for this dataset are paused",
 }
 _SECRET = re.compile(r"[\x21-\x7e]{1,4096}")
-# Studies of a removed dataset that are still on their way to GRIP: dropped once the person confirms.
-_DROPPABLE = ("checking", "held", "ready", "uploading")
 
 
 @dataclass
@@ -151,6 +149,8 @@ class Datasets:
                                                                capture_output=True)
     service_start: Callable[[], None] = lambda: subprocess.run(["systemctl", "start", SERVICE], check=True,
                                                                 capture_output=True)
+    restart_dashboard: Callable[[], None] = lambda: subprocess.run(["systemctl", "try-restart", DASHBOARD],
+                                                                    capture_output=True)
 
     def __post_init__(self):
         self.keys = self.keys or KeyStore(self.site.keys_dir)
@@ -162,17 +162,25 @@ class Datasets:
         try:
             return load_routing(self.routing_path, test_mode=self.site.test_mode, grip=self.site.grip)
         except ConfigError as e:
-            raise Stop(f"This Pi's dataset settings can't be read ({e}). Ask your Hyperwheel admin.") from None
+            why = str(e).replace(f"{self.routing_path} ", "").replace(str(self.routing_path), "the dataset settings")
+            raise Stop(f"This Pi's dataset settings can't be read ({why}). Ask your Hyperwheel admin.") from None
 
     def _raw(self) -> dict:
         with open(self.routing_path, "rb") as f:
             data = tomllib.load(f)
         return dict(data.get("projects", {}))
 
-    def _write(self, projects: dict) -> None:
-        """Replace the routing file with these datasets: checked first, then swapped in one step, flushed to disk."""
+    def _write(self, projects: dict, *, check_only: bool = False) -> None:
+        """Replace the routing file with these datasets: checked first, then swapped in one step, flushed to disk.
+        A dataset's own GRIP address that is the site's anyway is left out, so it follows the site's from then on.
+        With ``check_only``, only the check: the file stays as it is."""
         from .sitesetup import render_routing_toml
 
+        grip = (self.site.grip.api_base_url, self.site.grip.token_url)
+        projects = {name: {k: v for k, v in entry.items()
+                           if (entry.get("api_base_url"), entry.get("token_url")) != grip
+                           or k not in ("api_base_url", "token_url")}
+                    for name, entry in projects.items()}
         text = render_routing_toml(projects)
         tmp = self.routing_path.with_name(f".{self.routing_path.name}.new")
         tmp.unlink(missing_ok=True)
@@ -184,6 +192,9 @@ class Datasets:
                 os.fsync(f.fileno())
             os.chmod(tmp, 0o644)
             load_routing(tmp, test_mode=self.site.test_mode, grip=self.site.grip)
+            if check_only:
+                tmp.unlink()
+                return
             os.replace(tmp, self.routing_path)
             folder = os.open(self.routing_path.parent, os.O_RDONLY)
             try:
@@ -192,10 +203,36 @@ class Datasets:
                 os.close(folder)
         except (ConfigError, OSError) as e:
             tmp.unlink(missing_ok=True)
-            raise Stop(f"The dataset settings couldn't be saved ({str(e).replace(str(tmp), 'the new file')}). "
-                       "They are as they were.") from None
+            why = str(e).replace(f"{tmp} ", "").replace(str(tmp), "the new settings")
+            raise Stop(f"The dataset settings couldn't be saved ({why}). They are as they were.") from None
 
     # ---- what's known ----
+
+    def _client_ids(self, routing: Routing) -> dict[str, str]:
+        """Every client ID on this Pi and the dataset that has it: from the routing file, and from the key files
+        (datasets from before client IDs were stored there have theirs only in their key)."""
+        out = {}
+        for name, project in routing.projects.items():
+            if project.client_id:
+                out[project.client_id] = name
+            try:
+                out.setdefault(self.keys.read(name).client_id, name)
+            except KeyProblem:
+                pass
+        return out
+
+    def _names_in_use(self, routing: Routing) -> set[str]:
+        """Dataset names on this Pi: in the routing file, and still on sessions or folders of removed ones."""
+        names = set(routing.projects)
+        store = self._store()
+        if store is not None:
+            try:
+                names |= {s.project for s in store.studies() if s.project}
+            finally:
+                store.close()
+        if self.site.staging_dir.is_dir():
+            names |= {p.name for p in self.site.staging_dir.iterdir()}
+        return names
 
     def _store(self, readonly: bool = True) -> Store | None:
         if not self.site.state_db.exists():
@@ -343,13 +380,13 @@ class Datasets:
         self.c.say("Add a GRIP dataset. You need its client ID and secret from GRIP, and the scanner login whose "
                    "scans go to it.")
         client_id = self._ask_client_id()
-        for project in routing.projects.values():
-            if client_id in (project.label, project.client_id):
-                raise Stop(f"{client_id} is already a dataset on this Pi. To change its logins or key, type: "
-                           "hyperwheel datasets change")
+        owner = self._client_ids(routing).get(client_id)
+        if owner is not None or client_id in {p.label for p in routing.projects.values()}:
+            raise Stop(f"{client_id} is already a dataset on this Pi. To change its logins or key, type: "
+                       "hyperwheel datasets change")
         logins = self._ask_logins(routing)
         creds = Credentials(client_id, self._ask_secret())
-        name = safe_name(client_id, set(routing.projects))
+        name = safe_name(client_id, self._names_in_use(routing))
         project = Project(name, tuple(logins), self.site.grip.api_base_url, self.site.grip.token_url,
                           client_id=client_id)
         self._check(project, creds, "The dataset wasn't added.")
@@ -404,6 +441,16 @@ class Datasets:
         if project.client_id and client_id != project.client_id:
             raise Stop(f"That's another client ID. Each client ID is its own dataset, and this one is "
                        f"{project.client_id}. To add {client_id} as a new dataset, type: hyperwheel datasets add")
+        routing = self.routing()
+        owner = self._client_ids(routing).get(client_id)
+        if owner is not None and owner != project.name:
+            raise Stop(f"That client ID is the dataset {routing.label(owner)}'s. Each client ID is its own dataset. "
+                       "Nothing was changed.")
+        projects = None
+        if not project.client_id:  # a dataset from before client IDs were its name: it's named after it now
+            projects = self._raw()
+            projects[project.name] = {"client_id": client_id, **projects[project.name]}
+            self._write(projects, check_only=True)  # before the key is saved, so both change or neither
         creds = Credentials(client_id, self._ask_secret())
         try:
             old = self.keys.read(project.name)
@@ -418,10 +465,15 @@ class Datasets:
             self.keys.write(project.name, creds)
         except OSError as e:
             raise Stop(f"The key works, but it couldn't be saved ({e.strerror}). {kept}") from None
-        if not project.client_id:  # a dataset from before client IDs were its name: it's named after it now
-            projects = self._raw()
-            projects[project.name] = {"client_id": client_id, **projects[project.name]}
-            self._write(projects)
+        if projects is not None:
+            try:
+                self._write(projects)
+            except Stop:
+                if old is not None:
+                    self.keys.write(project.name, old)
+                else:
+                    self.keys.path(project.name).unlink(missing_ok=True)
+                raise
         self.c.say(f"Saved the new key for {client_id}.")
         code = self._restarted()
         self.c.say("In a minute, check it shows as working with: hyperwheel datasets list")
@@ -433,80 +485,108 @@ class Datasets:
             raise Stop("There are no GRIP datasets on this Pi, so there's none to remove.")
         project = self._pick(routing, "remove")
         label, logins = project.label, ", ".join(project.logins)
-        waiting_studies, waiting_files = self._waiting(project.name)
         self.c.say(f"Removing {label} deletes its GRIP key from this Pi. Scans from {logins} will then be deleted "
                    "on this Pi, not uploaded. What's already on GRIP stays there.")
         if self.c.ask(f"To remove it, type its name ({label}): ").strip() != label:
             raise Cancelled()
-        if waiting_files:
-            self.c.say(f"{waiting_files} file{'s' if waiting_files != 1 else ''} from {waiting_studies} "
-                       f"session{'s' if waiting_studies != 1 else ''} still wait to upload to {label}. If you go "
-                       "on, they are deleted on this Pi and never reach GRIP.")
-            if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
-                raise Cancelled()
 
         was_running = self.service_active()
         if was_running:
-            self.service_stop()  # nothing uploads while its files are taken away
+            self.service_stop()  # nothing uploads or arrives into its sessions while they are counted and cleared
         try:
-            projects = self._raw()
-            projects.pop(project.name, None)
-            self._write(projects)
-            dropped = self._drop(project.name)
-            self.keys.path(project.name).unlink(missing_ok=True)
+            return self._remove(project)
         finally:
             if was_running:
                 self.service_start()
-        self.c.say(f"Removed {label}." + (f" {dropped} waiting session{'s were' if dropped != 1 else ' was'} "
-                                          "deleted on this Pi." if dropped else ""))
-        code = self._restarted()
-        self.c.say("To see the datasets left, type: hyperwheel datasets list")
-        return code
+            self.restart_dashboard()
 
-    def _waiting(self, name: str) -> tuple[int, int]:
-        store = self._store()
-        if store is None:
-            return 0, 0
+    def _remove(self, project: Project) -> int:
+        label = project.label
+        store = self._open_for_change()
         try:
-            studies = [s for s in store.studies(states=_DROPPABLE) if s.project == name]
-            files = sum(len([f for f in store.files(s.id) if f.state in PENDING_FILE_STATES]) for s in studies)
-            return len(studies), files
-        finally:
-            store.close()
-
-    def _drop(self, name: str) -> int:
-        """The removed dataset's studies: those on their way to GRIP are dropped (deleted on the Pi and, by the
-        organiser, in Orthanc), and those already uploaded stop being watched for late raw data."""
-        if not self.site.state_db.exists():
-            return 0
-        db_owner = self.site.state_db.stat()
-        store = self._store(readonly=False)
-        dropped = 0
-        try:
-            for study in store.studies(states=(*_DROPPABLE, "uploaded")):
-                if study.project != name:
-                    continue
-                if study.state == "uploaded":
+            drop, archive, not_on_grip = self._sessions(store, project.name)
+            if not_on_grip:
+                sessions = len([s for s in drop if s[1]])
+                self.c.say(f"{not_on_grip} file{'s' if not_on_grip != 1 else ''} from {sessions} "
+                           f"session{'s' if sessions != 1 else ''} are on this Pi and not on GRIP yet. If you go on, "
+                           "they are deleted on this Pi and never reach GRIP.")
+                if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
+                    raise Cancelled()
+            projects = self._raw()
+            projects.pop(project.name, None)
+            self._write(projects)
+            try:
+                for study in archive:
                     store.move_study(study.id, "archived", patient_id=None, patient_name=None, patient_sex=None,
                                      patient_birth_date=None)
-                    continue
-                paths = store.drop_study(study.id)
-                for path in paths:
-                    Path(path).unlink(missing_ok=True)
-                if is_uid(study.study_uid) and is_project_name(name):
-                    shutil.rmtree(self.site.staging_dir / name / study.study_uid, ignore_errors=True)
-                dropped += 1
-            store.forget_project(name)
+                for study, _ in drop:
+                    self._drop_one(store, study, project.name)
+                store.forget_project(project.name)
+            except Exception as e:  # noqa: BLE001 - say exactly what was and wasn't done
+                raise Stop(f"{label} was taken off this Pi, but its sessions couldn't all be cleared ({e}). The "
+                           "files not cleared are kept. To bring the dataset back, add it again with: "
+                           "hyperwheel datasets add\nOr ask your Hyperwheel admin.") from None
+            self.keys.path(project.name).unlink(missing_ok=True)
         finally:
-            store.close()
-            # The state store belongs to the upload service's account: anything sqlite left beside it must too.
-            for extra in (self.site.state_db.with_name(self.site.state_db.name + s) for s in ("-wal", "-shm")):
-                if extra.exists() and os.geteuid() == 0:
-                    os.chown(extra, db_owner.st_uid, db_owner.st_gid)
-        folder = self.site.staging_dir / name
-        if is_project_name(name) and folder.is_dir() and not any(folder.iterdir()):
+            self._close(store)
+        folder = self.site.staging_dir / project.name
+        if folder.is_dir() and not any(folder.iterdir()):
             folder.rmdir()
-        return dropped
+        self.c.say(f"Removed {label}." + (f" {len(drop)} session{'s were' if len(drop) != 1 else ' was'} deleted "
+                                          "on this Pi." if drop else ""))
+        self.c.say("To see the datasets left, type: hyperwheel datasets list")
+        return 0
+
+    def _open_for_change(self) -> Store | None:
+        """The state store, to change. A store that exists but can't be opened stops the command: what's waiting
+        can't be known then, so nothing may be removed."""
+        if not self.site.state_db.exists():
+            return None
+        self._db_owner = self.site.state_db.stat()
+        try:
+            return Store(self.site.state_db)
+        except Exception as e:  # noqa: BLE001
+            raise Stop(f"This Pi's record of its sessions can't be read ({type(e).__name__}), so it can't tell "
+                       "what's still waiting to upload. Nothing was changed. Ask your Hyperwheel admin.") from None
+
+    def _close(self, store: Store | None) -> None:
+        if store is None:
+            return
+        store.close()
+        # The state store belongs to the upload service's account: anything sqlite left beside it must too.
+        for extra in (self.site.state_db.with_name(self.site.state_db.name + s) for s in ("-wal", "-shm")):
+            if extra.exists() and os.geteuid() == 0:
+                os.chown(extra, self._db_owner.st_uid, self._db_owner.st_gid)
+
+    @staticmethod
+    def _sessions(store: Store | None, name: str) -> tuple[list, list, int]:
+        """The dataset's sessions: those to drop (with how many of their files aren't on GRIP), those to stop
+        watching (all their files on GRIP), and how many files in all aren't on GRIP."""
+        if store is None:
+            return [], [], 0
+        drop, archive, total = [], [], 0
+        for study in store.studies():
+            if study.project != name or study.state in ("unrouted", "purged", "archived"):
+                continue
+            missing = len([f for f in store.files(study.id) if f.state not in DONE_FILE_STATES])
+            if study.state == "uploaded" and not missing:
+                archive.append(study)
+            else:
+                drop.append((study, missing))
+                total += missing
+        return drop, archive, total
+
+    def _drop_one(self, store: Store, study, name: str) -> None:
+        """Delete a dropped session on this Pi: its records first, then its local copies, and only copies inside
+        the dataset's own staging folder (a path in the state store is never trusted further than that)."""
+        own = (self.site.staging_dir / name).resolve()
+        paths = store.drop_study(study.id)
+        for path in paths:
+            target = Path(path).resolve()
+            if target.is_relative_to(own):
+                target.unlink(missing_ok=True)
+        if is_uid(study.study_uid):
+            shutil.rmtree(own / study.study_uid, ignore_errors=True)
 
 
 USAGE = "Usage: hyperwheel datasets list | add | change | remove"

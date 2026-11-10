@@ -59,7 +59,7 @@ def test_no_words_or_help_shows_the_help(argv, capsys, monkeypatch):
     (["frob"], "There's no command 'hyperwheel frob'."),
     (["datasets", "delete"], "There's no command 'hyperwheel datasets delete'."),
     (["datasets"], "'hyperwheel datasets' needs one more word: list, add, change or remove."),
-    (["keys", "set"], "This is now: hyperwheel datasets change"),
+    (["keys", "set"], "This is now: hyperwheel datasets change\nFor a new dataset: hyperwheel datasets add"),
     (["scanner"], "'hyperwheel scanner' needs one more word: password."),
     (["scanner", "key"], "There's no command 'hyperwheel scanner key'."),
     (["update", "now-please"], "There's no command 'hyperwheel update now-please'."),

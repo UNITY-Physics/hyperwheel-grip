@@ -19,7 +19,7 @@ from hyperwheel.sitesetup import render_routing_toml
 
 OLD_SECRET = "s3cret-value-not-for-logs"
 NEW_SECRET = "new-secret-not-for-logs-9f2"
-NEW_CLIENT = "prisma-kenya"
+NEW_CLIENT = "site-b-study-one"
 
 
 class Scripted:
@@ -65,7 +65,8 @@ class Pi:
                     check=check, restart=restart or (lambda: self.restarts.append(1) or "Hyperwheel was restarted."),
                     is_root=lambda: root, service_active=lambda: active,
                     service_stop=lambda: self.service.append("stop"),
-                    service_start=lambda: self.service.append("start"))
+                    service_start=lambda: self.service.append("start"),
+                    restart_dashboard=lambda: self.service.append("dashboard"))
 
     def routing(self):
         return load_routing(self.routing_path, test_mode=True, grip=self.site.grip)
@@ -133,12 +134,12 @@ def test_grip_not_answering_adds_nothing(pi, env):
 
 
 def test_a_client_id_that_cant_be_a_folder_name_gets_a_safe_one_but_is_always_shown(pi, env):
-    odd = "unity/prisma.kenya"
+    odd = "unity/site-b.study-one"
     env.fake.clients[odd] = NEW_SECRET
     typed = Scripted(answers=[odd, "one", ""], hidden=[NEW_SECRET])
     assert pi.run("add", typed) == 0, typed.text
     name = safe_name(odd, {PROJECT})
-    assert name == "unity-prisma-kenya" and pi.routing().projects[name].label == odd
+    assert name == "unity-site-b-study-one" and pi.routing().projects[name].label == odd
     assert env.keys.read(name).client_id == odd
     listed = Scripted()
     pi.run("list", listed)
@@ -146,8 +147,8 @@ def test_a_client_id_that_cant_be_a_folder_name_gets_a_safe_one_but_is_always_sh
 
 
 def test_safe_names_never_clash():
-    assert safe_name("prisma-kenya", set()) == "prisma-kenya"
-    assert safe_name("prisma-kenya", {"PRISMA-Kenya"}) == "prisma-kenya-2"
+    assert safe_name("site-b-study-one", set()) == "site-b-study-one"
+    assert safe_name("site-b-study-one", {"SITE-B-Study-One"}) == "site-b-study-one-2"
     assert safe_name("a/b", {"a-b", "a-b-2"}) == "a-b-3"
     assert safe_name("../..", set()) == "dataset"
     assert safe_name("_x", set()) == "x"
@@ -212,7 +213,7 @@ def test_remove_asks_for_its_name_then_deletes_the_dataset_and_key(pi, env):
     typed = Scripted(answers=["1", PROJECT])
     assert pi.run("remove", typed, active=True) == 0, typed.text
     assert pi.routing().projects == {} and not env.keys.path(PROJECT).exists()
-    assert pi.service == ["stop", "start"] and pi.restarts == [1]
+    assert pi.service == ["stop", "start", "dashboard"] and pi.restarts == []
 
 
 def test_remove_refuses_while_files_wait_unless_they_may_be_deleted(pi, env):
@@ -221,7 +222,8 @@ def test_remove_refuses_while_files_wait_unless_they_may_be_deleted(pi, env):
     paths = [f.path for f in env.store.files(study.id)]
     typed = Scripted(answers=["1", PROJECT, "no"])
     assert pi.run("remove", typed) == 1
-    assert "3 files from 1 session still wait to upload" in typed.text and "never reach GRIP" in typed.text
+    assert "3 files from 1 session are on this Pi and not on GRIP yet" in typed.text
+    assert "never reach GRIP" in typed.text
     assert PROJECT in pi.routing().projects and all(os.path.exists(p) for p in paths)
     typed = Scripted(answers=["1", PROJECT, "delete them"])
     assert pi.run("remove", typed) == 0, typed.text
@@ -231,7 +233,7 @@ def test_remove_refuses_while_files_wait_unless_they_may_be_deleted(pi, env):
     assert after.state == "unrouted" and after.project is None and after.stable_at is not None
     assert env.store.files(study.id) == [] and env.store.open_flags(study_id=study.id) == []
     assert env.store.study(done.id).state == "archived"  # on GRIP already: no longer watched for raw data
-    assert "1 waiting session was deleted on this Pi" in typed.text
+    assert "1 session was deleted on this Pi" in typed.text
 
 
 def test_a_dropped_study_is_then_deleted_from_orthanc_like_one_with_no_dataset(pi, env):
@@ -288,7 +290,123 @@ def test_the_data_manager_may_run_them_list_without_a_password():
 
 
 def test_the_old_keys_command_says_what_it_is_now():
-    assert cli.problem(["keys", "set"]) == "This is now: hyperwheel datasets change"
+    assert cli.problem(["keys", "set"]) == ("This is now: hyperwheel datasets change\n"
+                                            "For a new dataset: hyperwheel datasets add")
     assert cli.problem(["keys", "list"]) == "This is now: hyperwheel datasets list"
     assert cli.problem(["datasets"]).startswith("'hyperwheel datasets' needs one more word")
     assert cli.problem(["datasets", "delete"]) == "There's no command 'hyperwheel datasets delete'."
+
+
+# ---- remove: what counts as waiting, and what's never touched ----
+
+
+def test_refused_files_count_as_not_on_grip_and_need_the_second_confirmation(pi, env):
+    study = env.stage_study(n_dicom=2, raw_sizes=())
+    for f in env.store.files(study.id):
+        env.store.move_file(f.id, "sending")
+        env.store.move_file(f.id, "refused")
+    typed = Scripted(answers=["1", PROJECT, ""])
+    assert pi.run("remove", typed) == 1 and "2 files from 1 session are on this Pi and not on GRIP" in typed.text
+    assert PROJECT in pi.routing().projects and all(os.path.exists(f.path) for f in env.store.files(study.id))
+
+
+def test_a_session_still_receiving_images_is_counted_and_dropped_not_stranded(pi, env):
+    from hyperwheel.organiser import Organiser
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    env.store.move_study(study.id, "uploading")
+    env.store.move_study(study.id, "receiving")  # one more image arrived
+    path = env.store.files(study.id)[0].path
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    assert pi.run("remove", typed) == 0 and "1 file from 1 session" in typed.text
+    assert not os.path.exists(path) and env.store.files(study.id) == []
+    Organiser(env.store, env.site, pi.routing(), env.orthanc, clock=env.clock).housekeeping()
+    assert env.store.study(study.id).state == "purged" and study.orthanc_id in env.orthanc.deleted_studies
+
+
+def test_a_session_on_grip_with_a_refused_file_left_is_counted_too(pi, env):
+    study = env.stage_study(n_dicom=2, raw_sizes=())
+    first, second = env.store.files(study.id)
+    env.store.move_file(first.id, "sending")
+    env.store.move_file(first.id, "confirmed")
+    env.store.move_file(second.id, "sending")
+    env.store.move_file(second.id, "refused")
+    env.store.move_study(study.id, "uploading")
+    env.store.move_study(study.id, "uploaded")
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    assert pi.run("remove", typed) == 0 and "1 file from 1 session" in typed.text
+    assert not os.path.exists(second.path) and env.store.study(study.id).state == "unrouted"
+
+
+def test_the_count_and_the_deleting_happen_with_the_upload_service_stopped(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    path = env.store.files(study.id)[0].path
+    seen = []
+    run = main(pi.site, ["remove"], routing_path=pi.routing_path,
+               console=Scripted(answers=["1", PROJECT, "delete them"]).console(), keys=env.keys,
+               is_root=lambda: True, service_active=lambda: True,
+               service_stop=lambda: seen.append(("stop", os.path.exists(path))),
+               service_start=lambda: seen.append(("start", os.path.exists(path))), restart_dashboard=lambda: None)
+    assert run == 0 and seen == [("stop", True), ("start", False)]
+
+
+def test_a_store_that_cant_be_read_stops_remove_and_changes_nothing(pi, env):
+    env.stage_study(n_dicom=1, raw_sizes=())
+    env.store.close()
+    env.site.state_db.write_bytes(b"not a database")
+    for extra in ("-wal", "-shm"):
+        env.site.state_db.with_name(env.site.state_db.name + extra).unlink(missing_ok=True)
+    before = pi.routing_path.read_text()
+    typed = Scripted(answers=["1", PROJECT, "delete them"])
+    assert pi.run("remove", typed, active=True) == 1
+    assert "can't tell what's still waiting to upload. Nothing was changed." in typed.text
+    assert pi.routing_path.read_text() == before and env.keys.path(PROJECT).exists()
+    assert pi.service == ["stop", "start", "dashboard"]  # started again
+    from hyperwheel.state import Store
+    env.site.state_db.unlink()
+    env.store = Store(env.site.state_db, clock=env.clock)  # for the fixture's close
+
+
+def test_a_path_outside_the_datasets_own_folder_is_never_deleted(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    elsewhere = env.tmp / "not-staging.txt"
+    elsewhere.write_text("keep me")
+    env.store.add_file(kind="dicom", name="x.dcm", state="staged", study_id=study.id, path=str(elsewhere),
+                       sop_uid="9.9.9")
+    assert pi.run("remove", Scripted(answers=["1", PROJECT, "delete them"])) == 0
+    assert elsewhere.read_text() == "keep me"
+
+
+# ---- client IDs and names ----
+
+
+def test_a_client_id_already_in_an_older_datasets_key_is_not_added_again(pi, env):
+    typed = Scripted(answers=["site-a-sandbox-client"])
+    assert pi.run("add", typed) == 1 and "already a dataset on this Pi" in typed.text
+
+
+def test_replacing_an_older_datasets_key_with_another_datasets_client_id_changes_nothing(pi, env):
+    pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET]))
+    typed = Scripted(answers=[PROJECT, "2", NEW_CLIENT], hidden=[NEW_SECRET])
+    assert pi.run("change", typed) == 1 and f"That client ID is the dataset {NEW_CLIENT}'s." in typed.text
+    assert env.keys.read(PROJECT).client_id == "site-a-sandbox-client"
+
+
+def test_a_new_dataset_never_takes_the_folder_name_of_a_removed_ones_sessions(pi, env):
+    env.store.add_study("1.2.10", state="ready", project=NEW_CLIENT)  # left by a dataset removed earlier
+    assert pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET])) == 0
+    assert set(pi.routing().projects) == {PROJECT, f"{NEW_CLIENT}-2"}
+    assert pi.routing().projects[f"{NEW_CLIENT}-2"].label == NEW_CLIENT
+
+
+def test_an_own_grip_address_that_is_the_sites_is_dropped_so_it_follows_the_site(pi, env):
+    assert "api_base_url" in pi.routing_path.read_text()
+    pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET]))
+    assert "api_base_url" not in pi.routing_path.read_text()
+    assert pi.routing().projects[PROJECT].api_base_url == env.fake.base_url
+
+
+def test_messages_never_show_the_dataset_settings_path(pi):
+    pi.routing_path.write_text("not = [valid")
+    typed = Scripted()
+    assert pi.run("list", typed) == 1 and str(pi.routing_path) not in typed.text
+    assert "dataset settings can't be read" in typed.text

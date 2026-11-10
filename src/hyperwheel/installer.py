@@ -265,8 +265,8 @@ class Installer:
     def sudo_rule(self) -> None:
         set_up = is_set_up(self.layout.etc)
         if write_sudo_rule(self.layout, set_up, self.run):
-            self.say(f"Data-manager commands: sudo rule written ({DATA_MANAGER} may run only keys, the scanner "
-                     "password, status, doctor and update status as root"
+            self.say(f"Data-manager commands: sudo rule written ({DATA_MANAGER} may run only the dataset commands, "
+                     "the scanner password, status, doctor and update status as root"
                      + (")." if set_up else ", and setup until this Pi is set up)."))
         else:
             self.say("Data-manager commands: sudo rule already there.")

@@ -98,7 +98,8 @@ def problem(argv: Sequence[str]) -> str | None:
     if command not in COMMANDS:
         return f"There's no command 'hyperwheel {command}'."
     if command == "keys":
-        return f"This is now: {OLD_KEYS.get(argv[1] if rest else '', 'hyperwheel datasets list')}"
+        now = OLD_KEYS.get(argv[1] if rest else "", "hyperwheel datasets list")
+        return f"This is now: {now}" + ("\nFor a new dataset: hyperwheel datasets add" if rest == ["set"] else "")
     if command == "datasets" and rest and rest[0] not in DATASETS_ACTIONS:
         return f"There's no command 'hyperwheel datasets {argv[1]}'."
     if command == "datasets" and not rest:
