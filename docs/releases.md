@@ -136,8 +136,8 @@ password stays in `/etc/hyperwheel`, and `"StableAge": 60`.
 New Pis join the UNITY organisation on Connect. The image holds no key, and
 sites answer No to Imager's customisation, so a Pi can't end up in someone's own
 account. Before setup, the Upload Monitor shows the sign-in link, which the
-site sends to the admin. The admin opens it, picks the UNITY
-organisation and names the Pi. The link is the only way in: there's no key to
+site sends to the admin. Whoever opens the link first gets the Pi, so it goes
+only to the admin, who opens it, picks the UNITY organisation and names the Pi. The link is the only way in: there's no key to
 paste. Connect starts at every boot with nobody logged in (lingering is on) and
 keeps retrying until it's signed in. Its state shows on the Upload Monitor, in
 `hyperwheel status` and in `hyperwheel doctor`.
