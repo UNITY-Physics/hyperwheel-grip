@@ -348,7 +348,7 @@ def test_a_normal_install_never_enables_first_boot(tmp_path, key, signers, pi):
 
 
 def test_the_upload_monitor_writes_nothing_and_an_old_pasted_connect_key_is_deleted(tmp_path, key, signers, pi):
-    root, _ = pi
+    root, fake = pi
     var = root / "var/lib/hyperwheel"
     (var / "connect" / "inbox").mkdir(parents=True)  # left by a release before 0.1.15
     (var / "connect" / "inbox" / "key").write_text("rpoak_test0123456789")
@@ -358,6 +358,8 @@ def test_the_upload_monitor_writes_nothing_and_an_old_pasted_connect_key_is_dele
     assert (var / "connect" / "state.json").exists()
     unit = (root / "etc/systemd/system/hyperwheel-dashboard.service").read_text()
     assert "ReadWritePaths" not in unit and "ProtectSystem=strict" in unit
+    # The Pi isn't set up, so a running not-set-up page is restarted to show this release's page (no key box).
+    assert ["systemctl", "try-restart", "hyperwheel-dashboard.service"] in fake.ran("systemctl")
 
 
 def test_each_pi_makes_its_own_viewer_certificate_once(tmp_path, key, signers, pi):

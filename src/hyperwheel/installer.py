@@ -452,6 +452,9 @@ class Installer:
                       "hyperwheel-viewer.service"])
             self.say("Update checks: on (every 6 hours). Connect's state: watched. Orthanc Explorer 2: at "
                      "https://192.168.99.1:8443")
+        if self.start and not configured:
+            # A Pi not set up yet shows the not-set-up page. If it's running, it takes this release's page too.
+            self.run(["systemctl", "try-restart", "hyperwheel-dashboard.service"])
         if not (configured and self.start):
             return
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])

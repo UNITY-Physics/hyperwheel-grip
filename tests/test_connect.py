@@ -109,7 +109,8 @@ class Pi:
         self.sessions: list[FakeSession] = []
         for folder in ("var/lib/hyperwheel/connect", f"run/user/{UID}", f"home/{DATA_MANAGER}", "etc/hyperwheel"):
             (root / folder).mkdir(parents=True)
-        self.watcher = Watcher(layout=self.layout, run=self.run, spawn=self.spawn, clock=lambda: self.now, uid_of=lambda a: UID if a == DATA_MANAGER else None,
+        self.watcher = Watcher(layout=self.layout, run=self.run, spawn=self.spawn,
+                               clock=lambda: self.now, uid_of=lambda a: UID if a == DATA_MANAGER else None,
                                gid_of=lambda a: GID if a == DATA_MANAGER else None)
 
     def run(self, cmd, timeout=60.0):
@@ -169,12 +170,17 @@ def test_a_new_link_when_the_old_one_ends(pi):
 
 
 def test_the_link_goes_once_the_admin_has_opened_it(pi):
+    # A key a site pasted on an older release, if the installer hadn't deleted it yet: it's never used.
+    old = pi.layout.p(connect.FOLDER) / "inbox" / "key"
+    old.parent.mkdir()
+    old.write_text("rpoak_test0123456789")
     pi.tick()
     assert pi.state["link"]
     pi.signed = True  # the admin opened the link
     pi.tick()
     assert pi.sessions[0].stopped and pi.state["signed_in"] is True and pi.state["link"] is None
     assert not any(w.startswith("--auth-key") for c in pi.ran + [s.cmd for s in pi.sessions] for w in c)
+    assert "key" not in pi.state
 
 
 def test_once_set_up_it_only_reads_the_state(pi):
