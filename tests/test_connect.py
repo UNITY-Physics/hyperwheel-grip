@@ -42,7 +42,8 @@ def test_the_page_has_the_link_and_no_key_box(page, folder):
         html = r.read().decode()
         assert "default-src 'self'" in r.headers["Content-Security-Policy"]
     assert "This Pi isn't set up yet" in html
-    assert "Send this link to your Hyperwheel admin, and only to them" in html and 'id="link-card"' in html
+    assert "<p>Send this link to your Hyperwheel admin.</p>" in html and 'id="link-card"' in html
+    assert "only to them" not in html and "open it yourself" not in html and "remote access" not in html
     assert "<form" not in html and "<input" not in html and "key" not in html.lower()
     with urllib.request.urlopen(page + "/setup.js") as r:
         script = r.read().decode()

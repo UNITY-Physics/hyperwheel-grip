@@ -508,8 +508,7 @@ NOT_SET_UP_PAGE = """<!doctype html>
     <p id="state"></p>
   </section>
   <section class="card" id="link-card" hidden>
-    <h2>Send this link to your Hyperwheel admin, and only to them</h2>
-    <p>Don't open it yourself. Whoever opens it first gets remote access to this Pi.</p>
+    <p>Send this link to your Hyperwheel admin.</p>
     <p class="link" id="link"></p>
   </section>
 </main>
