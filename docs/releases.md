@@ -237,7 +237,8 @@ up, setup refuses to run, and the sudo rule no longer lists it.
    pasted (it ends with the line `# end of site file`), checks it, shows it
    back and writes `site.toml` and `routing.toml` once it is confirmed. Site
    settings already on the Pi are never overwritten.
-2. **Time zone and Wi-Fi country** from the site file.
+2. **The Pi's name, time zone and Wi-Fi country** from the site file. The name is
+   `hyperwheel-` and the site's name, such as `hyperwheel-site-a`.
 3. **The scanner cable:** every scanner is 10.42.0.1 and the Pi is
    10.42.0.88. Setup adds that connection (from the next restart) and says
    whether the scanner answers.

@@ -190,6 +190,13 @@ def parse_site_file(text: str, *, zoneinfo: Path) -> SiteFile:
     return SiteFile(config, routing, site_toml, routing_toml)
 
 
+def hostname_for_site(site: str) -> str:
+    """The Pi's name from its site's: "kcl-test" gives "hyperwheel-kcl-test". Lower case, with '.' and '_' as '-'
+    (a host name has letters, digits and '-' only), and at most 63 characters."""
+    name = re.sub(r"-+", "-", "hyperwheel-" + re.sub(r"[^a-z0-9-]", "-", site.lower()))
+    return name[:63].rstrip("-")
+
+
 def known_countries(zoneinfo: Path) -> set[str]:
     """Two-letter country codes from the time zone data (iso3166.tab)."""
     try:
@@ -456,7 +463,12 @@ class Setup:
     # ---- 2. time zone and Wi-Fi country ----
 
     def time_and_country(self, site: SiteConfig) -> None:
-        self.step(2, "time zone and Wi-Fi country")
+        self.step(2, "the Pi's name, time zone and Wi-Fi country")
+        # The name shows in the prompt, on the network and in Connect, where every Pi from the image is called
+        # raspberrypi until now.
+        name = hostname_for_site(site.site)
+        self.run(["raspi-config", "nonint", "do_hostname", name])
+        self.say(f"The Pi's name: {name}.")
         if site.time_zone:
             self.run(["timedatectl", "set-timezone", site.time_zone])
             self.say(f"Time zone: {site.time_zone}.")
@@ -730,7 +742,7 @@ class Setup:
         else:
             self.say(f"This Pi is set up for {site.site}, except for administrator rights (step 8).")
         self.say("Next, the data manager stores each project's GRIP key. Type: hyperwheel keys set")
-        self.say("The scanner cable address and the Wi-Fi country take effect when the Pi restarts.")
+        self.say("The Pi's name, the scanner cable address and the Wi-Fi country take effect when the Pi restarts.")
         if self.console.ask("Restart the Pi now? Type yes to restart: ").strip().lower() == "yes":
             self.say("Restarting.")
             self.run(["systemctl", "reboot"])
