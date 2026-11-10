@@ -134,6 +134,26 @@ label="Imager's first-run script is replaced by one that only removes its boot o
 check grep -qx "ExecStart=/usr/local/lib/hyperwheel/ignore-first-run.sh" \
   "$mnt/etc/systemd/system/kernel-command-line.service.d/hyperwheel.conf"
 check [ -x "$mnt/usr/local/lib/hyperwheel/ignore-first-run.sh" ]
+label="Chromium starts with the Hyperwheel bookmarks and the Upload Monitor, and never asks to sign in"
+for f in initial_preferences master_preferences; do
+  check sh -c "chroot '$mnt' dpkg-divert --list /etc/chromium/$f | grep -q 'to /etc/chromium/$f.rpi'"
+  check python3 - "$mnt/etc/chromium/$f" <<'PY'
+import json, sys
+prefs = json.load(open(sys.argv[1]))
+assert prefs["distribution"]["import_bookmarks_from_file"] == "/usr/local/share/hyperwheel/chromium-bookmarks.html"
+assert prefs["first_run_tabs"] == ["http://127.0.0.1:5000/"]
+PY
+done
+check [ "$(grep -c '<DT><A HREF=' "$mnt/usr/local/share/hyperwheel/chromium-bookmarks.html")" = 3 ]
+check grep -q 'HREF="http://127.0.0.1:5000/">Upload Monitor<' "$mnt/usr/local/share/hyperwheel/chromium-bookmarks.html"
+check sh -c "! ls '$mnt'/etc/chromium/policies/managed/ | grep -vx hyperwheel.json"
+check python3 - "$mnt/etc/chromium/policies/managed/hyperwheel.json" <<'PY'
+import json, sys
+policy = json.load(open(sys.argv[1]))
+assert policy["BrowserSignin"] == 0 and policy["SyncDisabled"] is True and policy["RestoreOnStartup"] == 4
+assert policy["RestoreOnStartupURLs"] == ["http://127.0.0.1:5000/"]
+assert policy["HomepageLocation"] == "http://127.0.0.1:5000/" and "ManagedBookmarks" not in policy
+PY
 label="the sudo rule passes visudo, and lets datamanager run setup until the Pi is set up"
 check in_image visudo -c -q
 check grep -q "NOPASSWD: /usr/local/bin/hyperwheel setup" "$mnt/etc/sudoers.d/hyperwheel"

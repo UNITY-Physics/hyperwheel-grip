@@ -35,11 +35,17 @@ It contains (`image/customise.sh`):
   replaced by one that only removes Imager's boot options and restarts. So a
   site that answers Yes to Imager's customisation by mistake gets no extra user,
   Wi-Fi or password;
-- the desktop, with Chromium bookmarks for the scanner (`https://10.42.0.1:8080/`),
-  the Upload Monitor (`http://127.0.0.1:5000/`, the same page as on the hotspot,
-  and there even when the hotspot isn't up) and OE2
-  (`http://127.0.0.1:8442/ui/app/`), both only reachable on the Pi itself, and no
-  keyring prompt (`--password-store=basic`);
+- the desktop, with Chromium bookmarks on the bookmarks bar for the scanner
+  (`https://10.42.0.1:8080/`), the Upload Monitor (`http://127.0.0.1:5000/`, the
+  same page as on the hotspot, and there even when the hotspot isn't up) and OE2
+  (`http://127.0.0.1:8442/ui/app/`), both only reachable on the Pi itself. The
+  Upload Monitor is Chromium's start page and home page, Raspberry Pi OS's own
+  bookmarks and welcome page are left out (its first-start preferences are
+  diverted with `dpkg-divert`, so a package update can't bring them back. Ours
+  are a copy of the package's file made when the image is built, so a release
+  that ships a newer `rpi-chromium-mods` should check whether it changed),
+  Chromium never asks to sign in, and there's no keyring prompt
+  (`--password-store=basic`);
 - **Raspberry Pi Connect** (`rpi-connect`), signed out;
 - the **scanner cable** connection (10.42.0.88), so a new Pi reaches the
   internet through the scanner before it's set up;
