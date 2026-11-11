@@ -336,7 +336,7 @@ GRIP has one fixed address per region (data residency), the same for every
 dataset at a site. GRIP keeps its addresses out of public code, so none is in
 a release or in this repository: each site's address is in its site file's
 `[grip]` section, and from there in the Pi's `site.toml`. `hyperwheel doctor`
-shows the address a Pi uses. Nobody types it. Releases up to 0.1.16 had the
+shows the address a Pi uses. Nobody types it at setup. Releases up to 0.1.16 had the
 address built in. When a Pi whose `site.toml` has no `[grip]` updates, the
 installer adds the address its current release uses, at the end of the file,
 and changes nothing else. If the current release has none to copy (0.1.15 and
@@ -345,6 +345,19 @@ release. On a Pi set up before 0.1.16, each dataset still has GRIP's address
 in its own entry. The first `hyperwheel datasets` change drops that entry's
 address if it's the site's, and from then on the dataset follows the site's.
 An entry whose address differs keeps it (doctor lists it).
+
+If GRIP gives a site a new address after setup, the admin (only: the address
+decides which region the site's data goes to) changes it with `hyperwheel grip address`. It shows the address in use, asks
+for the new one and the token address (Enter takes the new address followed by
+`/get/token`), and asks rather than taking the address after the command, so
+the sudo rule still allows only exact words. It shows the new address back and
+asks for "yes". Then the new token address must refuse a made-up key the way
+GRIP does, so a mistyped address never gets a real key. Only then every
+dataset that uses the site's address gets a token from GRIP at the new address
+with its own key. If one is refused, or GRIP doesn't answer there, nothing
+changes. A dataset with no key stored is named and skipped.
+Only the two `[grip]` lines of `site.toml` change, and Hyperwheel and the
+Upload Monitor restart. A dataset with an address of its own keeps it.
 
 Each site's data managers own their datasets and keys, and manage them through
 the **data-manager account**, which can run only the dataset, scanner-password

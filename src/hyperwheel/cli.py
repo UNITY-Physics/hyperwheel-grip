@@ -39,15 +39,17 @@ ADMIN = (
     ("update hold", "Keep this Pi on its version until the hold is released"),
     ("update release-hold", "Let this Pi take updates again"),
     ("update channel <dev|pilot|stable>", "Take releases from another channel"),
+    ("grip address", "Show or change GRIP's address, which sets the region data goes to"),
 )
 
 # run, dashboard, viewer, firewall and connect-watch are the services, and first-boot runs once on a newly flashed Pi
-COMMANDS = {"help", "status", "doctor", "datasets", "keys", "scanner", "update", "setup", "run", "dashboard", "first-boot",
+COMMANDS = {"help", "status", "doctor", "datasets", "keys", "scanner", "grip", "update", "setup", "run", "dashboard", "first-boot",
             "connect-watch", "viewer", "firewall"}
 DATASETS_ACTIONS = {"list", "add", "change", "remove"}
 # The commands of releases before 0.1.16, which sites may have in their notes.
 OLD_KEYS = {"list": "hyperwheel datasets list", "set": "hyperwheel datasets change"}
 SCANNER_ACTIONS = {"password"}
+GRIP_ACTIONS = {"address"}
 UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status", "channel"}
 
 
@@ -108,6 +110,10 @@ def problem(argv: Sequence[str]) -> str | None:
         return f"There's no command 'hyperwheel scanner {argv[1]}'."
     if command == "scanner" and not rest:
         return "'hyperwheel scanner' needs one more word: password."
+    if command == "grip" and rest and rest[0] not in GRIP_ACTIONS:
+        return f"There's no command 'hyperwheel grip {argv[1]}'."
+    if command == "grip" and not rest:
+        return "'hyperwheel grip' needs one more word: address."
     if command == "update" and rest and rest[0] not in UPDATE_ACTIONS:
         return f"There's no command 'hyperwheel update {argv[1]}'."
     if command == "update" and not rest:
@@ -120,7 +126,7 @@ def needs_root(argv: Sequence[str]) -> bool:
     (started by systemd under their own account), and ``update status`` reads only public files."""
     if not argv or "-h" in argv or "--help" in argv:
         return False
-    if argv[0] in ("status", "doctor", "datasets", "scanner", "setup", "first-boot", "connect-watch"):
+    if argv[0] in ("status", "doctor", "datasets", "scanner", "grip", "setup", "first-boot", "connect-watch"):
         return True
     return argv[0] == "update" and argv[1:2] != ["status"]
 
