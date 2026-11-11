@@ -182,15 +182,30 @@ def test_change_logins_replaces_them_and_a_login_of_another_dataset_is_refused(p
     assert "Logins you leave out stop going to it" in typed.text
 
 
-def test_change_key_keeps_the_client_id_and_refuses_another(pi, env):
+def test_change_key_with_the_same_client_id_replaces_the_secret(pi, env):
     pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET]))
     env.fake.clients[NEW_CLIENT] = "rotated-secret-0000"
     typed = Scripted(answers=[NEW_CLIENT, "2", NEW_CLIENT], hidden=["rotated-secret-0000"])
     assert pi.run("change", typed) == 0, typed.text
     assert env.keys.read(NEW_CLIENT).client_secret == "rotated-secret-0000"
-    typed = Scripted(answers=[NEW_CLIENT, "2", "someone-else"])
-    assert pi.run("change", typed) == 1 and "That's another client ID" in typed.text
-    assert "hyperwheel datasets add" in typed.text
+    assert "type yes" not in "".join(typed.prompts)  # the same client ID: nothing to ask
+
+
+def test_change_key_with_another_client_id_asks_once_and_keeps_the_waiting_files(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    paths = [f.path for f in env.store.files(study.id)]
+    env.fake.clients["site-a-sandbox-new"] = "new-pair-secret"
+    typed = Scripted(answers=["1", "2", "site-a-sandbox-new", "no"])
+    assert pi.run("change", typed) == 1
+    assert "The dataset's client ID changes from site-a-sandbox-client to site-a-sandbox-new." in typed.text
+    assert env.keys.read(PROJECT).client_id == "site-a-sandbox-client"
+    typed = Scripted(answers=["1", "2", "site-a-sandbox-new", "yes"], hidden=["new-pair-secret"])
+    assert pi.run("change", typed) == 0, typed.text
+    assert env.keys.read(PROJECT) == Credentials("site-a-sandbox-new", "new-pair-secret")
+    dataset = pi.routing().projects[PROJECT]
+    assert dataset.label == "site-a-sandbox-new" and dataset.logins == ("sandbox",)
+    assert env.store.study(study.id).project == PROJECT and all(os.path.exists(x) for x in paths)  # still waiting
+    assert "new-pair-secret" not in typed.text
 
 
 def test_a_dataset_from_before_client_ids_is_named_after_its_key_once_replaced(pi, env):
@@ -451,8 +466,7 @@ def test_a_client_id_already_in_an_older_datasets_key_is_not_added_again(pi, env
 def test_replacing_an_older_datasets_key_with_another_datasets_client_id_changes_nothing(pi, env):
     pi.run("add", Scripted(answers=[NEW_CLIENT, "one", ""], hidden=[NEW_SECRET]))
     typed = Scripted(answers=[PROJECT, "2", NEW_CLIENT], hidden=[NEW_SECRET])
-    assert pi.run("change", typed) == 1 and "That's another client ID." in typed.text
-    assert "This dataset's key is for site-a-sandbox-client" in typed.text
+    assert pi.run("change", typed) == 1 and f"That client ID is the dataset {NEW_CLIENT}'s." in typed.text
     assert env.keys.read(PROJECT).client_id == "site-a-sandbox-client"
 
 

@@ -500,25 +500,27 @@ class Datasets:
     def _replace_key(self, project: Project) -> int:
         self.c.say(f"Replace the key for {project.label}. You need its client ID and secret from GRIP.")
         client_id = self._ask_client_id()
-        if project.client_id and client_id != project.client_id:
-            raise Stop(f"That's another client ID. Each client ID is its own dataset, and this one is "
-                       f"{project.client_id}. To add {client_id} as a new dataset, type: hyperwheel datasets add")
         try:
             stored = self.keys.read(project.name).client_id
         except KeyProblem:
             stored = None
-        if not project.client_id and stored and client_id != stored:
-            raise Stop(f"That's another client ID. This dataset's key is for {stored}, and each client ID is its own "
-                       f"dataset. To add {client_id} as a new dataset, type: hyperwheel datasets add")
         routing = self.routing()
         owner = self._client_ids(routing).get(client_id)
         if owner is not None and owner != project.name:
             raise Stop(f"That client ID is the dataset {routing.label(owner)}'s. Each client ID is its own dataset. "
                        "Nothing was changed.")
+        before = project.client_id or stored
+        if before and client_id != before:
+            # A new key from GRIP with another client ID for the same dataset: the dataset takes it as its name, and
+            # its waiting files stay and go up with the new key.
+            self.c.say(f"This key has another client ID. The dataset's client ID changes from {before} to "
+                       f"{client_id}. Its files waiting on this Pi stay, and go up with the new key.")
+            if self.c.ask(f"To use {client_id} for this dataset, type yes: ").strip().lower() != "yes":
+                raise Cancelled()
         projects = None
-        if not project.client_id:  # a dataset from before client IDs were its name: it's named after it now
+        if client_id != project.client_id:  # the dataset's name follows its client ID
             projects = self._raw()
-            projects[project.name] = {"client_id": client_id, **projects[project.name]}
+            projects[project.name] = {**projects[project.name], "client_id": client_id}
             self._write(projects, check_only=True)  # before the key is saved, so both change or neither
         creds = Credentials(client_id, self._ask_secret())
         try:
@@ -537,7 +539,7 @@ class Datasets:
                 projects = self._raw()
                 if project.name not in projects:
                     raise Stop(f"{project.label} was changed meanwhile. Nothing was saved. Try again.")
-                projects[project.name] = {"client_id": client_id, **projects[project.name]}
+                projects[project.name] = {**projects[project.name], "client_id": client_id}
                 self._write(projects, check_only=True)
             try:
                 self.keys.write(project.name, creds)

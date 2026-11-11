@@ -352,8 +352,10 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   finish after the change, and logins left out are then deleted on the Pi. It
   waits while images are still arriving from a login being left out. To move a
   login to another dataset, take it off one, then add it to the other), or
-  replaces its key (the client ID stays the dataset's: another client ID is
-  another dataset). A new key is checked with GRIP the same way.
+  replaces its key. A new key is checked with GRIP the same way. If GRIP's
+  new key has another client ID, it shows the old and new one and asks once:
+  the dataset then takes the new client ID as its name, and its files
+  waiting on the Pi stay and go up with the new key.
 - `hyperwheel datasets remove` deletes a dataset and its key from the Pi,
   after saying that scans from its logins will then be deleted on the Pi, not
   uploaded, and asking for the dataset's name to confirm. While the Pi is
@@ -378,7 +380,10 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   nothing and say to try again in a few minutes.
 - A session deleted on the Pi because its login had no dataset (or its
   dataset was removed) goes through as a new one if the scanner sends it again
-  once its login has a dataset. Only what the scanner sent again is uploaded,
+  once its login has a dataset. One that was fully on GRIP before its dataset
+  was removed, sent again once its login belongs to another dataset, goes
+  there as DICOM only: its raw data was already uploaded to the first dataset
+  and isn't fetched again. The data manager can see that on GRIP. Only what the scanner sent again is uploaded,
   so it's flagged to check it's complete on GRIP. While it arrives, the
   Upload Monitor says it's receiving. If it never finishes arriving (Orthanc
   restarted part-way), after an hour there's an alert to send it again.
