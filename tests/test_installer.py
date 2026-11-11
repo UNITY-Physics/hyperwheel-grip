@@ -292,7 +292,8 @@ def test_the_data_manager_sudo_rule_is_checked_by_visudo_then_put_in_place(tmp_p
     asks = SUDO_RULE.split("Cmnd_Alias HYPERWHEEL_KEYS = ")[1].split("\n" + "datamanager")[0]
     assert " ".join(asks.replace("\\", "").split()) == (
         "/usr/local/bin/hyperwheel datasets add, /usr/local/bin/hyperwheel datasets change, "
-        "/usr/local/bin/hyperwheel datasets remove, /usr/local/bin/hyperwheel scanner password")
+        "/usr/local/bin/hyperwheel datasets remove, /usr/local/bin/hyperwheel scanner password, "
+        "/usr/local/bin/hyperwheel grip address")
 
 
 def test_a_sudo_rule_visudo_rejects_is_never_put_in_place(tmp_path, key, signers, pi):

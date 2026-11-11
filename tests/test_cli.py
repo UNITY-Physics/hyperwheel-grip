@@ -20,6 +20,7 @@ What you can do on this Pi:
   hyperwheel datasets change    Change a dataset's logins, or replace its key (asks your password)
   hyperwheel datasets remove    Remove a dataset and its key (asks your password)
   hyperwheel scanner password   Set the scanner's raw-data password (asks your password)
+  hyperwheel grip address       Show GRIP's address on this Pi, or change it (asks your password)
   hyperwheel update status      Which version is running, and is an update waiting
 
 Type them just as shown. Hyperwheel asks for your password when it needs it."""
