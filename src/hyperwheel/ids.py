@@ -15,9 +15,6 @@ from urllib.parse import quote
 _UID = re.compile(r"[0-9]+(\.[0-9]+)*")
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 _LOGIN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
-# RRDF names end in the acquisition start time, scanner local time:
-# e.g. flair_iso_rrdf_20261027_134807.h5 or T2map_CALIPR_UNITY_v1100_beta1.user_rrdf_20261027_141317.h5
-_RRDF_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}_(\d{8}_\d{6})\.h5")
 # The scanner keeps each exam's raw files in RRDF/rrdf_<StudyDate>_<StudyTime>/.
 _RRDF_FOLDER = re.compile(r"rrdf_(\d{8}_\d{6})")
 _TIMESTAMP = "%Y%m%d_%H%M%S"
@@ -51,19 +48,15 @@ def login_from_operators_name(operators_name: object) -> str | None:
 
 
 def is_rrdf_name(name: object) -> bool:
-    """An RRDF file name that is safe as a file name and ends in a real date and time."""
-    return isinstance(name, str) and rrdf_timestamp(name) is not None
-
-
-def rrdf_timestamp(name: str) -> datetime | None:
-    """The acquisition time in an RRDF file name, or None if the name has none."""
-    m = _RRDF_NAME.fullmatch(name)
-    if not m:
-        return None
-    try:
-        return datetime.strptime(m.group(1), _TIMESTAMP)
-    except ValueError:
-        return None
+    """A raw file name the Pi fetches and GRIP accepts, unchanged: a .h5 file whose name isn't empty or only
+    spaces, has no '/', '\\' or '..', and is at most 255 characters (and no control characters, which no file
+    name of the scanner's has). Any other name stays on the scanner and is flagged."""
+    # Also kept on the scanner: a name with a space at either end (the scanner's listing can't show it as it is) or
+    # one that isn't valid text (the listing shows it changed), so the Pi could never fetch it by that name.
+    return (isinstance(name, str) and name.endswith(".h5") and len(name.encode("utf-8", "replace")) <= 255
+            and name == name.strip() and "\ufffd" not in name
+            and "/" not in name and "\\" not in name and ".." not in name
+            and not any(ord(c) < 32 or ord(c) == 127 for c in name))
 
 
 def rrdf_folder_time(folder: str) -> datetime | None:

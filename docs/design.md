@@ -99,9 +99,8 @@ routing entry. A new instance sends a study back to `receiving`; a late raw
 file sends it back to `uploading`.
 
 File: `staged`/`pulled → sending → confirmed → deleted`, with `retry_wait`
-(timeouts, 5xx, 429), `refused` (other 4xx and STOW failure reasons: kept and
-flagged) and `unassigned` (a raw file not matched to exactly one study: kept
-and flagged).
+(timeouts, 5xx, 429) and `refused` (other 4xx and STOW failure reasons: kept
+and flagged). A raw file listed on the scanner but not fetched yet is `seen`.
 
 ## Upload order and retries
 
@@ -147,20 +146,19 @@ tried again later with a growing delay.
 ## Raw data to session
 
 The scanner keeps each exam's raw files in `RRDF/rrdf_<StudyDate>_<StudyTime>/`
-(scanner local time, to the second). A raw file is assigned to a study only if
-both hold:
+(scanner local time, to the second). A folder whose name is the StudyDate and
+StudyTime of a routed study on this Pi is that study's, and every `.h5` file in
+it belongs to that study. Nothing else is checked: not the time in a file's
+name, and not the next study's start.
 
-1. its folder name equals the StudyDate and StudyTime of exactly one routed
-   study on this Pi;
-2. the timestamp in its own name (`_YYYYMMDD_HHMMSS.h5`, the acquisition start,
-   also scanner local time) lies between that study's start and its last
-   acquisition plus 60 minutes, and before the next study's start.
-
-A folder that matches no routed study is never pulled. A file that fails the
-second check, or a folder that matches two studies, is pulled into
-`stagingArea/_unassigned/`, flagged, and neither uploaded nor deleted. A file
-is pulled only once its size is the same on two listings. Folders are checked
-again for late files for 7 days.
+A folder that matches no routed study is never pulled. Every `.h5` file in a
+matched folder is fetched, unless GRIP would refuse its name (empty or only
+spaces, a `/`, `\` or `..` in it, or over 255 bytes, or a
+space at either end): that one stays on
+the scanner and is flagged. Names stay unchanged. A file is pulled only once
+its size is the same on two listings. Folders are checked again for late files
+for 7 days. Releases before 0.1.16 held some raw files as unassigned: on
+update, they move into the study their folder names.
 
 File modification times on the scanner are not used: they are shown in a
 different time zone from the names.
@@ -177,8 +175,7 @@ Only unsafe problems hold anything back, and only what is unsafe is held:
 
 - mixed logins in one study: the study is held (not staged, not uploaded,
   not deleted);
-- an invalid UID: that image stays in Orthanc and is not uploaded;
-- an unassigned raw file: that file is kept on the Pi and not uploaded.
+- an invalid UID: that image stays in Orthanc and is not uploaded.
 
 Everything else is flagged only, and the data goes to GRIP unchanged: a
 blank, padded or unexpected Patient ID (`patient_id_pattern` per project in

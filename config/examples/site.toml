@@ -26,8 +26,7 @@ slowest_link_bytes_per_s = 16000  # every request gets the time its size needs a
 
 [rrdf]
 enabled = true
-margin_minutes = 60
-watch_days = 7
+watch_days = 7               # how long a session's scanner folder is checked for raw files
 
 [scanner]
 host = "10.42.0.1"           # every scanner (the Pi is 10.42.0.88 on the scanner cable)

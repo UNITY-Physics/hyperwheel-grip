@@ -34,15 +34,15 @@ def test_login_from_operators_name(value, login):
     assert ids.login_from_operators_name(value) == login
 
 
-def test_rrdf_names_from_the_scanner():
+def test_raw_names_are_any_h5_file_grip_would_accept():
     for name in ("flair_iso_rrdf_20261027_134807.h5",
                  "T2map_CALIPR_UNITY_v1100_beta1.user_rrdf_20261027_141317.h5",
-                 "0T1SPGRFA30_4x224scale.user_rrdf_20261007_110757.h5"):
-        assert ids.is_rrdf_name(name)
-    assert ids.rrdf_timestamp("flair_iso_rrdf_20261027_134807.h5") == datetime(2026, 10, 27, 13, 48, 7)
-    for name in ("../x_rrdf_20261027_134807.h5", ".hidden_rrdf_20261027_134807.h5", "a b_rrdf_20261027_134807.h5",
-                 "x_rrdf_20261027_1348.h5", "x_rrdf_20261327_134807.h5", "x/y_rrdf_20261027_134807.h5"):
-        assert not ids.is_rrdf_name(name)
+                 "0T1SPGRFA30_4x224scale.user_rrdf_20261007_110757.h5",
+                 "no_date_or_time.h5", "a b.h5", ".hidden.h5", "x" * 252 + ".h5"):
+        assert ids.is_rrdf_name(name), name
+    for name in ("", "   ", "x.txt", "../x.h5", "x..y.h5", "x/y.h5", "x\\y.h5", "x" * 253 + ".h5", "a\nb.h5", None,
+                 " lead.h5", "trail.h5 ", "é" * 127 + ".h5", "bad\ufffd.h5"):  # spaces at the ends, over 255 bytes
+        assert not ids.is_rrdf_name(name), name
 
 
 def test_rrdf_folder_time():

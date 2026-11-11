@@ -72,7 +72,7 @@ def test_second_part_fetches_and_uploads_only_the_new_raw_files(env, scanner):
         raw(scanner, FOLDER, name, size=300_000)
     first_listing, second_listing = pull(env, scanner)
     assert first_listing.waiting == 8 and first_listing.pulled == 0  # new names wait for a stable size
-    assert second_listing.pulled == 8 and second_listing.unassigned == 0
+    assert second_listing.pulled == 8
     assert sorted(scanner.reads) == sorted(f"{FOLDER}/{n}" for n in RAW_FIRST + RAW_SECOND)  # each read once
 
     # Both parts in one staging folder ...
@@ -146,25 +146,18 @@ def test_fetched_name_with_a_different_size_is_flagged_not_fetched(env, scanner,
     assert sum("size changed on the scanner" in r.getMessage() for r in caplog.records) == 1
 
 
-def test_raw_file_held_after_the_first_part_joins_once_the_rest_arrives(env, scanner):
+def test_a_raw_file_later_than_the_first_parts_images_is_fetched_with_it(env, scanner):
+    """Matched by folder only: a raw file with a later time than any image so far is the study's all the same."""
     uid = generate_uid()
-    send(env, uid, FIRST[:1])  # only the DWI b0 at 13:34:29: the window ends at 14:34:29
+    send(env, uid, FIRST[:1])  # only the DWI b0 at 13:34:29
     late = "MT_FA60_AXI_UNITY_v1011.user_rrdf_20261027_144000.h5"
     raw(scanner, FOLDER, late, size=300_000)
     pull(env, scanner)
-    held = env.store.rrdf_file(FOLDER, late)
-    assert held.state == "unassigned"
-    assert any(f.code == "UNASSIGNED_RAW" and f.file_id == held.id for f in env.store.open_flags())
-
-    send(env, uid, SECOND)  # last acquisition now 14:20:00: the window ends at 15:20:00
-    pull(env, scanner)
     study = env.store.study_by_uid(uid)
-    moved = env.store.file(held.id)
-    assert moved.state == "pulled" and moved.study_id == study.id
-    assert moved.path == str(env.site.staging_dir / PROJECT / uid / "RRDF" / late)
-    assert not (env.site.staging_dir / "_unassigned" / FOLDER / late).exists()
+    fetched = env.store.rrdf_file(FOLDER, late)
+    assert fetched.state == "pulled" and fetched.study_id == study.id
+    assert fetched.path == str(env.site.staging_dir / PROJECT / uid / "RRDF" / late)
     assert not [f for f in env.store.open_flags() if f.code in ("UNASSIGNED_RAW", "RAW_FILE_UNASSIGNED")]
-    assert len(scanner.reads) == 1  # moved on the Pi, not fetched again
-
+    held = fetched
     env.uploader().run_once()
     assert late in env.fake.study_for(uid).raw and env.store.file(held.id).state == "deleted"

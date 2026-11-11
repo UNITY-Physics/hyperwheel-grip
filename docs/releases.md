@@ -367,8 +367,7 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   at yet. If any of its sessions would be deleted on the Pi
   (not all on GRIP: files waiting or refused, or a session held for a check),
   it says how many and stops unless the person also types `delete them`. Raw
-  files of its sessions held as unassigned stay on the Pi, flagged, and it
-  says so. Raw data of its sessions still on the scanner (not fetched
+  data of its sessions still on the scanner (not fetched
   yet) is never fetched once it's removed: it says so and asks for `go on`,
   also when the Pi hasn't been able to check the scanner for some of its
   sessions yet, or fetching raw data is failing. Then, with the upload service stopped for a moment, it counts

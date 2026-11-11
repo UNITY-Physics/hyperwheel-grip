@@ -63,10 +63,7 @@ class UploadSettings:
 class RrdfSettings:
     # Off for a site that saves no raw data: nothing is pulled and nothing is flagged.
     enabled: bool = True
-    # A raw file belongs to a study if its scanner folder matches the study's
-    # StudyDate+StudyTime and its own timestamp falls between the study start
-    # and the last acquisition plus this margin (never past the next study).
-    margin_minutes: int = 60
+    # A raw file belongs to the study whose StudyDate+StudyTime its scanner folder names (see rawpull).
     # How long a study's scanner folder is checked again for late raw files.
     watch_days: int = 7
     # No longer used (the Pi doesn't flag missing raw data). Kept so site settings that set it still load.
@@ -249,7 +246,10 @@ def load_site(path: Path) -> SiteConfig:
         raise ConfigError(f"{where} [upload].slowest_link_bytes_per_s must be more than 0")
     if upload.attempts_per_call < 1:
         raise ConfigError(f"{where} [upload].attempts_per_call must be at least 1")
-    rrdf = _section(RrdfSettings, data.get("rrdf", {}), f"{where} [rrdf]")
+    rrdf_data = data.get("rrdf", {})
+    if isinstance(rrdf_data, dict):  # no longer used (raw files are matched by folder only): ignored if set
+        rrdf_data = {k: v for k, v in rrdf_data.items() if k != "margin_minutes"}
+    rrdf = _section(RrdfSettings, rrdf_data, f"{where} [rrdf]")
     disk = _section(DiskSettings, data.get("disk", {}), f"{where} [disk]")
     scanner = _section(ScannerSettings, data.get("scanner", {}), f"{where} [scanner]")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", scanner.interface) or scanner.interface.startswith("."):

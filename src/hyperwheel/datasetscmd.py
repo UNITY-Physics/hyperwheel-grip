@@ -569,7 +569,7 @@ class Datasets:
             raise Stop("Hyperwheel isn't running, so this Pi may have scans it hasn't looked at yet. Nothing was "
                        "changed. Ask your Hyperwheel admin.")
         # Counted with the upload service running, so nothing pauses while the questions wait for an answer.
-        arriving, drop, archive, not_on_grip, on_scanner, unassigned = self._look(project)
+        arriving, drop, archive, not_on_grip, on_scanner = self._look(project)
         unchecked = self._raw_unknown(project, drop, archive)
         if arriving:
             raise Stop(f"Images are still arriving from the scanner for {label}. Nothing was changed. Try again "
@@ -605,12 +605,6 @@ class Datasets:
                        f"{'them' if on_scanner != 1 else 'it'}.")
             if self.c.ask("To go on without it, type go on: ").strip().lower() != "go on":
                 raise Cancelled()
-        if unassigned:
-            self.c.say(f"{unassigned} raw file{'s' if unassigned != 1 else ''} of its sessions "
-                       f"{'are' if unassigned != 1 else 'is'} on this Pi, held because the Pi couldn't tell which "
-                       f"session {'they belong' if unassigned != 1 else 'it belongs'} to. "
-                       f"{'They stay' if unassigned != 1 else 'It stays'} on the Pi, flagged, for your Hyperwheel "
-                       "admin.")
 
         # From here nothing waits for a person: stop the upload service, count again, then clear. A hang-up
         # (a closed terminal) can't cut it short and leave the service stopped.
@@ -656,8 +650,8 @@ class Datasets:
         store = store or self._open_for_change()
         try:
             arriving = self._arriving(store, project)
-            drop, archive, not_on_grip, on_scanner, unassigned = self._sessions(store, project.name)
-            return arriving, drop, archive, not_on_grip, on_scanner, unassigned
+            drop, archive, not_on_grip, on_scanner = self._sessions(store, project.name)
+            return arriving, drop, archive, not_on_grip, on_scanner
         finally:
             if own:
                 self._close(store)
@@ -689,7 +683,7 @@ class Datasets:
         label = project.label
         store = self._open_for_change()
         try:
-            arriving, drop, archive, not_on_grip, on_scanner, _ = self._look(project, store)
+            arriving, drop, archive, not_on_grip, on_scanner = self._look(project, store)
             sessions = frozenset(s.id for s, _ in drop)
             if arriving or not sessions <= agreed[0] or not not_on_grip <= agreed[1] or on_scanner > agreed[2]:
                 raise Stop(f"More arrived for {label} while you answered. Nothing was changed. Run "
@@ -764,22 +758,20 @@ class Datasets:
                 os.chown(extra, self._db_owner.st_uid, self._db_owner.st_gid)
 
     @staticmethod
-    def _sessions(store: Store | None, name: str) -> tuple[list, list, frozenset, int, int]:
+    def _sessions(store: Store | None, name: str) -> tuple[list, list, frozenset, int]:
         """The dataset's sessions: those to drop (with how many of their files aren't on GRIP), those to stop
         watching (all their files on GRIP), how many files on the Pi aren't on GRIP, and how many raw files are
         still on the scanner (listed, not fetched yet)."""
         if store is None:
-            return [], [], frozenset(), 0, 0
-        drop, archive, total, on_scanner, unassigned = [], [], set(), 0, 0
+            return [], [], frozenset(), 0
+        drop, archive, total, on_scanner = [], [], set(), 0
         listed = store.files(kind="rrdf", states=("seen",))  # on the scanner: no session until fetched
-        held = store.files(kind="rrdf", states=("unassigned",))  # on the Pi, session unknown
         for study in store.studies():
             if study.project != name or study.state in ("unrouted", "purged", "archived"):
                 continue
             folder = f"rrdf_{study.study_date}_{(study.study_time or '')[:6]}"
             files = store.files(study.id)
             on_scanner += len([f for f in listed if f.scanner_folder == folder or f.study_id == study.id])
-            unassigned += len([f for f in held if f.scanner_folder == folder])
             not_done = {f.id for f in files if f.state not in (*DONE_FILE_STATES, "seen")}
             missing = len(not_done)
             if study.state == "uploaded" and not missing:
@@ -787,7 +779,7 @@ class Datasets:
             else:
                 drop.append((study, missing))
                 total |= not_done
-        return drop, archive, frozenset(total), on_scanner, unassigned
+        return drop, archive, frozenset(total), on_scanner
 
     def _drop_one(self, store: Store, study, name: str) -> None:
         """Delete a dropped session on this Pi: its records first, then its local copies, and only copies inside

@@ -1,7 +1,7 @@
 """Checks for operator mistakes, run when a study becomes stable and after each raw-data pull.
 
 Only unsafe problems hold anything back (mixed logins in one study hold the
-study; an unassigned raw file and a bad UID are held on their own). Everything
+study; a bad UID is held on its own). Everything
 else is a flag for the data manager: the data still goes to GRIP unchanged,
 because data managers fix subjects and sessions in GRIP.
 

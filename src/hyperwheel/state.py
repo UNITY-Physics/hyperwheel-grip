@@ -24,7 +24,7 @@ File states (DICOM and RRDF)
     staged      DICOM copied from Orthanc into the staging area, hashed
     seen        RRDF listed on the scanner, not pulled yet
     pulled      RRDF pulled into the staging area unchanged, hashed
-    unassigned  RRDF pulled but not matched to one study: kept and flagged
+    unassigned  only from releases before 0.1.16 (raw files are now matched by folder): moved into their study
     sending     an upload is in progress
     retry_wait  timeout, 5xx or 429: tried again after next_attempt_at
     refused     GRIP refused it (other 4xx, a STOW failure reason, two
