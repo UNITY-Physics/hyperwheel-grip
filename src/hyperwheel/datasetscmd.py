@@ -567,7 +567,8 @@ class Datasets:
             raise Stop("Hyperwheel isn't running, so this Pi may have scans it hasn't looked at yet. Nothing was "
                        "changed. Ask your Hyperwheel admin.")
         # Counted with the upload service running, so nothing pauses while the questions wait for an answer.
-        arriving, drop, _, not_on_grip, on_scanner, unassigned = self._look(project)
+        arriving, drop, archive, not_on_grip, on_scanner, unassigned = self._look(project)
+        unchecked = self._raw_unknown(project, drop, archive)
         if arriving:
             raise Stop(f"Images are still arriving from the scanner for {label}. Nothing was changed. Try again "
                        "once the Upload Monitor no longer says it's receiving images.")
@@ -588,6 +589,12 @@ class Datasets:
                        + f"). If you go on, {'they are' if k != 1 else 'it is'} deleted on this Pi and in Orthanc, "
                        "and what isn't uploaded never reaches GRIP.")
             if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
+                raise Cancelled()
+        if unchecked and not on_scanner:
+            self.c.say(f"The Pi hasn't been able to check the scanner for raw data of {unchecked} of its "
+                       f"sessions yet. If you go on, any raw data still on the "
+                       "scanner for them is never fetched or uploaded. The scanner keeps it.")
+            if self.c.ask("To go on without it, type go on: ").strip().lower() != "go on":
                 raise Cancelled()
         if on_scanner:
             self.c.say(f"{on_scanner} raw file{'s' if on_scanner != 1 else ''} of its sessions "
@@ -717,6 +724,21 @@ class Datasets:
                                           "on this Pi." if drop else ""))
         self.c.say("To see the datasets left, type: hyperwheel datasets list")
         return 0
+
+    def _raw_unknown(self, project: Project, drop: list, archive: list) -> int:
+        """How many of its sessions the Pi hasn't checked the scanner for raw data yet: none checked, or the
+        raw-data fetch failing just now (so even a checked session may have more to come)."""
+        if not self.site.rrdf.enabled:
+            return 0
+        sessions = [s for s, _ in drop] + list(archive)
+        store = self._store()
+        failing = False
+        if store is not None:
+            try:
+                failing = any(f.code in ("RAW_PULL_FAILING", "RAW_LOGIN_REFUSED") for f in store.open_flags())
+            finally:
+                store.close()
+        return len(sessions) if failing else len([s for s in sessions if s.raw_checked_at is None])
 
     def _open_for_change(self) -> Store | None:
         """The state store, to change. A store that exists but can't be opened stops the command: what's waiting

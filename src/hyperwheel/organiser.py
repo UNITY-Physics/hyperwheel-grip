@@ -175,6 +175,7 @@ class Organiser:
                                           patient_birth_date=first.patient_birth_date,
                                           operators_name=first.operators_name)
             self.store.clear_study_flags(study.id, ["ROUTING_CHANGED"])
+            self.store.clear_flags("SENT_AGAIN_UNFINISHED", ref=study.study_uid)
             self.store.raise_flag("SENT_AGAIN", "Sent again after it was deleted on this Pi, so only what the "
                                   "scanner sent again is uploaded. Check it is complete on GRIP.", study_id=study.id,
                                   level="flag")
@@ -241,11 +242,14 @@ class Organiser:
         for study in self.store.studies(states=("unrouted",)):
             if study.stable_at is not None:
                 self._purge(study, None)
-            elif (self.clock() - study.updated_at > STUCK_S
-                  and self.routing.project_for_login(login_from_operators_name(study.operators_name)) is None):
-                # Sent again, and Orthanc never said it was complete (its timer is lost if Orthanc restarts):
-                # with no dataset for its login, it's deleted as it would have been.
-                self._purge(study, None)
+            elif self.clock() - study.updated_at > STUCK_S:
+                # Sent again, and Orthanc never said it was complete (its timer is lost if Orthanc restarts).
+                if self.routing.project_for_login(login_from_operators_name(study.operators_name)) is None:
+                    self._purge(study, None)  # no dataset for its login: deleted as it would have been
+                else:
+                    self.store.raise_flag("SENT_AGAIN_UNFINISHED", "A session sent again from the scanner never "
+                                          "finished arriving, so it isn't uploaded. Send it again from the "
+                                          "scanner.", ref=study.study_uid, level="alert")
         cutoff = self.clock() - self.site.rrdf.watch_days * 86400
         for study in self.store.studies(states=("uploaded",)):
             if study.stable_at is not None and study.stable_at < cutoff:

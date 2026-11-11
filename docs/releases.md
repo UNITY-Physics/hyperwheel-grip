@@ -367,7 +367,9 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   it says how many and stops unless the person also types `delete them`. Raw
   files of its sessions held as unassigned stay on the Pi, flagged, and it
   says so. Raw data of its sessions still on the scanner (not fetched
-  yet) is never fetched once it's removed: it says so and asks for `go on`. Then, with the upload service stopped for a moment, it counts
+  yet) is never fetched once it's removed: it says so and asks for `go on`,
+  also when the Pi hasn't been able to check the scanner for some of its
+  sessions yet, or fetching raw data is failing. Then, with the upload service stopped for a moment, it counts
   again (stopping if more arrived), deletes those sessions on the Pi and in
   Orthanc like a study from a login with no dataset, and only then takes the
   dataset and its key off the Pi. Stopped part-way, the dataset is still
@@ -378,7 +380,8 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   dataset was removed) goes through as a new one if the scanner sends it again
   once its login has a dataset. Only what the scanner sent again is uploaded,
   so it's flagged to check it's complete on GRIP. While it arrives, the
-  Upload Monitor says it's receiving.
+  Upload Monitor says it's receiving. If it never finishes arriving (Orthanc
+  restarted part-way), after an hour there's an alert to send it again.
 
 Every command asks for the data-manager password (except `list`). The secret
 is typed hidden and never shown, logged or put on a command line. Pressing

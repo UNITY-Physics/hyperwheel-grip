@@ -356,3 +356,12 @@ def test_a_session_sent_again_and_still_arriving_keeps_the_scanner_on(env):
     env.store.add_study("1.2.70", state="unrouted", stable_at=None, operators_name="site_a/sandbox")
     s = snap(env)
     assert not s["on_pi_complete"] and s["headline"] == "Receiving images from the scanner" and s["studies"] == []
+
+
+def test_a_session_sent_again_that_never_finished_stops_counting_as_receiving_after_an_hour(env):
+    from hyperwheel.organiser import STUCK_S
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    env.store.add_study("1.2.71", state="unrouted", stable_at=None, operators_name="site_a/sandbox")
+    env.advance(STUCK_S + 1)
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    assert snap(env)["on_pi_complete"]

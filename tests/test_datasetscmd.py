@@ -53,7 +53,9 @@ class Pi:
 
     def __init__(self, env):
         self.env = env
-        self.site = replace(env.site, grip=GripSettings(env.fake.base_url, env.fake.token_url))
+        # Raw data off unless a test is about it, so the "not checked on the scanner yet" question stays out of the way.
+        self.site = replace(env.site, grip=GripSettings(env.fake.base_url, env.fake.token_url),
+                            rrdf=replace(env.site.rrdf, enabled=False))
         self.routing_path = env.tmp / "routing.toml"
         self.routing_path.write_text(render_routing_toml({PROJECT: {
             "logins": ["sandbox"], "api_base_url": env.fake.base_url, "token_url": env.fake.token_url}}))
@@ -809,3 +811,24 @@ def test_changing_logins_cant_be_interrupted_part_way(pi, env, monkeypatch):
     monkeypatch.setattr(datasetscmd.Datasets, "_write", probe)
     assert pi.run("change", Scripted(answers=["1", "1", "sandbox", "extra", ""])) == 0
     assert seen == [signal.SIG_IGN]
+
+
+def test_raw_data_not_checked_on_the_scanner_yet_needs_go_on(pi, env):
+    pi.site = replace(pi.site, rrdf=replace(pi.site.rrdf, enabled=True))
+    env.store.add_study("1.2.80", state="uploaded", project=PROJECT, stable_at=env.clock())  # raw never checked
+    typed = Scripted(answers=["1", PROJECT, ""])
+    assert pi.run("remove", typed) == 1
+    assert "The Pi hasn't been able to check the scanner for raw data of 1 of its sessions yet." in typed.text
+    checked = env.store.add_study("1.2.81", state="uploaded", project=PROJECT, stable_at=env.clock(),
+                                  raw_checked_at=env.clock())
+    env.store.update_study(env.store.study_by_uid("1.2.80").id, raw_checked_at=env.clock())
+    assert pi.run("remove", Scripted(answers=["1", PROJECT])) == 0, "all checked: nothing to ask"
+    assert env.store.study(checked.id).state == "archived"
+
+
+def test_a_failing_raw_data_fetch_also_needs_go_on(pi, env):
+    pi.site = replace(pi.site, rrdf=replace(pi.site.rrdf, enabled=True))
+    env.store.add_study("1.2.82", state="uploaded", project=PROJECT, stable_at=env.clock(), raw_checked_at=env.clock())
+    env.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the raw-data login.", level="alert")
+    typed = Scripted(answers=["1", PROJECT, ""])
+    assert pi.run("remove", typed) == 1 and "check the scanner for raw data of 1" in typed.text

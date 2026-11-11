@@ -27,6 +27,7 @@ from pathlib import Path
 from . import connect, hostkeys, reach
 from .config import DashboardSettings, Routing, SiteConfig
 from .ids import login_from_operators_name
+from .organiser import STUCK_S
 from .state import PENDING_FILE_STATES, Store
 
 log = logging.getLogger("hyperwheel.dashboard")
@@ -107,7 +108,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     free_bytes = free_bytes or (lambda p: shutil.disk_usage(p).free)
     # A session sent again after it was deleted on the Pi waits, hidden, until Orthanc says it's complete: it's
     # still arriving, so the page mustn't say it's safe to switch off.
-    resent = any(s.state == "unrouted" and s.stable_at is None for s in store.studies(states=("unrouted",)))
+    resent = any(s.stable_at is None and now - s.updated_at <= STUCK_S for s in store.studies(states=("unrouted",)))
     studies = [s for s in store.studies() if s.state not in _HIDDEN]
     cards, receiving, fetching = [], resent, False
     for s in sorted(studies, key=lambda s: (s.study_date or "", s.study_time or ""), reverse=True):
