@@ -60,7 +60,7 @@ def test_a_password_the_scanner_accepts_is_saved_root_only_and_the_service_resta
     assert json.loads(stored.read_text()) == {"password": NEW, "note": "kept"}
     assert stat.S_IMODE(stored.stat().st_mode) == 0o600
     assert "Scanner: 10.42.0.1, login rrdf" in typed.text
-    assert "The scanner accepted it (4 raw-data folders found)." in typed.text and "Saved." in typed.text
+    assert "The scanner accepted it (4 RRDF folders found)." in typed.text and "Saved." in typed.text
     assert not list(stored.parent.glob(".scanner.json.new"))
     secret_free(typed)
 
@@ -69,7 +69,7 @@ def test_a_refused_password_is_never_saved_and_mentions_the_entitlement(site, st
     typed = Scripted(hidden=[NEW])
 
     def refused(site, password):
-        raise LoginRefused("the scanner refused the raw-data login")
+        raise LoginRefused("the scanner refused the RRDF login")
     code, restarts, _ = run(site, stored, typed, test=refused)
     assert code == 1 and restarts == []
     assert json.loads(stored.read_text())["password"] == OLD
@@ -188,5 +188,5 @@ def test_the_command_says_why_the_scanner_cannot_be_reached(site, monkeypatch):
 def test_it_says_who_can_give_the_new_password(site, stored):
     typed = Scripted(hidden=[""])
     run(site, stored, typed)
-    assert typed.shown[0] == ("Set the scanner's raw-data password on this Pi. It changes when the scanner's "
+    assert typed.shown[0] == ("Set the scanner's RRDF password on this Pi. It changes when the scanner's "
                               "software is upgraded. Your Hyperwheel admin can tell you the new one.")

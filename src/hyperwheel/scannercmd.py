@@ -107,7 +107,7 @@ def _stored(path: Path) -> str | None:
 
 def _ask(c: Console) -> str:
     for _ in range(3):
-        value = c.ask_hidden("New raw-data password (it stays hidden as you type or paste it): ")
+        value = c.ask_hidden("New RRDF password (it stays hidden as you type or paste it): ")
         if not value.strip():
             raise Cancelled()
         if value != value.strip() or len(value) > MAX_LENGTH or not value.isprintable():
@@ -131,7 +131,7 @@ def set_password(site: SiteConfig, console: Console | None = None, *, path: Path
     if not s.host:
         c.say("This Pi has no scanner address in its site settings yet. Ask your Hyperwheel admin.")
         return 1
-    c.say("Set the scanner's raw-data password on this Pi. It changes when the scanner's software is upgraded. "
+    c.say("Set the scanner's RRDF password on this Pi. It changes when the scanner's software is upgraded. "
           "Your Hyperwheel admin can tell you the new one.")
     c.say(f"Scanner: {s.host}, login {s.username}")
     c.say("")
@@ -157,7 +157,7 @@ def set_password(site: SiteConfig, console: Console | None = None, *, path: Path
         c.say(f"The password couldn't be tried: {unreachable(site)}. Nothing was saved. {kept}")
         c.say("Try again once the scanner is reachable. To check the connection, type: hyperwheel doctor")
         return 1
-    c.say(f"The scanner accepted it ({folders} raw-data folder{'s' if folders != 1 else ''} found).")
+    c.say(f"The scanner accepted it ({folders} RRDF folder{'s' if folders != 1 else ''} found).")
 
     if old == password:
         c.say("It's the password already on this Pi, so nothing needed to change.")
@@ -174,7 +174,7 @@ def set_password(site: SiteConfig, console: Console | None = None, *, path: Path
         c.say(f"Hyperwheel couldn't be restarted ({e}), so it uses the new password only when it next starts. "
               "Ask your Hyperwheel admin.")
         return 1
-    c.say("Raw data waiting on the scanner is fetched within a minute. To check, type: hyperwheel status")
+    c.say("RRDF waiting on the scanner is fetched within a minute. To check, type: hyperwheel status")
     return 0
 
 

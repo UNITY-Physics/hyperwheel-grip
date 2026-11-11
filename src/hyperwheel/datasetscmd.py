@@ -574,7 +574,7 @@ class Datasets:
             raise Stop(f"Images are still arriving from the scanner for {label}. Nothing was changed. Try again "
                        "once the Upload Monitor no longer says it's receiving images.")
         self.c.say(f"Removing {label} deletes its GRIP key from this Pi. Scans from {logins} will then be deleted "
-                   "on this Pi, not uploaded, and raw data of its sessions not fetched yet stays on the scanner. "
+                   "on this Pi, not uploaded, and RRDF of its sessions not fetched yet stays on the scanner. "
                    "What's already on GRIP stays there.")
         if self.c.ask(f"To remove it, type its name ({label}): ").strip() != label:
             raise Cancelled()
@@ -592,13 +592,13 @@ class Datasets:
             if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
                 raise Cancelled()
         if unchecked and not on_scanner:
-            self.c.say(f"The Pi hasn't been able to check the scanner for raw data of {unchecked} of its "
-                       f"sessions yet. If you go on, any raw data still on the "
+            self.c.say(f"The Pi hasn't been able to check the scanner for RRDF of {unchecked} of its "
+                       f"sessions yet. If you go on, any RRDF still on the "
                        "scanner for them is never fetched or uploaded. The scanner keeps it.")
             if self.c.ask("To go on without it, type go on: ").strip().lower() != "go on":
                 raise Cancelled()
         if on_scanner:
-            self.c.say(f"{on_scanner} raw file{'s' if on_scanner != 1 else ''} of its sessions "
+            self.c.say(f"{on_scanner} RRDF file{'s' if on_scanner != 1 else ''} of its sessions "
                        f"{'are' if on_scanner != 1 else 'is'} still on the scanner, not fetched yet. If you go on, "
                        f"{'they are' if on_scanner != 1 else 'it is'} never fetched or uploaded. The scanner keeps "
                        f"{'them' if on_scanner != 1 else 'it'}.")

@@ -29,7 +29,7 @@ DATA_MANAGER = (
     ("datasets add", "Add a GRIP dataset with its login and key (asks your password)"),
     ("datasets change", "Change a dataset's logins, or replace its key (asks your password)"),
     ("datasets remove", "Remove a dataset and its key (asks your password)"),
-    ("scanner password", "Set the scanner's raw-data password (asks your password)"),
+    ("scanner password", "Set the scanner's RRDF password (asks your password)"),
     ("update status", "Which version is running, and is an update waiting"),
 )
 # Shown only until the Pi is set up (the sudo rule allows it only until then, without a password).

@@ -101,7 +101,7 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
             failing = [f for code in ("RAW_LOGIN_REFUSED", "RAW_PULL_FAILING")
                        for f in store.open_flags() if f.code == code]
             if failing:
-                out.append((PROBLEM, "Raw data from the scanner", failing[0].detail))
+                out.append((PROBLEM, "RRDF from the scanner", failing[0].detail))
 
     own = sorted({p.api_base_url for p in routing.projects.values()} - {site.grip.api_base_url})
     out.append((NOTE, "GRIP address", site.grip.api_base_url

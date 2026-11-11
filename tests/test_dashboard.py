@@ -54,7 +54,7 @@ def test_states_an_operator_sees(env, scanner):
         raw(scanner, FOLDER, name, size=200_000)
     env.store.set_cursor(HEARTBEAT, int(env.clock()))
     s = snap(env)
-    assert s["headline"] == "Fetching raw data from the scanner" and not s["on_pi_complete"]
+    assert s["headline"] == "Fetching RRDF from the scanner" and not s["on_pi_complete"]
     card = s["studies"][0]
     assert card["session"] == "2026-10-27 13:28" and card["project"] == PROJECT
     assert card["patient_id"] == PATIENT_ID and card["dicom"]["text"] == "DICOM 0/11 on GRIP"
@@ -76,7 +76,7 @@ def test_states_an_operator_sees(env, scanner):
 def test_counts_say_receiving_until_they_mean_something(env):
     study = env.store.add_study("1.2.3", state="receiving", project=None, operators_name="site_a/sandbox")
     card = snap(env)["studies"][0]
-    assert card["dicom"]["text"] == "DICOM receiving" and card["raw"]["text"] == "Raw data still to come"
+    assert card["dicom"]["text"] == "DICOM receiving" and card["raw"]["text"] == "RRDF still to come"
     assert card["project"] == PROJECT  # from the routing, before the study is routed
     # More images arriving for a study already counted: the count still means something.
     env.store.add_file(kind="dicom", name="a.dcm", state="staged", study_id=study.id, sop_uid="1.2.3.4")
@@ -124,7 +124,7 @@ def test_files_waiting_for_a_key_say_so_not_uploading(env):
 
 def test_a_study_with_no_raw_data_says_so(env):
     env.store.add_study("1.2.4", state="ready", project=PROJECT, raw_checked_at=env.clock())
-    assert snap(env)["studies"][0]["raw"]["text"] == "No raw data"
+    assert snap(env)["studies"][0]["raw"]["text"] == "No RRDF"
 
 
 def test_connect_state_is_shown(env):
@@ -269,7 +269,7 @@ def test_a_study_with_no_raw_data_on_the_scanner_is_complete_at_the_first_look(e
     s = snap(env)
     assert env.store.study_by_uid(uid).state == "uploaded"
     assert s["headline"] == "Everything is on GRIP" and s["safe_to_switch_off"]
-    assert s["studies"][0]["raw"]["text"] == "No raw data"
+    assert s["studies"][0]["raw"]["text"] == "No RRDF"
 
 
 def test_a_scanner_that_cant_be_read_doesnt_count_as_no_raw_data(env, scanner):
@@ -286,7 +286,7 @@ def test_a_scanner_that_cant_be_read_doesnt_count_as_no_raw_data(env, scanner):
     svc.local_round(env.store, organiser, puller)
     env.store.set_cursor(HEARTBEAT, int(env.clock()))
     s = snap(env)
-    assert s["studies"][0]["raw"]["text"] == "Raw data still to come" and not s["on_pi_complete"]
+    assert s["studies"][0]["raw"]["text"] == "RRDF still to come" and not s["on_pi_complete"]
 
 
 def test_the_upload_monitor_also_listens_on_the_pi_itself():
