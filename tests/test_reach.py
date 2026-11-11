@@ -1,4 +1,4 @@
-"""Telling "can't reach the scanner" apart from "no internet", and when operators may switch off."""
+"""Telling "can't reach the scanner" apart from "no internet", and when operators may switch off (once all is on GRIP)."""
 
 from __future__ import annotations
 
@@ -97,28 +97,21 @@ def test_internet_down_while_scanner_answers(env):
     assert not any("GRIP" in x and "reach" in x for x in texts(snap(env)))
 
 
-def test_safe_to_switch_off_once_everything_is_on_the_pi(env):
+def test_files_still_to_upload_keep_the_scanner_on_however_long_they_wait(env):
     staged(env)
     s = snap(env)
-    assert s["headline"] == "Uploading to GRIP" and s["safe_to_switch_off"]
-    assert "safe to switch off" in s["badge"] and "switch the scanner off" in s["subline"]
+    assert s["headline"] == "Uploading to GRIP" and not s["safe_to_switch_off"] and s["on_pi_complete"]
+    assert s["badge"] == "Please keep the scanner on"
+    assert "keep the scanner on until everything is on GRIP" in s["subline"] and ";" not in s["subline"]
+    env.advance(72 * 3600)  # no change after days: there's no switch-off after a wait any more
+    assert snap(env)["badge"] == "Please keep the scanner on"
+    assert snap(env, free=5 * GB)["badge"] == "Please keep the scanner on"
 
 
-def test_leave_on_when_files_have_waited_two_days(env):
-    staged(env)
-    env.advance(47 * 3600)
-    assert snap(env)["safe_to_switch_off"]
-    env.advance(3600)
+def test_safe_to_switch_off_only_once_everything_is_on_grip(env):
     s = snap(env)
-    assert not s["safe_to_switch_off"] and s["on_pi_complete"]
-    assert s["badge"] == "Please leave the scanner on to finish uploading"
-    assert "more than 48 hours" in s["subline"]
-
-
-def test_leave_on_when_the_disk_is_getting_full(env):
-    staged(env)
-    s = snap(env, free=5 * GB)
-    assert s["badge"] == "Please leave the scanner on to finish uploading" and "disk" in s["subline"]
+    assert s["headline"] == "Everything is on GRIP" and s["safe_to_switch_off"]
+    assert s["badge"] == "Everything is on GRIP: safe to switch off"
 
 
 def test_nothing_waiting_is_safe(env):
@@ -130,7 +123,8 @@ def test_waiting_to_upload_when_offline(env):
     staged(env)
     reach.record_scanner(env.store, SCANNER_NO_LINK, env.clock())
     s = snap(env)
-    assert s["headline"] == "Waiting to upload to GRIP" and s["safe_to_switch_off"]
+    assert s["headline"] == "Waiting to upload to GRIP" and not s["safe_to_switch_off"]
+    assert s["badge"] == "Please keep the scanner on"
 
 
 def test_service_records_both(env):
@@ -159,9 +153,33 @@ def test_keep_the_scanner_on_shows_once(env):
     assert s["badge"] == "Please keep the scanner on"
 
 
-def test_leave_the_scanner_on_shows_once(env):
-    staged(env)
-    env.advance(48 * 3600)
+def test_only_refused_or_held_files_left_is_safe_with_a_badge_of_its_own(env):
+    study = env.store.add_study("1.2.90", state="uploading", project="SiteA-Sandbox", raw_checked_at=env.clock())
+    f = env.store.add_file(kind="dicom", name="a.dcm", state="staged", study_id=study.id, sop_uid="1.2.90.1")
+    env.store.move_file(f.id, "sending")
+    env.store.move_file(f.id, "refused")
     s = snap(env)
-    assert s["badge"] == "Please leave the scanner on to finish uploading"
-    assert "leave the scanner on" not in s["subline"]
+    assert s["safe_to_switch_off"] and s["badge_style"] == "admin"
+    assert s["badge"] == "Safe to switch off. Some files need your Hyperwheel admin."
+    assert s["headline"] == "Not everything is on GRIP" and ";" not in s["subline"]
+    held = env.store.add_study("1.2.91", state="held", project="SiteA-Sandbox")  # mixed logins
+    env.store.add_file(kind="dicom", name="b.dcm", state="staged", study_id=held.id, sop_uid="1.2.91.1")
+    s = snap(env)
+    assert s["badge_style"] == "admin" and s["safe_to_switch_off"]  # its staged file waits for a person too
+    other = env.store.add_study("1.2.92", state="ready", project="SiteA-Sandbox", raw_checked_at=env.clock())
+    env.store.add_file(kind="dicom", name="c.dcm", state="staged", study_id=other.id, sop_uid="1.2.92.1")
+    s = snap(env)  # a file that can still upload: keep the scanner on
+    assert not s["safe_to_switch_off"] and s["badge"] == "Please keep the scanner on" and s["badge_style"] == "no"
+
+
+def test_everything_on_grip_is_the_green_badge(env):
+    s = snap(env)
+    assert s["badge_style"] == "yes" and s["badge"] == "Everything is on GRIP: safe to switch off"
+
+
+def test_a_site_file_that_still_sets_leave_on_after_hours_loads(tmp_path):
+    from hyperwheel.config import load_site
+    path = tmp_path / "site.toml"
+    path.write_text('schema_version = 1\nsite = "s"\nstaging_dir = "/s"\nstate_db = "/s.db"\nkeys_dir = "/k"\n'
+                    "[dashboard]\nleave_on_after_hours = 48\n")
+    assert load_site(path).site == "s"

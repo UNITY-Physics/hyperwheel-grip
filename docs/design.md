@@ -73,10 +73,13 @@ separate read-only service (`hyperwheel dashboard`):
   isn't answering" is told apart from "no internet". `hyperwheel doctor`
   runs the same checks live, plus Orthanc, the clock, disk and keys.
 
-The Upload Monitor tells operators it is safe to switch the scanner off once
-everything from the scanner is on the Pi: the Pi keeps the files and uploads
-them next time the scanner is on. It asks them to leave the scanner on only
-when files have waited more than 48 hours or the disk is getting full.
+The Upload Monitor tells operators it is safe to switch the scanner off only
+once everything is on GRIP. Until then it says "Please keep the scanner on":
+the Pi reaches the internet through the scanner, and it isn't meant to keep
+data. When everything that can upload is on GRIP and only files that need a
+person are left (refused by GRIP, or held for a check), it says "Safe to switch
+off. Some files need your Hyperwheel admin.", not in green. (An old
+`[dashboard] leave_on_after_hours` setting is ignored.)
 
 The local loop (Orthanc, scanner, housekeeping) and the upload loop run
 side by side, so a slow upload never delays fetching raw data from the
