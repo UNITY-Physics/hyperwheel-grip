@@ -10,7 +10,10 @@ The same steps are used to build the image (release 1 pre-loaded, with
 2. The service account: created as a system account if missing. An existing
    account of that name that isn't a system account is never taken over.
 3. Orthanc and its libraries from the release's ``.deb`` files, with apt shown
-   no other source, and only if a version differs.
+   no other source, and only if a version differs. The release's OS security
+   updates (``OS_PACKAGES``) wait until the release has been accepted, then its
+   updater installs them (``updater``). An image build, or a Pi's first
+   release, installs them here: there's nothing to roll back to.
 4. The release copied to ``/opt/hyperwheel/releases/<version>/`` (read-only),
    with a venv built offline from its wheels.
 5. Orthanc's settings, the systemd units and the data-manager sudo rule
@@ -183,16 +186,12 @@ class Installer:
     # ---- 3. Orthanc and its libraries ---------------------------------------------------
 
     def debs(self) -> None:
-        wanted = []
-        for deb in sorted((self.release_dir / "debs").glob("*.deb")):
-            package, version = self.run(["dpkg-deb", "-f", str(deb), "Package", "Version"]).split("\n")[:2]
-            package, version = package.split(":", 1)[1].strip(), version.split(":", 1)[1].strip()
-            try:
-                have = self.run(["dpkg-query", "-W", "-f", "${Version}", package]).strip()
-            except InstallError:
-                have = ""
-            if have != version:
-                wanted.append(str(deb))
+        wanted, os_debs = plan_debs(self.release_dir / "debs", self.run)
+        if self.image or not self.layout.current.is_symlink():
+            wanted += os_debs  # an image, or a Pi's first release: nothing to roll back to, so they go in now
+        elif os_debs:
+            self.say(f"OS security updates: {len(os_debs)} package{'s' if len(os_debs) != 1 else ''} wait until this "
+                     "release has been accepted. Its update check installs them then, and restarts the Pi.")
         if not wanted:
             self.say("Orthanc packages: already the release's versions.")
             return
@@ -461,6 +460,41 @@ class Installer:
         self.run(["systemctl", "enable", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.run(["systemctl", "restart", "hyperwheel.service", "hyperwheel-dashboard.service"])
         self.say("Hyperwheel and the Upload Monitor: started.")
+
+
+# The Pi's own OS packages that a release brings security updates for (OpenSSL and what must move with it). On an
+# update they're installed only once the release has been accepted, by its own update check: installing them before
+# would leave the previous release unable to reinstall itself on a rollback (it pins libssl-dev at the old version,
+# which needs the old libssl3t64, and the Pi has no copy of that). An image build, or a Pi's first release, installs
+# them straight away. They're
+# never downgraded, so a rollback to a release with older ones keeps the newer.
+OS_PACKAGES = frozenset({"libssl3t64", "openssl", "libssl-dev", "openssl-provider-legacy"})
+
+
+def plan_debs(folder: Path, run: Callable[..., str]) -> tuple[list[str], list[str]]:
+    """The release's .deb files to install: (the others, its OS packages). Each only if the installed version differs,
+    and an OS package only if the installed one isn't newer. ``run`` raises InstallError when a command fails."""
+    others, os_debs = [], []
+    for deb in sorted(folder.glob("*.deb")):
+        package, version = run(["dpkg-deb", "-f", str(deb), "Package", "Version"]).split("\n")[:2]
+        package, version = package.split(":", 1)[1].strip(), version.split(":", 1)[1].strip()
+        try:
+            have = run(["dpkg-query", "-W", "-f", "${Version}", package]).strip()
+        except InstallError:
+            have = ""
+        if have == version:
+            continue
+        if package not in OS_PACKAGES:
+            others.append(str(deb))
+            continue
+        if have:
+            try:
+                run(["dpkg", "--compare-versions", have, "gt", version])
+                continue  # the Pi has a newer one: never downgraded
+            except InstallError:
+                pass
+        os_debs.append(str(deb))
+    return others, os_debs
 
 
 def apt_with_no_sources(scratch: Path) -> list[str]:
