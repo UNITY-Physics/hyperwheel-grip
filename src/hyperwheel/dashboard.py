@@ -111,6 +111,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     resent = any(s.stable_at is None and now - s.updated_at <= STUCK_S for s in store.studies(states=("unrouted",)))
     studies = [s for s in store.studies() if s.state not in _HIDDEN]
     cards, receiving, fetching = [], resent, False
+    stuck = False  # something of a shown session isn't on GRIP and won't go without a person (refused, or held)
     for s in sorted(studies, key=lambda s: (s.study_date or "", s.study_time or ""), reverse=True):
         project = routing.label(s.project) if s.project else _routed_project(routing, s.operators_name)
         if project is None and s.state in ("receiving", "stable"):
@@ -129,6 +130,8 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
             receiving = True
         elif raw_pending and s.state != "held":
             fetching = True
+        if s.state == "held" or any(f.state == "refused" for f in files):
+            stuck = True
         flags = store.open_flags(study_id=s.id)
         dicom_text, raw_text = _count_texts(s.state, dicom, rrdf, raw_pending)
         cards.append({
@@ -193,10 +196,14 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         offline = scanner_down or links.internet_down(now)
         headline = "Waiting to upload to GRIP" if offline else "Uploading to GRIP"
         sub = f"Everything from the scanner is on the Pi. {files} still to upload. {keep_on}"
+    elif stuck:
+        headline = "Not everything is on GRIP"
+        sub = ("Some files were refused by GRIP or are held for a check, and need your Hyperwheel admin. "
+               f"{keep_on}")
     else:
         headline, sub = "Everything is on GRIP", "Nothing is waiting on the Pi."
     on_pi_complete = running and not receiving and not fetching
-    safe = on_pi_complete and not pending
+    safe = on_pi_complete and not pending and not stuck
     if safe:
         badge = "Everything is on GRIP: safe to switch off"
     elif scanner_down and not on_pi_complete:
