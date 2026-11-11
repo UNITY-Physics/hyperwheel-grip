@@ -153,7 +153,8 @@ name, and not the next study's start.
 
 A folder that matches no routed study is never pulled. Every `.h5` file in a
 matched folder is fetched, unless GRIP would refuse its name (empty or only
-spaces, a `/`, `\` or `..` in it, or over 255 characters): that one stays on
+spaces, a `/`, `\` or `..` in it, or over 255 bytes, or a
+space at either end): that one stays on
 the scanner and is flagged. Names stay unchanged. A file is pulled only once
 its size is the same on two listings. Folders are checked again for late files
 for 7 days. Releases before 0.1.16 held some raw files as unassigned: on
