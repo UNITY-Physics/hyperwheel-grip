@@ -68,7 +68,7 @@ class Pi:
                     service_start=lambda: self.service.append("start"),
                     restart_dashboard=lambda: self.service.append("dashboard"),
                     update_lock=self.env.tmp / "update" / ".lock", check_lock=self.env.tmp / "update" / ".check",
-                    current=self.env.tmp / "current")
+                    current=self.env.tmp / "current", clock=self.env.clock)
 
     def routing(self):
         return load_routing(self.routing_path, test_mode=True, grip=self.site.grip)
@@ -225,7 +225,7 @@ def test_remove_refuses_while_files_wait_unless_they_may_be_deleted(pi, env):
     typed = Scripted(answers=["1", PROJECT, "no"])
     assert pi.run("remove", typed) == 1
     assert "1 session of SiteA-Sandbox is not all on GRIP yet (3 files on this Pi not uploaded)" in typed.text
-    assert "never reach GRIP" in typed.text
+    assert "never reaches GRIP" in typed.text
     assert PROJECT in pi.routing().projects and all(os.path.exists(p) for p in paths)
     typed = Scripted(answers=["1", PROJECT, "delete them"])
     assert pi.run("remove", typed) == 0, typed.text
@@ -530,7 +530,7 @@ def _main(pi, env, typed, **kw):
                     service_active=lambda: True, service_stop=lambda: pi.service.append("stop"),
                     service_start=lambda: pi.service.append("start"), restart_dashboard=lambda: None,
                     update_lock=env.tmp / "update" / ".lock", check_lock=env.tmp / "update" / ".check",
-                    current=env.tmp / "current")
+                    current=env.tmp / "current", clock=env.clock)
     return main(pi.site, ["remove"], **{**defaults, **kw})
 
 
@@ -541,12 +541,12 @@ def test_raw_data_still_on_the_scanner_is_said_and_needs_its_own_yes(pi, env):
                        scanner_folder="rrdf_20261027_132802")
     env.store.add_file(kind="rrdf", name="other_rrdf_20261028_090000.h5", state="seen", study_id=None,
                        scanner_folder="rrdf_20261028_090000")  # another session's: not counted
-    typed = Scripted(answers=["1", PROJECT, "delete them", ""])
+    typed = Scripted(answers=["1", PROJECT, ""])
     assert pi.run("remove", typed) == 1
     assert "1 raw file of its sessions is still on the scanner, not fetched yet." in typed.text
     assert PROJECT in pi.routing().projects
-    typed = Scripted(answers=["1", PROJECT, "delete them", "go on"])
-    assert pi.run("remove", typed) == 0 and pi.routing().projects == {}
+    typed = Scripted(answers=["1", PROJECT, "go on"])
+    assert pi.run("remove", typed) == 0 and pi.routing().projects == {}, typed.text
 
 
 def test_more_arriving_once_the_service_is_stopped_also_stops_remove(pi, env):
@@ -600,8 +600,30 @@ def test_nothing_changes_while_an_update_is_being_installed(pi, env):
 
 
 def test_the_datasets_commands_use_the_updaters_install_lock():
-    from hyperwheel import datasetscmd, updater
+    from hyperwheel import datasetscmd, installer, organiser, updater
     assert datasetscmd.UPDATE_LOCK == updater.Paths().installing
+    assert datasetscmd.CHECK_LOCK == updater.Paths().lock
+    assert datasetscmd.CURRENT == installer.Layout().current
+    assert datasetscmd.STUCK_S == organiser.STUCK_S
+
+
+def test_a_session_with_nothing_new_for_an_hour_doesnt_block_remove(pi, env):
+    stuck = env.store.add_study("1.2.60", state="receiving", operators_name="site_a/sandbox")
+    typed = Scripted(answers=["1", PROJECT])
+    assert pi.run("remove", typed) == 1 and "Images are still arriving" in typed.text
+    env.store._db.execute("UPDATE studies SET updated_at = updated_at - 7200 WHERE id = ?", (stuck.id,))
+    assert pi.run("remove", Scripted(answers=["1", PROJECT])) == 0
+
+
+def test_a_session_whose_files_are_all_on_grip_is_kept_as_a_record_not_called_unuploaded(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    f = env.store.files(study.id)[0]
+    env.store.move_file(f.id, "sending")
+    env.store.move_file(f.id, "confirmed")
+    env.store.move_study(study.id, "uploading")
+    typed = Scripted(answers=["1", PROJECT])
+    assert pi.run("remove", typed) == 0 and "delete them" not in "".join(typed.prompts), typed.text
+    assert env.store.study(study.id).state == "unrouted" and not os.path.exists(f.path)  # on GRIP: cleared
 
 
 def test_a_session_on_grip_of_a_removed_dataset_goes_through_when_sent_again_after_it_is_added_back(pi, env):

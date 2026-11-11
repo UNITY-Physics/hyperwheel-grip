@@ -356,9 +356,11 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   another dataset). A new key is checked with GRIP the same way.
 - `hyperwheel datasets remove` deletes a dataset and its key from the Pi,
   after saying that scans from its logins will then be deleted on the Pi, not
-  uploaded, and asking for the dataset's name to confirm. While images are
-  still arriving for it, it waits (try again once the Upload Monitor no longer
-  says it's receiving). If any of its sessions would be deleted on the Pi
+  uploaded, and asking for the dataset's name to confirm. While the Pi is
+  receiving images for one of its sessions, it waits (try again once the
+  Upload Monitor no longer says it's receiving). Images that reach the Pi
+  during the removal itself are treated like scans from a login with no
+  dataset: deleted on the Pi (the scanner keeps them). If any of its sessions would be deleted on the Pi
   (not all on GRIP: files waiting or refused, or a session held for a check),
   it says how many and stops unless the person also types `delete them`. Raw
   files of its sessions held as unassigned stay on the Pi, flagged, and it

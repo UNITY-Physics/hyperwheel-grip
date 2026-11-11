@@ -25,9 +25,12 @@ from pathlib import Path
 from . import checks
 from .config import Project, Routing, SiteConfig
 from .dicominfo import InstanceInfo, instance_info
-from .ids import is_uid
+from .ids import login_from_operators_name, is_uid
 from .orthanc import Orthanc, OrthancError, OrthancNotFound
 from .state import Store, Study
+
+# An unrouted session sent again with no word from Orthanc for this long isn't arriving any more.
+STUCK_S = 3600
 
 log = logging.getLogger("hyperwheel.organiser")
 
@@ -234,6 +237,11 @@ class Organiser:
             log.info("cleared %d raw-data flag(s) from an earlier release. The Pi no longer raises them", cleared)
         for study in self.store.studies(states=("unrouted",)):
             if study.stable_at is not None:
+                self._purge(study, None)
+            elif (self.clock() - study.updated_at > STUCK_S
+                  and self.routing.project_for_login(login_from_operators_name(study.operators_name)) is None):
+                # Sent again, and Orthanc never said it was complete (its timer is lost if Orthanc restarts):
+                # with no dataset for its login, it's deleted as it would have been.
                 self._purge(study, None)
         cutoff = self.clock() - self.site.rrdf.watch_days * 86400
         for study in self.store.studies(states=("uploaded",)):

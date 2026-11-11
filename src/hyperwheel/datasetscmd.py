@@ -60,6 +60,7 @@ CHECK_LOCK = Path("/var/lib/hyperwheel-update/.lock")  # held by the updater for
 CURRENT = Path("/opt/hyperwheel/current")
 # An update check still running this soon after the release switched may be checking it, and may roll back.
 SETTLING_S = 30 * 60
+STUCK_S = 3600  # as the organiser's
 STATUS_TEXT = {
     "working": "working",
     "rejected": "refused by GRIP (wrong, revoked or disabled). Uploads for this dataset are paused",
@@ -167,6 +168,7 @@ class Datasets:
     restart_dashboard: Callable[[], None] = lambda: subprocess.run(["systemctl", "try-restart", DASHBOARD],
                                                                     capture_output=True)
     update_lock: Path = UPDATE_LOCK
+    clock: Callable[[], float] = time.time
     check_lock: Path = CHECK_LOCK
     current: Path = CURRENT
 
@@ -434,6 +436,7 @@ class Datasets:
         self._check(project, creds, "The dataset wasn't added.")
         with self._no_update(), _uninterrupted():
             projects = self._raw()
+            name = safe_name(client_id, self._names_in_use(self.routing()))  # again: another add may have run
             projects[name] = {"client_id": client_id, "logins": logins}
             try:
                 self.keys.write(name, creds)
@@ -445,8 +448,8 @@ class Datasets:
             except Stop:
                 self.keys.path(name).unlink(missing_ok=True)
                 raise
+            code = self._restarted()  # saved and restarted with nothing able to come between
         self.c.say(f"Added {client_id}, for scans from {', '.join(logins)}.")
-        code = self._restarted()
         self.c.say("In a minute, check its key shows as working with: hyperwheel datasets list")
         return code
 
@@ -486,10 +489,11 @@ class Datasets:
                 raise Stop(f"{project.label} was changed meanwhile. Nothing was saved. Try again.")
             projects[project.name] = {**projects[project.name], "logins": logins}
             self._write(projects)
+            code = self._restarted()  # saved and restarted with nothing able to come between
         self.c.say(f"{project.label} now takes scans from {', '.join(logins)}. Sessions already on this Pi stay "
                    "with the dataset they went to."
                    + (f" New scans from {', '.join(dropped)} are deleted on this Pi, not uploaded." if dropped else ""))
-        return self._restarted()
+        return code
 
     def _replace_key(self, project: Project) -> int:
         self.c.say(f"Replace the key for {project.label}. You need its client ID and secret from GRIP.")
@@ -546,8 +550,8 @@ class Datasets:
                     else:
                         self.keys.path(project.name).unlink(missing_ok=True)
                     raise
+            code = self._restarted()  # saved and restarted with nothing able to come between
         self.c.say(f"Saved the new key for {client_id}.")
-        code = self._restarted()
         self.c.say("In a minute, check it shows as working with: hyperwheel datasets list")
         return code
 
@@ -567,13 +571,15 @@ class Datasets:
                    "What's already on GRIP stays there.")
         if self.c.ask(f"To remove it, type its name ({label}): ").strip() != label:
             raise Cancelled()
-        if drop:
-            k, n = len(drop), len(not_on_grip)
+        asked = [(s, m) for s, m in drop if m or s.state == "held"]  # all its files on GRIP: nothing to ask
+        if asked:
+            k, n = len(asked), len(not_on_grip)
             self.c.say(f"{k} session{'s' if k != 1 else ''} of {label} {'are' if k != 1 else 'is'} not all on GRIP "
                        f"yet ({n} file{'s' if n != 1 else ''} on this Pi not uploaded"
                        + (", and some held for a check, whose images may not all be counted" if
-                          any(s.state == "held" for s, _ in drop) else "")
-                       + "). If you go on, they are deleted on this Pi and in Orthanc, and never reach GRIP.")
+                          any(s.state == "held" for s, _ in asked) else "")
+                       + f"). If you go on, {'they are' if k != 1 else 'it is'} deleted on this Pi and in Orthanc, "
+                       "and what isn't uploaded never reaches GRIP.")
             if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":
                 raise Cancelled()
         if on_scanner:
@@ -640,15 +646,17 @@ class Datasets:
             if own:
                 self._close(store)
 
-    @staticmethod
-    def _arriving(store: Store | None, project: Project, only: tuple[str, ...] | None = None) -> bool:
+    def _arriving(self, store: Store | None, project: Project, only: tuple[str, ...] | None = None) -> bool:
         """A session of this dataset still receiving images, or not yet routed but from one of its logins. With
         ``only``, just sessions from those logins."""
         if store is None:
             return False
+        now = self.clock()
         for study in store.studies(states=("receiving", "stable", "unrouted")):
             if study.state == "unrouted" and study.stable_at is not None:
                 continue  # waiting to be deleted, not arriving
+            if now - study.updated_at > STUCK_S:
+                continue  # nothing new for an hour: not arriving any more, whatever Orthanc forgot to say
             login = login_from_operators_name(study.operators_name)
             if only is not None and login not in only:
                 continue

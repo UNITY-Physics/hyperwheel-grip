@@ -273,3 +273,16 @@ def test_a_re_sent_study_whose_login_still_has_no_dataset_is_purged_once_stable(
     organiser(env).housekeeping()
     assert env.store.study_by_uid(uid).state == "purged"
     assert env.orthanc.deleted_studies.count(env.orthanc.study_id(uid)) == 2
+
+
+def test_a_re_sent_unrouted_study_that_never_gets_stable_is_purged_after_an_hour_if_its_login_has_no_dataset(env):
+    from hyperwheel.organiser import STUCK_S
+    uid = scan(env, operators="hospital/clinical")
+    organiser(env).follow()
+    scan(env, n=1, study_uid=uid, operators="hospital/clinical", stable=False)  # its StableStudy never comes
+    organiser(env).follow()
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "unrouted"
+    env.advance(STUCK_S + 1)
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "purged"
