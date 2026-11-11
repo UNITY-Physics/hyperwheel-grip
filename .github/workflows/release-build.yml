@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
   # Also when this workflow itself changes in a pull request, to prove it still builds.
   pull_request:
-    paths: [".github/workflows/release-build.yml"]
+    paths: [".github/workflows/release-build.yml", "tools/release/fetch_debs.sh", "release/debs.list",
+            "release/debs.lock"]
 
 permissions:
   contents: read
