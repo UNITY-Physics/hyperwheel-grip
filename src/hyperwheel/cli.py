@@ -30,7 +30,6 @@ DATA_MANAGER = (
     ("datasets change", "Change a dataset's logins, or replace its key (asks your password)"),
     ("datasets remove", "Remove a dataset and its key (asks your password)"),
     ("scanner password", "Set the scanner's raw-data password (asks your password)"),
-    ("grip address", "Show GRIP's address on this Pi, or change it (asks your password)"),
     ("update status", "Which version is running, and is an update waiting"),
 )
 # Shown only until the Pi is set up (the sudo rule allows it only until then, without a password).
@@ -40,6 +39,7 @@ ADMIN = (
     ("update hold", "Keep this Pi on its version until the hold is released"),
     ("update release-hold", "Let this Pi take updates again"),
     ("update channel <dev|pilot|stable>", "Take releases from another channel"),
+    ("grip address", "Show or change GRIP's address, which sets the region data goes to"),
 )
 
 # run, dashboard, viewer, firewall and connect-watch are the services, and first-boot runs once on a newly flashed Pi

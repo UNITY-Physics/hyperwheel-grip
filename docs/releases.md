@@ -159,8 +159,8 @@ Connect key on it. The installer deletes any such key left on a Pi.
     other arguments: `hyperwheel status`, `hyperwheel doctor`,
     `hyperwheel datasets list` and `hyperwheel update status` without a
     password, and `hyperwheel datasets add`, `datasets change`,
-    `datasets remove`, `hyperwheel scanner password` and
-    `hyperwheel grip address` with its own password. From the end of setup, the screen locks
+    `datasets remove` and `hyperwheel scanner password` with its own
+    password. From the end of setup, the screen locks
     after 15 minutes idle and unlocks with that Pi's `datamanager` password.
   - Data managers never type `sudo`. `hyperwheel help` lists what they can
     run, one command per line. A command that needs root runs itself again
@@ -339,8 +339,8 @@ in its own entry. The first `hyperwheel datasets` change drops that entry's
 address if it's the site's, and from then on the dataset follows the site's.
 An entry whose address differs keeps it (doctor lists it).
 
-If GRIP gives a site a new address after setup, the data manager or the admin
-changes it with `hyperwheel grip address`. It shows the address in use, asks
+If GRIP gives a site a new address after setup, the admin (only: the address
+decides which region the site's data goes to) changes it with `hyperwheel grip address`. It shows the address in use, asks
 for the new one and the token address (Enter takes the new address followed by
 `/get/token`), and asks rather than taking the address after the command, so
 the sudo rule still allows only exact words. It shows the new address back and
@@ -353,8 +353,8 @@ Only the two `[grip]` lines of `site.toml` change, and Hyperwheel and the
 Upload Monitor restart. A dataset with an address of its own keeps it.
 
 Each site's data managers own their datasets and keys, and manage them through
-the **data-manager account**, which can run only the dataset, scanner-password,
-GRIP-address and status commands. Datasets are usually added after setup (the site file's
+the **data-manager account**, which can run only the dataset, scanner-password
+and status commands. Datasets are usually added after setup (the site file's
 datasets are optional). The SOP has a page for each step, with screenshots.
 
 - `hyperwheel datasets list` shows each dataset, its scanner logins, and

@@ -2,9 +2,9 @@
 
 GRIP has one fixed address per region, and each site's comes from its site
 file. This command changes it on a Pi that is already set up, for example when
-GRIP moves a region to a new address. The data-manager account and the admin
-can run it, like ``hyperwheel datasets change`` (it asks for the account's own
-password).
+GRIP moves a region to a new address. Only the admin can run it: the address
+decides which region a site's data goes to (data residency), so the
+data-manager account's sudo rule doesn't allow it.
 
 It shows the address in use, then asks for the new one (the API address GRIP
 gives) and the token address (by default the API address followed by

@@ -80,8 +80,7 @@ def sudo_rule(set_up: bool = True) -> str:
 Cmnd_Alias HYPERWHEEL_LOOK = /usr/local/bin/hyperwheel status, /usr/local/bin/hyperwheel doctor, \\
     /usr/local/bin/hyperwheel datasets list, /usr/local/bin/hyperwheel update status
 Cmnd_Alias HYPERWHEEL_KEYS = /usr/local/bin/hyperwheel datasets add, /usr/local/bin/hyperwheel datasets change, \\
-    /usr/local/bin/hyperwheel datasets remove, /usr/local/bin/hyperwheel scanner password, \\
-    /usr/local/bin/hyperwheel grip address
+    /usr/local/bin/hyperwheel datasets remove, /usr/local/bin/hyperwheel scanner password
 {DATA_MANAGER} ALL = (root) NOPASSWD: HYPERWHEEL_LOOK
 {DATA_MANAGER} ALL = (root) HYPERWHEEL_KEYS
 {setup}"""

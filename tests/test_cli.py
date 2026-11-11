@@ -20,7 +20,6 @@ What you can do on this Pi:
   hyperwheel datasets change    Change a dataset's logins, or replace its key (asks your password)
   hyperwheel datasets remove    Remove a dataset and its key (asks your password)
   hyperwheel scanner password   Set the scanner's raw-data password (asks your password)
-  hyperwheel grip address       Show GRIP's address on this Pi, or change it (asks your password)
   hyperwheel update status      Which version is running, and is an update waiting
 
 Type them just as shown. Hyperwheel asks for your password when it needs it."""
@@ -36,9 +35,9 @@ def test_the_admin_sees_the_admin_commands_too_in_their_own_section():
     head, admin = text.split("\n\nAdmin commands:\n")
     squeeze = lambda lines: [" ".join(line.split()) for line in lines]  # noqa: E731
     assert squeeze(head.splitlines()) == squeeze(DATA_MANAGER_HELP.split("\n\n")[0].splitlines())
-    assert [line.split("   ")[0].strip() for line in admin.splitlines()[:4]] == [
+    assert [line.split("   ")[0].strip() for line in admin.splitlines()[:5]] == [
         "hyperwheel update now", "hyperwheel update hold", "hyperwheel update release-hold",
-        "hyperwheel update channel <dev|pilot|stable>"]
+        "hyperwheel update channel <dev|pilot|stable>", "hyperwheel grip address"]
     starts = {re.match(r"  hyperwheel [a-z <|>-]+?\s{3,}", line).end() for line in text.splitlines()
               if line.startswith("  hyperwheel")}
     assert len(starts) == 1  # the descriptions line up in one column
