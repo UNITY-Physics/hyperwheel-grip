@@ -1,4 +1,4 @@
-"""Telling "can't reach the scanner" apart from "no internet", and when operators may switch off."""
+"""Telling "can't reach the scanner" apart from "no internet", and when operators may switch off (once all is on GRIP)."""
 
 from __future__ import annotations
 
@@ -97,28 +97,21 @@ def test_internet_down_while_scanner_answers(env):
     assert not any("GRIP" in x and "reach" in x for x in texts(snap(env)))
 
 
-def test_safe_to_switch_off_once_everything_is_on_the_pi(env):
+def test_files_still_to_upload_keep_the_scanner_on_however_long_they_wait(env):
     staged(env)
     s = snap(env)
-    assert s["headline"] == "Uploading to GRIP" and s["safe_to_switch_off"]
-    assert "safe to switch off" in s["badge"] and "switch the scanner off" in s["subline"]
+    assert s["headline"] == "Uploading to GRIP" and not s["safe_to_switch_off"] and s["on_pi_complete"]
+    assert s["badge"] == "Please keep the scanner on"
+    assert "keep the scanner on until everything is on GRIP" in s["subline"] and ";" not in s["subline"]
+    env.advance(72 * 3600)  # no change after days: there's no switch-off after a wait any more
+    assert snap(env)["badge"] == "Please keep the scanner on"
+    assert snap(env, free=5 * GB)["badge"] == "Please keep the scanner on"
 
 
-def test_leave_on_when_files_have_waited_two_days(env):
-    staged(env)
-    env.advance(47 * 3600)
-    assert snap(env)["safe_to_switch_off"]
-    env.advance(3600)
+def test_safe_to_switch_off_only_once_everything_is_on_grip(env):
     s = snap(env)
-    assert not s["safe_to_switch_off"] and s["on_pi_complete"]
-    assert s["badge"] == "Please leave the scanner on to finish uploading"
-    assert "more than 48 hours" in s["subline"]
-
-
-def test_leave_on_when_the_disk_is_getting_full(env):
-    staged(env)
-    s = snap(env, free=5 * GB)
-    assert s["badge"] == "Please leave the scanner on to finish uploading" and "disk" in s["subline"]
+    assert s["headline"] == "Everything is on GRIP" and s["safe_to_switch_off"]
+    assert s["badge"] == "Everything is on GRIP: safe to switch off"
 
 
 def test_nothing_waiting_is_safe(env):
@@ -130,7 +123,8 @@ def test_waiting_to_upload_when_offline(env):
     staged(env)
     reach.record_scanner(env.store, SCANNER_NO_LINK, env.clock())
     s = snap(env)
-    assert s["headline"] == "Waiting to upload to GRIP" and s["safe_to_switch_off"]
+    assert s["headline"] == "Waiting to upload to GRIP" and not s["safe_to_switch_off"]
+    assert s["badge"] == "Please keep the scanner on"
 
 
 def test_service_records_both(env):
@@ -157,11 +151,3 @@ def test_keep_the_scanner_on_shows_once(env):
     s = snap(env)
     assert s["headline"] == "Receiving images from the scanner" and s["subline"] == ""
     assert s["badge"] == "Please keep the scanner on"
-
-
-def test_leave_the_scanner_on_shows_once(env):
-    staged(env)
-    env.advance(48 * 3600)
-    s = snap(env)
-    assert s["badge"] == "Please leave the scanner on to finish uploading"
-    assert "leave the scanner on" not in s["subline"]

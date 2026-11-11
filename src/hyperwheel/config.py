@@ -103,9 +103,8 @@ class DashboardSettings:
     # The Upload Monitor listens on the hotspot address, and on 127.0.0.1 for the Pi's own browser.
     bind: str = "192.168.99.1"
     port: int = 5000
-    # Once everything from the scanner is on the Pi, operators may switch the scanner
-    # off; the Pi uploads next time it is on. Ask them to leave it on only when files
-    # have waited this long (or the disk is getting full).
+    # No longer used: the scanner may be switched off only once everything is on GRIP. Kept so site settings that
+    # set it still load.
     leave_on_after_hours: float = 48.0
 
 

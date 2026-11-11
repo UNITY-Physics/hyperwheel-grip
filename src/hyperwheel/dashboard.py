@@ -167,12 +167,13 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     disk_low = free_gb is not None and free_gb < site.disk.warn_free_gb
     if disk_low:
         general.append({"level": "alert", "text": f"The Pi's disk is nearly full ({free_gb:.1f} GB free)."})
-    long_wait = any(now - f.created_at >= site.dashboard.leave_on_after_hours * 3600 for f in pending_files)
 
     attention = any(f["level"] in ("hold", "alert") for f in general) or any(
         f["level"] in ("hold", "alert") for c in cards for f in c["flags"])
     files = f"{pending} file{'s' if pending != 1 else ''}"
-    leave_on = False
+    # The Pi reaches the internet through the scanner and isn't meant to keep data: it's safe to switch the scanner
+    # off only once everything is on GRIP.
+    keep_on = "Please keep the scanner on until everything is on GRIP: the Pi's internet goes through it."
     if not running:
         headline, sub = "Hyperwheel is not running", "Contact your Hyperwheel admin."
     elif scanner_down and (receiving or fetching):
@@ -184,33 +185,24 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     elif fetching:
         headline, sub = "Fetching raw data from the scanner", ""
     elif pending and (no_key := _waiting_for_key(store, routing, pending_files)):
-        # Leaving the scanner on can't help without a key, so the badge says it's safe to switch off even with
-        # a long wait or a low disk (that has its own alert).
         headline = "Waiting for a GRIP key"
         sub = (f"Everything from the scanner is on the Pi. {files} still to upload. Uploads for "
-               f"{_and_list(sorted(routing.label(n) for n in no_key))} start once a working GRIP key is set. The Pi keeps the files, so you can "
-               "switch the scanner off.")
+               f"{_and_list(sorted(routing.label(n) for n in no_key))} start once a working GRIP key is set. "
+               f"{keep_on}")
     elif pending:
         offline = scanner_down or links.internet_down(now)
         headline = "Waiting to upload to GRIP" if offline else "Uploading to GRIP"
-        leave_on = long_wait or disk_low
-        if leave_on:
-            why = (f"some have waited more than {site.dashboard.leave_on_after_hours:g} hours" if long_wait
-                   else "the Pi's disk is getting full")
-            sub = (f"Everything from the scanner is on the Pi. {files} still to upload, and {why}. The Pi's "
-                   "internet goes through the scanner.")
-        else:
-            sub = (f"Everything from the scanner is on the Pi. {files} still to upload. You can switch the scanner "
-                   "off: the Pi keeps the files and uploads them next time the scanner is on.")
+        sub = f"Everything from the scanner is on the Pi. {files} still to upload. {keep_on}"
     else:
         headline, sub = "Everything is on GRIP", "Nothing is waiting on the Pi."
     on_pi_complete = running and not receiving and not fetching
-    if not on_pi_complete:
-        badge = "Please keep the scanner on" if not scanner_down else "Waiting for the scanner"
-    elif leave_on:
-        badge = "Please leave the scanner on to finish uploading"
+    safe = on_pi_complete and not pending
+    if safe:
+        badge = "Everything is on GRIP: safe to switch off"
+    elif scanner_down and not on_pi_complete:
+        badge = "Waiting for the scanner"
     else:
-        badge = "Everything from the scanner is on the Pi: safe to switch off"
+        badge = "Please keep the scanner on"
 
     keys = []
     for name, dataset in routing.projects.items():
@@ -227,7 +219,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
                     "text": connect_text},
         "subline": sub,
         "on_pi_complete": on_pi_complete,
-        "safe_to_switch_off": on_pi_complete and not leave_on,
+        "safe_to_switch_off": safe,
         "badge": badge,
         "attention": attention,
         "general": general,

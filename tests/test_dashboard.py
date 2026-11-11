@@ -93,11 +93,11 @@ def test_files_waiting_for_a_key_say_so_not_uploading(env):
         s = snap(env)
         assert s["headline"] == "Waiting for a GRIP key", status
         assert f"Uploads for {PROJECT} start once a working GRIP key is set" in s["subline"]
-        assert s["safe_to_switch_off"] and ";" not in s["subline"]
-    # Leaving the scanner on can't help without a key, so even a low disk doesn't ask for it.
+        assert not s["safe_to_switch_off"] and ";" not in s["subline"]  # nothing is on GRIP yet
+    # Without a key nothing reaches GRIP: the scanner stays on, as for any file still to upload.
     s = snapshot(env.store, env.site, env.routing, now=env.clock(), free_bytes=lambda p: 1024 ** 3,
                  connect_state=lambda: None, update_hold=lambda: None)
-    assert s["headline"] == "Waiting for a GRIP key" and s["safe_to_switch_off"]
+    assert s["headline"] == "Waiting for a GRIP key" and not s["safe_to_switch_off"]
     assert any("nearly full" in g["text"] for g in s["general"])
     # Another project's files still go up, so the Pi is uploading (the key alert names the one that isn't).
     env.routing.projects["Other"] = replace(env.routing.projects[PROJECT], name="Other", logins=("other",))
