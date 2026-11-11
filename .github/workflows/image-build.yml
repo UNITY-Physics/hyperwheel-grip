@@ -23,6 +23,8 @@ on:
       - "tools/image/build-image.sh"
       - "tools/image/find-private-keys.py"
       - "tools/release/fetch_debs.sh"  # the test image's release fetches its packages with it
+      - "release/debs.list"
+      - "release/debs.lock"
 
 permissions:
   contents: read

@@ -78,6 +78,10 @@ class Pi4:
         self.install_exit: dict[str, int] = {}
         self.stops_before_switch: set[str] = set()
         self.layout.releases.mkdir(parents=True)
+        self.os_debs: dict[str, list[str]] = {}  # release version -> its OS updates the Pi doesn't have yet
+        self.os_installed: list[list[str]] = []
+        self.os_exit = 0
+        self.reboots: list[float] = []
 
     def current(self):
         c = self.layout.current
@@ -149,7 +153,16 @@ class Pi4:
 
     def updater(self, channel="dev"):
         return up.Updater(self.paths, channel, BASE, self.pi, fetch=self.fetch, run=self.run, clock=self.clock,
-                          sleep=self.clock.sleep)
+                          sleep=self.clock.sleep, os_pending=lambda release: list(self.os_debs.get(release.parent.name, [])),
+                          os_install=self.install_os, reboot=lambda: self.reboots.append(self.clock()))
+
+    def install_os(self, debs):
+        self.os_installed.append(list(debs))
+        if self.os_exit:
+            return self.os_exit
+        for version in self.os_debs:
+            self.os_debs[version] = [d for d in self.os_debs[version] if d not in debs]
+        return 0
 
 
 @pytest.fixture
@@ -555,3 +568,51 @@ def test_an_install_and_its_checks_hold_the_install_lock_and_the_wait_for_idle_d
     assert pi.updater().check() == "updated: 0.1.2 -> 0.1.3"
     assert seen == {"apply": True, "wait": False}
     assert not held(pi.paths)  # let go afterwards
+
+
+# ---- the release's OS security updates, once it's accepted --------------------------------------------------------
+
+
+OPENSSL = ["debs/libssl3t64_3.5.9-1~deb13u1+rpt1_arm64.deb", "debs/openssl_3.5.9-1~deb13u1+rpt1_arm64.deb"]
+
+
+def test_os_updates_wait_until_the_release_is_accepted_then_install_when_idle_and_restart_the_pi(pi):
+    pi.publish("0.1.3")
+    pi.os_debs["0.1.3"] = list(OPENSSL)
+    assert pi.updater().check() == "updated: 0.1.2 -> 0.1.3"
+    assert pi.os_installed == [] and pi.reboots == []  # not with the update: a rollback must still work
+    pi.pi.busy_until = pi.clock() + 3600  # an exam is coming in
+    result = pi.updater().check()
+    assert result.startswith("up to date: 0.1.3") and "OS updates installed (libssl3t64, openssl)" in result
+    assert pi.os_installed == [OPENSSL] and len(pi.reboots) == 1
+    assert pi.reboots[0] >= 1_800_000_000 + 3600  # only once the Pi was idle
+    status = json.loads(pi.paths.status.read_text())
+    assert "restarting the Pi" in status["result"]  # written before the restart
+    assert pi.updater().check() == "up to date: 0.1.3 (dev names 0.1.3)" and len(pi.reboots) == 1  # done
+
+
+def test_os_updates_not_while_the_pi_is_busy_or_on_hold(pi):
+    pi.os_debs["0.1.2"] = list(OPENSSL)
+    pi.publish("0.1.2")
+    pi.pi.busy_until = pi.clock() + 10 * 3600
+    assert "Waiting for the Pi to be idle" in pi.updater().check()
+    assert pi.os_installed == [] and pi.reboots == []
+    pi.pi.busy_until = 0
+    pi.paths.hold.write_text("{}")
+    assert pi.updater().check().startswith("on hold") and pi.os_installed == []
+
+
+def test_os_updates_that_fail_keep_the_old_ones_and_arent_tried_again(pi):
+    pi.os_debs["0.1.2"] = list(OPENSSL)
+    pi.publish("0.1.2")
+    pi.os_exit = 100
+    result = pi.updater().check()
+    assert result.startswith("ALERT: 0.1.2's OS updates (libssl3t64, openssl) didn't install (exit 100)")
+    assert pi.reboots == []
+    assert "didn't install here before" in pi.updater().check() and len(pi.os_installed) == 1
+
+
+def test_a_newer_release_comes_first_and_its_os_updates_wait_for_it(pi):
+    pi.os_debs["0.1.2"] = list(OPENSSL)
+    pi.publish("0.1.3")
+    assert pi.updater().check() == "updated: 0.1.2 -> 0.1.3" and pi.os_installed == []

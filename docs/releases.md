@@ -484,7 +484,9 @@ The same steps also run by hand on the build Mac, for a test build:
 1. `tools/release/fetch_debs.sh <folder>` fetches the pinned `.deb` files in
    `release/debs.list` in an arm64 Docker container that uses the same archives
    as a Pi (Debian trixie and Raspberry Pi's, with the key in `release/apt/`),
-   and checks them against `release/debs.lock`.
+   and checks them against `release/debs.lock`. A pinned version the archive's
+   index no longer lists (a newer one replaced it) is fetched from the
+   archive's pool, which keeps old files, and the lock still checks it.
 2. `tools/release/build_release.py build --debs <folder> [--oe2 <folder>]`
    builds `dist/releases/hyperwheel-<version>/`: the wheels (Hyperwheel's own,
    and every package in `requirements/runtime-arm64.lock`, fetched with
@@ -501,7 +503,8 @@ signature, by a key in the Pi's `/etc/hyperwheel/release_allowed_signers`, for
 the `hyperwheel-release` namespace, then every file's size and SHA-256, with nothing extra in the
 folder. After changing `requirements/runtime.lock`, run
 `tools/release/lock_wheels.py`; after changing `release/debs.list`, run
-`fetch_debs.sh --update-lock`.
+`fetch_debs.sh --update-lock`. It writes the lock only from files apt checked
+against the archives' signed index, so it refuses a version only the pool has.
 
 **Signing.** OpenSSH signatures (`ssh-keygen -Y sign`) with a
 passphrase-protected key on the release signer's Mac, backed up in their password manager.
@@ -656,7 +659,22 @@ the update. `tests/test_state.py` enforces this for every migration.
 ## OS, kernel and firmware updates
 
 - OS security updates ship as pinned `.deb` files in a release, within
-  Trixie, with no reflash. Never a blanket `apt upgrade`.
+  Trixie, with no reflash. Never a blanket `apt upgrade`. The first is
+  OpenSSL 3.5.9 (`libssl3t64`, `openssl`, `openssl-provider-legacy` and
+  `libssl-dev`, which Orthanc's package needs), in 0.1.16.
+- They go in only once the release has been accepted. On an update the
+  installer leaves them out, and the new release's own update check installs
+  them later (at its next check, or with `hyperwheel update now`), offline,
+  once the Pi is idle, then restarts the Pi so nothing keeps the old library.
+  That keeps a rollback working: the release before would reinstall itself
+  with its own older `libssl-dev`, which needs the older `libssl3t64`, and
+  the Pi has no copy of that. An image build, or a Pi's first release,
+  installs them straight away. They're never downgraded, so a later
+  rollback keeps the newer ones. Once a Pi has OpenSSL 3.5.9, a release
+  before 0.1.16 can't be reinstalled on it (an automatic rollback only
+  happens during an update, so that doesn't arise). If they fail to install,
+  the Pi keeps the ones it had, the update status says so as an alert, and
+  it doesn't try again for that release.
 - Kernel or firmware updates only when needed. They are tested on the dev
   Pi first and marked in the manifest. They are installed only while the Pi
   is idle, followed by a reboot and the health check.

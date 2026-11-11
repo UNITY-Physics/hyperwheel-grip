@@ -93,6 +93,10 @@ check() {  # each check's label is printed once, however many checks it has
 }
 label="only admin has a password hash"
 check [ "$(awk -F: '$2 ~ /^\$/ {print $1}' "$mnt/etc/shadow")" = admin ]
+label="the release's OS security updates are installed (each pinned version in release/debs.list)"
+for pin in $(grep -E '^(libssl3t64|openssl|libssl-dev|openssl-provider-legacy)=' "$repo/release/debs.list"); do
+  check [ "$(in_image dpkg-query -W -f '${Version}' "${pin%%=*}")" = "${pin#*=}" ]
+done
 label="datamanager is uid 1000 and not in sudo, admin is in sudo"
 check [ "$(in_image id -u datamanager)" = 1000 ]
 check sh -c "! chroot '$mnt' id -nG datamanager | tr ' ' '\n' | grep -qx sudo"

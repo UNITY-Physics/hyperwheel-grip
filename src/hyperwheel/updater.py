@@ -104,6 +104,8 @@ class Paths:
     @property
     def installing(self) -> Path: return self.state / ".installing"  # held only while a release installs
     @property
+    def os_failed(self) -> Path: return self.state / "os-failed.json"
+    @property
     def request(self) -> Path: return self.state / "now-requested"
     @property
     def service_unit(self) -> Path: return self.layout.units / "hyperwheel.service"
@@ -167,6 +169,39 @@ def run_logged(cmd: Sequence[str]) -> int:
     return proc.returncode
 
 
+def query(cmd: Sequence[str]) -> str:
+    """A command's output, for the package checks. Raises InstallError when it fails (as the installer's do)."""
+    from .installer import InstallError
+    out = subprocess.run(list(cmd), capture_output=True, text=True)
+    if out.returncode != 0:
+        raise InstallError(f"{cmd[0]} failed (exit {out.returncode})")
+    return out.stdout
+
+
+def pending_os_packages(release: Path) -> list[str]:
+    """The release's OS security updates (installer.OS_PACKAGES) the Pi doesn't have yet."""
+    from .installer import plan_debs
+    return plan_debs(release / "debs", query)[1]
+
+
+def install_os_packages(debs: Sequence[str]) -> int:
+    """Install them offline, from the release's files only, as the installer installs Orthanc."""
+    import tempfile
+    from .installer import apt_with_no_sources
+    with tempfile.TemporaryDirectory(prefix="hyperwheel-apt.") as scratch:
+        proc = subprocess.run(["apt-get", "install", "-y", "-q", "--no-install-recommends",
+                               *apt_with_no_sources(Path(scratch)), *debs], capture_output=True, text=True,
+                              env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
+    for line in (proc.stdout + proc.stderr).splitlines():
+        if line.strip():
+            log.info("  %s", line.strip())
+    return proc.returncode
+
+
+def reboot_pi() -> None:
+    subprocess.run(["systemctl", "reboot"], capture_output=True)
+
+
 @dataclass
 class Updater:
     paths: Paths
@@ -180,6 +215,11 @@ class Updater:
     # The admin password and setup's last step (see adminpw), every check, on hold or not.
     # Returns what happened, in one line. None: not done here (tests of releases only).
     admin: Callable[[], str] | None = None
+    # The current release's OS security updates, once it has been accepted (see installer.OS_PACKAGES).
+    os_pending: Callable[[Path], list[str]] = pending_os_packages
+    os_install: Callable[[Sequence[str]], int] = install_os_packages
+    reboot: Callable[[], None] = reboot_pi
+    _reboot_now: bool = field(default=False, init=False, repr=False)
 
     # ---- the whole check ----------------------------------------------------------------
 
@@ -198,6 +238,10 @@ class Updater:
             except UpdateError as e:
                 result = f"no update: {e}"
             self._status(result, admin)
+            if self._reboot_now:
+                # New OS libraries are installed: a restart is the one way nothing keeps the old ones in memory.
+                log.info("Restarting the Pi to use the new OS packages.")
+                self.reboot()
             return result
 
     def _admin(self) -> str | None:
@@ -217,7 +261,7 @@ class Updater:
         channel = self.channel_file()
         if version_key(channel.version) <= version_key(current or "0.0.0"):
             self._prune_downloads(keep=None)
-            return f"up to date: {current} ({self.channel} names {channel.version})"
+            return self._os_updates(current, f"up to date: {current} ({self.channel} names {channel.version})", now)
         failed = self.failed_versions()
         if channel.version in failed:
             return f"staying on {current}: {channel.version} failed here before ({failed[channel.version]})"
@@ -233,6 +277,45 @@ class Updater:
         if not self.wait_until_idle(QUIET_NOW_S if now else QUIET_S):
             return f"{channel.version} is ready. Waiting for the Pi to be idle (will try again at the next check)"
         return self.apply(folder, channel.version, current)
+
+    def _os_updates(self, current: str | None, up_to_date: str, now: bool) -> str:
+        """The current release has been accepted (it's running, and there's nothing newer): install its OS security
+        updates if the Pi doesn't have them yet, once the Pi is idle, then restart the Pi. Never before a release is
+        accepted, so a rollback can still reinstall the release before it (see installer.OS_PACKAGES)."""
+        if not current:
+            return up_to_date
+        try:
+            debs = self.os_pending(self.paths.layout.releases / current / "release")
+        except Exception as e:  # noqa: BLE001 - the release check itself went fine
+            return f"{up_to_date}. Its OS updates couldn't be checked ({e})"
+        if not debs:
+            return up_to_date
+        failed = self.os_failed()
+        if current in failed:
+            return f"{up_to_date}. ALERT: its OS updates didn't install here before ({failed[current]}). The Pi " \
+                   "keeps the ones it has. Ask your Hyperwheel admin"
+        if not self.wait_until_idle(QUIET_NOW_S if now else QUIET_S):
+            return f"{up_to_date}. Its OS updates are ready. Waiting for the Pi to be idle (will try again at the " \
+                   "next check)"
+        names = ", ".join(sorted(Path(d).name.split("_", 1)[0] for d in debs))
+        code = self.os_install(debs)
+        if code != 0:
+            self._os_failed(current, f"apt ended with exit {code}")
+            return f"ALERT: {current}'s OS updates ({names}) didn't install (exit {code}). The Pi keeps the ones it " \
+                   "has, and it won't try again for this release. Ask your Hyperwheel admin"
+        self._reboot_now = True
+        return f"{up_to_date}. OS updates installed ({names}): restarting the Pi to use them"
+
+    def os_failed(self) -> dict[str, str]:
+        try:
+            return json.loads(self.paths.os_failed.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def _os_failed(self, version: str, why: str) -> None:
+        failed = self.os_failed()
+        failed[version] = why
+        _write(self.paths.os_failed, json.dumps(failed, indent=2, sort_keys=True) + "\n")
 
     # ---- 2. the channel file -------------------------------------------------------------
 

@@ -3,7 +3,12 @@
 # downloaded on a Pi. Fetched by tools/release/fetch_debs.sh; checksums in debs.lock.
 orthanc=1.12.7+dfsg-4
 libcivetweb1=1.16+dfsg-2+deb13u1
-libssl-dev=3.5.7-1~deb13u3+rpt1
+libssl-dev=3.5.9-1~deb13u1+rpt1
+# OpenSSL's security update, for every Pi (see installer.OS_PACKAGES: installed once the release is accepted).
+# libssl-dev needs exactly this libssl3t64, and libssl3t64 needs openssl-provider-legacy.
+libssl3t64=3.5.9-1~deb13u1+rpt1
+openssl=3.5.9-1~deb13u1+rpt1
+openssl-provider-legacy=3.5.9-1~deb13u1+rpt1
 libboost-locale1.83.0=1.83.0-4.2
 dcmtk-data=3.6.9-5+deb13u3
 libdcmtk19=3.6.9-5+deb13u3

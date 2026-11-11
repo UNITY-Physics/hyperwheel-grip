@@ -17,7 +17,8 @@ from hyperwheel.installer import InstallError, Installer, Layout
 from hyperwheel.release import FLAGS, MANIFEST, Manifest, ReleaseFile, sha256_file
 
 DEBS = {"orthanc_1.12.7+dfsg-4_arm64.deb": ("orthanc", "1.12.7+dfsg-4"),
-        "libdcmtk19_3.6.9-5+deb13u3_arm64.deb": ("libdcmtk19", "3.6.9-5+deb13u3")}
+        "libdcmtk19_3.6.9-5+deb13u3_arm64.deb": ("libdcmtk19", "3.6.9-5+deb13u3"),
+        "libssl3t64_3.5.9-1~deb13u1+rpt1_arm64.deb": ("libssl3t64", "3.5.9-1~deb13u1+rpt1")}
 
 
 def make_release(tmp: Path, key: Path, version: str = "0.1.0", oe2: bool = True) -> Path:
@@ -59,6 +60,10 @@ class FakePi:
             if cmd[-1] not in self.packages:
                 raise InstallError("not installed")
             return self.packages[cmd[-1]]
+        if cmd[:2] == ["dpkg", "--compare-versions"]:
+            if not cmd[2] > cmd[4]:  # plain string order: good enough for these made-up versions
+                raise InstallError("not greater")
+            return ""
         if cmd[0] == "openssl":
             Path(cmd[cmd.index("-keyout") + 1]).write_text("KEY")
             Path(cmd[cmd.index("-out") + 1]).write_text("CERT")
@@ -129,7 +134,7 @@ def test_first_install_on_a_fresh_pi(tmp_path, key, signers, pi):
     installer(make_release(tmp_path, key), signers, pi, said).install()
     assert fake.ran("useradd")[0][-1] == "hyperwheel" and "--system" in fake.ran("useradd")[0]
     apt = fake.ran("apt-get")[0]
-    assert sum(a.endswith(".deb") for a in apt) == 2
+    assert sum(a.endswith(".deb") for a in apt) == 3  # a first release: its OS updates too
     # apt sees no repository, or it would prefer a repository's copy of the same version and need the network
     assert {"Dir::Etc::sourcelist=/dev/null", "Dir::Etc::sourceparts=/dev/null"} <= set(apt)
     assert any(a.startswith("Dir::State::lists=") and "/var/lib/apt" not in a for a in apt)
@@ -424,3 +429,42 @@ def test_a_pi_with_no_ssh_server_is_left_alone(tmp_path, key, signers, pi):
     root, fake = pi
     installer(make_release(tmp_path, key), signers, pi, []).install()
     assert not fake.ran("sshd") and not (root / "etc/ssh").exists()
+
+
+def test_an_update_leaves_the_os_updates_for_after_it_is_accepted_and_an_image_installs_them(tmp_path, key, signers, pi):
+    root, fake = pi
+    said = []
+    fake.packages["libssl3t64"] = "3.5.7-1~deb13u3+rpt1"
+    (root / "opt/hyperwheel/releases/0.0.9").mkdir(parents=True)
+    (root / "opt/hyperwheel/current").symlink_to("releases/0.0.9")  # an update: the Pi has a release already
+    installer(make_release(tmp_path, key), signers, pi, said).install()
+    debs = [a for a in fake.ran("apt-get")[0] if a.endswith(".deb")]
+    assert len(debs) == 2 and not any("libssl3t64" in d for d in debs)
+    assert fake.packages["libssl3t64"] == "3.5.7-1~deb13u3+rpt1"
+    assert any("wait until this release has been accepted" in s for s in said)
+
+
+def test_an_image_build_installs_the_os_updates_straight_away(tmp_path, key, signers, pi):
+    root, fake = pi
+    fake.packages["libssl3t64"] = "3.5.7-1~deb13u3+rpt1"
+    installer(make_release(tmp_path, key), signers, pi, [], image=True).install()
+    assert fake.packages["libssl3t64"] == "3.5.9-1~deb13u1+rpt1"
+
+
+def test_an_os_package_is_never_downgraded():
+    from hyperwheel.installer import plan_debs
+    fake = FakePi()
+    folder = Path("/release/debs")
+    fake.packages.update({"libssl3t64": "3.6.0-1", "orthanc": "1.12.8"})
+    import types
+    names = list(DEBS)
+    others, os_debs = plan_debs(types.SimpleNamespace(glob=lambda pattern: [folder / n for n in names]), fake.run)
+    assert os_debs == []  # 3.6.0 is newer than the release's 3.5.9
+    assert str(folder / "orthanc_1.12.7+dfsg-4_arm64.deb") in others  # other packages follow the release, as before
+
+
+def test_a_pis_first_release_installs_the_os_updates_straight_away(tmp_path, key, signers, pi):
+    root, fake = pi
+    fake.packages["libssl3t64"] = "3.5.7-1~deb13u3+rpt1"
+    installer(make_release(tmp_path, key), signers, pi, []).install()  # no release on the Pi yet
+    assert fake.packages["libssl3t64"] == "3.5.9-1~deb13u1+rpt1"
