@@ -60,9 +60,9 @@ def _count_texts(state: str, dicom: list, rrdf: list, raw_pending: bool) -> tupl
     arriving = state in ("receiving", "stable", "checking")
     dicom_text = "DICOM receiving" if arriving and not dicom else f"DICOM {_on_grip(dicom)}/{len(dicom)} on GRIP"
     if not rrdf:
-        raw_text = "Raw data still to come" if arriving or raw_pending else "No raw data"
+        raw_text = "RRDF still to come" if arriving or raw_pending else "No RRDF"
     else:
-        raw_text = f"Raw data {_on_grip(rrdf)}/{len(rrdf)} on GRIP" + (" (still fetching)" if raw_pending else "")
+        raw_text = f"RRDF {_on_grip(rrdf)}/{len(rrdf)} on GRIP" + (" (still fetching)" if raw_pending else "")
     return dicom_text, raw_text
 
 
@@ -184,12 +184,12 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         headline, sub = "Hyperwheel is not running", "Contact your Hyperwheel admin."
     elif scanner_down and (receiving or fetching):
         headline = "Can't reach the scanner"
-        sub = ("Images or raw data are still to come from the scanner. Please check that the scanner is on and "
+        sub = ("Images or RRDF are still to come from the scanner. Please check that the scanner is on and "
                "the cable is connected.")
     elif receiving:
         headline, sub = "Receiving images from the scanner", ""  # the badge says to keep the scanner on
     elif fetching:
-        headline, sub = "Fetching raw data from the scanner", ""
+        headline, sub = "Fetching RRDF from the scanner", ""
     elif pending and (no_key := _waiting_for_key(store, routing, pending_files)):
         headline = "Waiting for a GRIP key"
         sub = (f"Everything from the scanner is on the Pi. {files} still to upload. Uploads for "

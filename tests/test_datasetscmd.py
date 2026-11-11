@@ -228,7 +228,7 @@ def test_a_refused_new_key_leaves_the_old_one(pi, env):
 def test_remove_asks_for_its_name_then_deletes_the_dataset_and_key(pi, env):
     typed = Scripted(answers=["1", "wrong name"])
     assert pi.run("remove", typed) == 1 and PROJECT in pi.routing().projects
-    assert "Scans from sandbox will then be deleted on this Pi, not uploaded, and raw data" in typed.text
+    assert "Scans from sandbox will then be deleted on this Pi, not uploaded, and RRDF" in typed.text
     typed = Scripted(answers=["1", PROJECT])
     assert pi.run("remove", typed, active=True) == 0, typed.text
     assert pi.routing().projects == {} and not env.keys.path(PROJECT).exists()
@@ -251,7 +251,7 @@ def test_remove_refuses_while_files_wait_unless_they_may_be_deleted(pi, env):
     after = env.store.study(study.id)
     assert after.state == "unrouted" and after.project is None and after.stable_at is not None
     assert env.store.files(study.id) == [] and env.store.open_flags(study_id=study.id) == []
-    assert env.store.study(done.id).state == "archived"  # on GRIP already: no longer watched for raw data
+    assert env.store.study(done.id).state == "archived"  # on GRIP already: no longer watched for RRDF
     assert "1 session was deleted on this Pi" in typed.text
 
 
@@ -559,7 +559,7 @@ def test_raw_data_still_on_the_scanner_is_said_and_needs_its_own_yes(pi, env):
                        scanner_folder="rrdf_20261028_090000")  # another session's: not counted
     typed = Scripted(answers=["1", PROJECT, ""])
     assert pi.run("remove", typed) == 1
-    assert "1 raw file of its sessions is still on the scanner, not fetched yet." in typed.text
+    assert "1 RRDF file of its sessions is still on the scanner, not fetched yet." in typed.text
     assert PROJECT in pi.routing().projects
     typed = Scripted(answers=["1", PROJECT, "go on"])
     assert pi.run("remove", typed) == 0 and pi.routing().projects == {}, typed.text
@@ -821,7 +821,7 @@ def test_raw_data_not_checked_on_the_scanner_yet_needs_go_on(pi, env):
     env.store.add_study("1.2.80", state="uploaded", project=PROJECT, stable_at=env.clock())  # raw never checked
     typed = Scripted(answers=["1", PROJECT, ""])
     assert pi.run("remove", typed) == 1
-    assert "The Pi hasn't been able to check the scanner for raw data of 1 of its sessions yet." in typed.text
+    assert "The Pi hasn't been able to check the scanner for RRDF of 1 of its sessions yet." in typed.text
     checked = env.store.add_study("1.2.81", state="uploaded", project=PROJECT, stable_at=env.clock(),
                                   raw_checked_at=env.clock())
     env.store.update_study(env.store.study_by_uid("1.2.80").id, raw_checked_at=env.clock())
@@ -832,6 +832,6 @@ def test_raw_data_not_checked_on_the_scanner_yet_needs_go_on(pi, env):
 def test_a_failing_raw_data_fetch_also_needs_go_on(pi, env):
     pi.site = replace(pi.site, rrdf=replace(pi.site.rrdf, enabled=True))
     env.store.add_study("1.2.82", state="uploaded", project=PROJECT, stable_at=env.clock(), raw_checked_at=env.clock())
-    env.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the raw-data login.", level="alert")
+    env.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the RRDF login.", level="alert")
     typed = Scripted(answers=["1", PROJECT, ""])
-    assert pi.run("remove", typed) == 1 and "check the scanner for raw data of 1" in typed.text
+    assert pi.run("remove", typed) == 1 and "check the scanner for RRDF of 1" in typed.text

@@ -204,7 +204,7 @@ class Uploader:
             self.store.clear_flags("RAW_WAITING_FOR_DICOM", study_id=study.id)
             return True
         self.store.raise_flag("RAW_WAITING_FOR_DICOM",
-                              "Raw files wait: no DICOM file of this study is on GRIP yet.", study_id=study.id)
+                              "RRDF files wait: no DICOM file of this study is on GRIP yet.", study_id=study.id)
         return False
 
     def _maybe_done(self, study: Study) -> None:
@@ -327,13 +327,13 @@ class Uploader:
         try:
             size = os.stat(f.path or "").st_size
         except OSError as e:
-            self._refuse(f, "LOCAL_FILE_MISSING", f"staged raw file can't be read ({e.strerror})")
+            self._refuse(f, "LOCAL_FILE_MISSING", f"staged RRDF file can't be read ({e.strerror})")
             return
         if size != f.size:
-            self._refuse(f, "LOCAL_FILE_CHANGED", "staged raw file has a different size from when it was pulled")
+            self._refuse(f, "LOCAL_FILE_CHANGED", "staged RRDF file has a different size from when it was pulled")
             return
         if size == 0:
-            self._refuse(f, "RAW_FILE_EMPTY", "raw file is empty (kept for a person to check)")
+            self._refuse(f, "RAW_FILE_EMPTY", "RRDF file is empty (kept for a person to check)")
             return
         chunk_bytes = self._chunk_bytes
         last_chunk_start = ((size - 1) // chunk_bytes) * chunk_bytes
@@ -348,7 +348,7 @@ class Uploader:
                 offset = last_chunk_start
             elif same_size and 0 < progress.offset < size:
                 offset = progress.offset
-                log.info("raw file %s: GRIP has %d of %d bytes, continuing from there", f.name, offset, size)
+                log.info("RRDF file %s: GRIP has %d of %d bytes, continuing from there", f.name, offset, size)
             else:
                 # Nothing on GRIP, a different size, or GRIP dropped the partial upload:
                 # send the whole file again (it overwrites). Not a problem, so no flag.
@@ -358,10 +358,10 @@ class Uploader:
             self._park(f, str(e))
         except Refused as e:
             if e.invalid_name:
-                self._refuse(f, "RAW_NAME_REFUSED", f"GRIP refused the name of raw file {f.name} as invalid. Raw "
+                self._refuse(f, "RAW_NAME_REFUSED", f"GRIP refused the name of RRDF file {f.name} as invalid. RRDF "
                                                     "files are never renamed, so tell your Hyperwheel admin")
             else:
-                self._refuse(f, "RAW_REFUSED", f"GRIP refused raw file {f.name}: {e}")
+                self._refuse(f, "RAW_REFUSED", f"GRIP refused RRDF file {f.name}: {e}")
         except (KeyProblem, KeyRejected, AuthFailed):
             self._park(f, "GRIP key not working")
             raise
@@ -393,17 +393,17 @@ class Uploader:
                         raise
                     if e.no_answer and self._chunk_bytes > self.settings.min_chunk_bytes:
                         self._chunk_bytes = max(self.settings.min_chunk_bytes, self._chunk_bytes // 2)
-                        log.warning("raw file %s: no answer for a chunk of %d KiB. Trying again, with chunks of "
+                        log.warning("RRDF file %s: no answer for a chunk of %d KiB. Trying again, with chunks of "
                                     "at most %d KiB", f.name, len(chunk) // 1024, self._chunk_bytes // 1024)
                     else:
-                        log.warning("raw file %s: %s. Trying again", f.name, e)
+                        log.warning("RRDF file %s: %s. Trying again", f.name, e)
                     self.sleep(e.retry_after if e.retry_after is not None else api.http.backoff(failures))
                     continue
                 except Refused as e:
                     if restarted or e.invalid_name:
                         raise
                     # GRIP wouldn't take the rest of an earlier upload: send it in full instead.
-                    log.info("raw file %s: GRIP refused continuing at byte %d (HTTP %d). Sending it in full",
+                    log.info("RRDF file %s: GRIP refused continuing at byte %d (HTTP %d). Sending it in full",
                              f.name, offset, e.status)
                     restarted, resent_last, offset = True, False, 0
                     self.store.update_file(f.id, upload_offset=0)
@@ -416,7 +416,7 @@ class Uploader:
                     if took > self.settings.target_chunk_s and self._chunk_bytes > self.settings.min_chunk_bytes:
                         self._chunk_bytes = max(self.settings.min_chunk_bytes, self._chunk_bytes // 2)
                         good = 0
-                        log.info("raw file %s: a chunk of %d KiB took %.0f s. Chunks of at most %d KiB from now",
+                        log.info("RRDF file %s: a chunk of %d KiB took %.0f s. Chunks of at most %d KiB from now",
                                  f.name, len(chunk) // 1024, took, self._chunk_bytes // 1024)
                     elif took <= self.settings.target_chunk_s / 4 and len(chunk) >= self._chunk_bytes:
                         good += 1
@@ -428,7 +428,7 @@ class Uploader:
                     if result.complete:
                         self._confirmed(f, upload_offset=size)
                         self._report.confirmed += 1
-                        log.info("raw file %s of study %s: stored on GRIP", f.name, study.study_uid)
+                        log.info("RRDF file %s of study %s: stored on GRIP", f.name, study.study_uid)
                         self._delete_local(self.store.file(f.id))
                         return
                     new_offset = result.offset if result.offset is not None else offset + len(chunk)
@@ -442,7 +442,7 @@ class Uploader:
                     if result.offset is None or conflicts > 3:
                         self._park(f, "GRIP's upload offset keeps disagreeing")
                         return
-                    log.info("raw file %s: GRIP has %d bytes, continuing from there", f.name, result.offset)
+                    log.info("RRDF file %s: GRIP has %d bytes, continuing from there", f.name, result.offset)
                     offset = result.offset
                     if offset == 0:
                         restarted = True
@@ -453,7 +453,7 @@ class Uploader:
                     if resets >= 2:
                         self._refuse(f, "RAW_CHECKSUM", f"GRIP reported a checksum mismatch for {f.name} twice")
                         return
-                    log.warning("raw file %s: checksum mismatch reported by GRIP, starting again from 0", f.name)
+                    log.warning("RRDF file %s: checksum mismatch reported by GRIP, starting again from 0", f.name)
                     offset = 0
                     resent_last = False
         self._park(f, "upload did not finish")
@@ -501,7 +501,7 @@ class Uploader:
 
 
 def _label(f: File) -> str:
-    return "DICOM" if f.kind == "dicom" else "raw file"
+    return "DICOM" if f.kind == "dicom" else "RRDF file"
 
 
 def _ident(f: File) -> str:

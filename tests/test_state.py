@@ -58,7 +58,7 @@ def test_file_lifecycle(store):
                        scanner_folder="rrdf_20261027_132802")
     for state in ("unassigned", "pulled", "sending", "refused", "pulled", "sending", "confirmed", "deleted"):
         r = store.move_file(r.id, state)
-    for state in ("staged", "pulled"):  # a deleted raw file is never pulled or sent again
+    for state in ("staged", "pulled"):  # a deleted RRDF file is never pulled or sent again
         with pytest.raises(StateError):
             store.move_file(r.id, state)
 

@@ -255,7 +255,7 @@ up, setup refuses to run, and the sudo rule no longer lists it.
    NetworkManager connection (both root-only), and deletes the copy, its folder
    and any hidden files macOS left. Only if there's none does it ask, hidden and
    twice.
-5. **The scanner's raw-data password**, tried on the scanner first, as
+5. **The scanner's RRDF password**, tried on the scanner first, as
    `hyperwheel scanner password` does. It can be skipped and set later.
 6. **The datamanager password**, generated, shown once, and set only after it
    has been typed back. Then the screen is cleared.
@@ -374,7 +374,7 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   data of its sessions still on the scanner (not fetched
   yet) is never fetched once it's removed: it says so and asks for `go on`,
   also when the Pi hasn't been able to check the scanner for some of its
-  sessions yet, or fetching raw data is failing. Then, with the upload service stopped for a moment, it counts
+  sessions yet, or fetching RRDF is failing. Then, with the upload service stopped for a moment, it counts
   again (stopping if more arrived), deletes those sessions on the Pi and in
   Orthanc like a study from a login with no dataset, and only then takes the
   dataset and its key off the Pi. Stopped part-way, the dataset is still
@@ -385,7 +385,7 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   dataset was removed) goes through as a new one if the scanner sends it again
   once its login has a dataset. One that was fully on GRIP before its dataset
   was removed, sent again once its login belongs to another dataset, goes
-  there as DICOM only: its raw data was already uploaded to the first dataset
+  there as DICOM only: its RRDF was already uploaded to the first dataset
   and isn't fetched again. The data manager can see that on GRIP. Only what the scanner sent again is uploaded,
   so it's flagged to check it's complete on GRIP. While it arrives, the
   Upload Monitor says it's receiving. If it never finishes arriving (Orthanc
@@ -425,27 +425,27 @@ If a key stops working (revoked, or entered wrong), the Upload Monitor shows
 an alert for that dataset. Only that dataset's uploads pause, and its files
 are kept until a working key is set.
 
-## Scanner raw-data password (SOP outline)
+## Scanner RRDF password (SOP outline)
 
-The Pi fetches raw data from the scanner with a raw-data login. Its password
+The Pi fetches RRDF from the scanner with an RRDF login. Its password
 changes with the scanner's software (from version 12, every release has a
 new one), so it is a setting on each Pi, never in the repo or a release. It
 is in `/etc/hyperwheel/scanner.json`, root-only (mode 600).
 
 After a scanner upgrade, or when the scanner is missing the RRDF entitlement
 that Hyperfine adds, the scanner refuses the login. The Upload Monitor,
-`hyperwheel status` and `hyperwheel doctor` then show an alert, raw data stays
+`hyperwheel status` and `hyperwheel doctor` then show an alert, RRDF stays
 on the scanner, and DICOM keeps uploading. The Pi tries the login again every
 15 minutes, no more often, so the scanner account isn't locked.
 
 **Setting the new password:**
 
-1. Get the new raw-data password from your Hyperwheel admin.
+1. Get the new RRDF password from your Hyperwheel admin.
 2. On the Pi, as the data manager or admin, type
    `hyperwheel scanner password`. It asks for the account's password.
-3. Paste the raw-data password. It is typed hidden and never shown, logged
+3. Paste the RRDF password. It is typed hidden and never shown, logged
    or put on a command line. Pressing Enter stops, and nothing is saved.
-4. The command logs in to the scanner with it and lists the raw-data folder
+4. The command logs in to the scanner with it and lists the RRDF folder
    (read-only) **before** saving it. If the scanner refuses it, or can't be
    reached, nothing is saved and the old password stays. If you're sure the
    password is right and the scanner still refuses it, the scanner may be

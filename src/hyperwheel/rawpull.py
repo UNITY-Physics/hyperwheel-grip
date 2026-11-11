@@ -108,13 +108,13 @@ class RawPuller:
             scanner = self.connect()
         except LoginRefused:
             self._login_refused_at = self.clock()
-            self.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the raw-data login, most likely "
+            self.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the RRDF login, most likely "
                                   "because its software was upgraded or it's missing the RRDF entitlement. Set the "
                                   "new password with: hyperwheel scanner password. If that doesn't help, tell "
-                                  "your Hyperwheel admin. Raw data stays on the scanner until then. DICOM keeps "
+                                  "your Hyperwheel admin. RRDF stays on the scanner until then. DICOM keeps "
                                   "uploading.",
                                   level="alert")
-            log.error("raw data: the scanner refused the login. Trying again in %d min", self.LOGIN_RETRY_S // 60)
+            log.error("RRDF: the scanner refused the login. Trying again in %d min", self.LOGIN_RETRY_S // 60)
             return report
         except (ScannerError, OSError) as e:
             self._failed(str(e), watched)
@@ -141,9 +141,9 @@ class RawPuller:
         now = self.clock()
         if self._failing_since is None:
             self._failing_since = now
-        log.warning("raw data: can't read the scanner (%s). Will try again", why)
+        log.warning("RRDF: can't read the scanner (%s). Will try again", why)
         if now - self._failing_since >= self.ALERT_AFTER_S:
-            self.store.raise_flag("RAW_PULL_FAILING", f"Raw data can't be fetched from the scanner ({why}). "
+            self.store.raise_flag("RAW_PULL_FAILING", f"RRDF can't be fetched from the scanner ({why}). "
                                   "Check the scanner is on and its cable is plugged in.", level="alert")
 
     def _pass(self, scanner: ScannerFiles, watched: list[Study], report: PullReport) -> None:
@@ -166,7 +166,7 @@ class RawPuller:
                 if not name.endswith(".h5"):
                     continue
                 if not is_rrdf_name(name):
-                    self.store.raise_flag("RAW_NAME_UNEXPECTED", f"A raw file in scanner folder {folder} has a "
+                    self.store.raise_flag("RAW_NAME_UNEXPECTED", f"An RRDF file in scanner folder {folder} has a "
                                           "name GRIP won't accept and was not fetched. It stays on the scanner. "
                                           "Please contact your Hyperwheel admin.", level="alert",
                                           ref=f"{folder}/{name}")
@@ -199,12 +199,12 @@ class RawPuller:
     def _changed_on_scanner(self, folder: str, row: File, size: int) -> None:
         ref = f"{folder}/{row.name}"
         already = any(f.code == "RAW_CHANGED_ON_SCANNER" and f.ref == ref for f in self.store.open_flags())
-        self.store.raise_flag("RAW_CHANGED_ON_SCANNER", f"Raw file {row.name} in scanner folder {folder} now has a "
+        self.store.raise_flag("RAW_CHANGED_ON_SCANNER", f"RRDF file {row.name} in scanner folder {folder} now has a "
                               f"different size on the scanner ({size} bytes) from when the Pi fetched it "
                               f"({row.size} bytes). The Pi has not fetched it again. Please "
                               "contact your Hyperwheel admin.", study_id=row.study_id, level="alert", ref=ref)
         if not already:
-            log.warning("raw file %s in %s: size changed on the scanner after it was fetched. Flagged, not fetched "
+            log.warning("RRDF file %s in %s: size changed on the scanner after it was fetched. Flagged, not fetched "
                         "again", row.name, folder)
 
     def adopt_held(self, report: PullReport | None = None) -> None:
@@ -214,7 +214,7 @@ class RawPuller:
             try:
                 self._adopt(row, report)
             except OSError as e:  # one file that can't be moved (a full disk) doesn't stop the rest, or the pass
-                log.warning("raw file %s held by an earlier release: not moved yet (%s). Will try again", row.name,
+                log.warning("RRDF file %s held by an earlier release: not moved yet (%s). Will try again", row.name,
                             e.strerror)
 
     def _adopt(self, row: File, report: PullReport | None) -> None:
@@ -243,7 +243,7 @@ class RawPuller:
             self.store.move_study(study.id, "uploading")
         if report is not None:
             report.pulled += 1
-        log.info("raw file %s: held by an earlier release, now with study %s", row.name, study.study_uid)
+        log.info("RRDF file %s: held by an earlier release, now with study %s", row.name, study.study_uid)
         src.unlink(missing_ok=True)
         _fsync_dir(src.parent)
         for folder in (src.parent, src.parent.parent):  # _unassigned/<scanner folder>, then _unassigned
@@ -257,14 +257,14 @@ class RawPuller:
         directory.mkdir(parents=True, exist_ok=True)
         stop = int(self.site.disk.stop_free_gb * 1024 ** 3)
         if self.free_bytes(directory) - (row.size or 0) < stop:
-            self.store.raise_flag("DISK_LOW", "The Pi's disk is nearly full, so raw data is not being fetched. "
+            self.store.raise_flag("DISK_LOW", "The Pi's disk is nearly full, so RRDF is not being fetched. "
                                   "Uploads free space as they finish.", level="alert")
             return False
         self.store.clear_flags("DISK_LOW")
 
         final = directory / row.name
         if final.exists():
-            self.store.raise_flag("RAW_NAME_CLASH", f"Raw file {row.name} from scanner folder {folder} has the same "
+            self.store.raise_flag("RAW_NAME_CLASH", f"RRDF file {row.name} from scanner folder {folder} has the same "
                                   "name as a file already on the Pi. It was not fetched.", level="alert",
                                   ref=f"{folder}/{row.name}")
             return False
@@ -293,7 +293,7 @@ class RawPuller:
         if current.state == "uploaded":
             self.store.move_study(study.id, "uploading")
         report.pulled += 1
-        log.info("raw file %s: fetched for study %s", row.name, study.study_uid)
+        log.info("RRDF file %s: fetched for study %s", row.name, study.study_uid)
         return True
 
 
@@ -326,7 +326,7 @@ class SshScanner:
         import paramiko
 
         if not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", rrdf_dir) or ".." in rrdf_dir.split("/"):
-            raise ScannerError("unexpected raw-data folder in the site settings")
+            raise ScannerError("unexpected RRDF folder in the site settings")
         self._paramiko = paramiko
         self.rrdf_dir = rrdf_dir
         self.timeout_s = timeout_s
@@ -348,7 +348,7 @@ class SshScanner:
                                  auth_timeout=timeout_s, sock=sock)
         except paramiko.AuthenticationException:
             self._client.close()
-            raise LoginRefused("the scanner refused the raw-data login") from None
+            raise LoginRefused("the scanner refused the RRDF login") from None
         except (paramiko.SSHException, OSError, EOFError) as e:
             self._client.close()
             raise ScannerError(f"SSH to the scanner failed ({type(e).__name__})") from None

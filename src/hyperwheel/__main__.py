@@ -62,7 +62,7 @@ def _main(argv: list[str]) -> int:
     sub.add_parser("doctor", help="check the scanner, GRIP, Orthanc, clock, disk and keys")
     datasets = sub.add_parser("datasets", help="GRIP datasets: list, add, change or remove one (as root)")
     datasets.add_argument("action", choices=["list", "add", "change", "remove"])
-    scanner = sub.add_parser("scanner", help="set the scanner's raw-data password (as root)")
+    scanner = sub.add_parser("scanner", help="set the scanner's RRDF password (as root)")
     scanner.add_argument("action", choices=["password"])
     sub.add_parser("update", help="updates: check, now, hold, release-hold, status, channel (as root)")
     args = ap.parse_args(argv)
@@ -115,8 +115,7 @@ def _main(argv: list[str]) -> int:
         print(f"  [{f['level']}] {f['text']}")
     for st in s["studies"]:
         print(f"\n{st['session']}  {st['project']}  {st['state']}")
-        raw = st["raw"]["text"]
-        print(f"  {st['dicom']['text']}, {raw[0].lower()}{raw[1:]}")
+        print(f"  {st['dicom']['text']}, {st['raw']['text']}")
         for f in st["flags"]:
             print(f"  [{f['level']}] {f['text']}")
     print("\nGRIP datasets:" if s["keys"] else "\nGRIP datasets: none yet")

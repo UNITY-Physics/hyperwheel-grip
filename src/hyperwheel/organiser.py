@@ -238,7 +238,7 @@ class Organiser:
     def housekeeping(self) -> None:
         """Retry purges that failed, archive studies past the watch period, and clear retired raw-data flags."""
         if cleared := checks.clear_retired_flags(self.store):
-            log.info("cleared %d raw-data flag(s) from an earlier release. The Pi no longer raises them", cleared)
+            log.info("cleared %d RRDF flag(s) from an earlier release. The Pi no longer raises them", cleared)
         for study in self.store.studies(states=("unrouted",)):
             if study.stable_at is not None:
                 self._purge(study, None)

@@ -114,12 +114,12 @@ class GripApi:
         if r.status_code == 404:
             return None
         if r.status_code != 200:
-            raise _refused("raw file progress", r)
+            raise _refused("RRDF file progress", r)
         try:
             offset = int(r.headers.get("Upload-Offset", "0"))
             length = int(r.headers["Upload-Length"]) if "Upload-Length" in r.headers else None
         except ValueError:
-            raise Transient("raw file progress: answer not understood") from None
+            raise Transient("RRDF file progress: answer not understood") from None
         return RawProgress(offset, length, r.headers.get("Upload-Complete", "").lower() == "true")
 
     def raw_put(self, study_uid: str, name: str, chunk: bytes, start: int, total: int, *,
@@ -138,7 +138,7 @@ class GripApi:
             },
         )
         if r.status_code not in (200, 409, 422):
-            raise _refused("raw file chunk", r)
+            raise _refused("RRDF file chunk", r)
         offset: int | None
         try:
             offset = int(r.headers["Upload-Offset"]) if "Upload-Offset" in r.headers else None

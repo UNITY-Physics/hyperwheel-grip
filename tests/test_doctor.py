@@ -134,13 +134,13 @@ def test_no_patient_data_printed(env, capsys):
 
 
 def test_a_refused_raw_data_login_says_how_to_set_the_new_password(env):
-    env.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the raw-data login, ... Set the new password "
+    env.store.raise_flag("RAW_LOGIN_REFUSED", "The scanner refused the RRDF login, ... Set the new password "
                          "with: hyperwheel scanner password. ...", level="alert")
     r, code = run(env)
     assert code == 1
-    assert r["Scanner"][0] == OK  # the scanner answers; only its raw-data login is refused
-    assert r["Raw data from the scanner"][0] == PROBLEM
-    assert "hyperwheel scanner password" in r["Raw data from the scanner"][1]
+    assert r["Scanner"][0] == OK  # the scanner answers; only its RRDF login is refused
+    assert r["RRDF from the scanner"][0] == PROBLEM
+    assert "hyperwheel scanner password" in r["RRDF from the scanner"][1]
 
 
 def test_it_shows_the_grip_address_the_pi_uses_and_checks_it_with_no_datasets_yet(env):

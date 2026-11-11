@@ -679,7 +679,7 @@ class LivePi(Pi):
             if running and self.routing is not None:
                 s = snapshot(store, self.site, self.routing, now=now, free_bytes=lambda p: 1 << 40)
                 if not s["on_pi_complete"]:
-                    return "images or raw data are still coming from the scanner"
+                    return "images or RRDF are still coming from the scanner"
             last = store.last_arrival()
             if last is not None and now - last < quiet_s:
                 return f"something arrived from the scanner {int((now - last) // 60)} minutes ago"

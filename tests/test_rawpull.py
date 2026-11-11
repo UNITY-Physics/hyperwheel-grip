@@ -112,7 +112,7 @@ def test_every_h5_file_in_the_folder_is_the_studys_whatever_its_name_says(env, s
              "a scan with no time.h5"]
     for name in names:
         raw(scanner, FOLDER, name)
-    raw(scanner, FOLDER, "notes.txt")  # not raw data
+    raw(scanner, FOLDER, "notes.txt")  # not RRDF
     p = puller(env, scanner)
     p.pull_once()
     report = p.pull_once()
@@ -248,7 +248,7 @@ def test_refused_login_alerts_at_once_and_is_not_retried_for_15_minutes(env, sca
     flags = [f for f in env.store.open_flags() if f.code == "RAW_LOGIN_REFUSED"]
     assert len(flags) == 1 and flags[0].level == "alert"
     assert flags[0].detail.startswith(
-        "The scanner refused the raw-data login, most likely because its software was upgraded or it's missing "
+        "The scanner refused the RRDF login, most likely because its software was upgraded or it's missing "
         "the RRDF entitlement. Set the new password with: hyperwheel scanner password. If that doesn't help, "
         "tell your Hyperwheel admin.")
     for _ in range(20):  # a local round every 15 s for 5 minutes: no new tries

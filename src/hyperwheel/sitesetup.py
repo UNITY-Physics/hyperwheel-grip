@@ -579,13 +579,13 @@ class Setup:
     # ---- 5. the scanner's raw-data password ----
 
     def scanner_password(self, site: SiteConfig) -> None:
-        self.step(5, "the scanner's raw-data password")
+        self.step(5, "the scanner's RRDF password")
         path = self.etc / "scanner.json"
         stored = scannercmd._stored(path)
         if stored is not None:
-            self.say("A raw-data password is already on this Pi. Press Enter to keep it, or paste a new one.")
+            self.say("An RRDF password is already on this Pi. Press Enter to keep it, or paste a new one.")
         else:
-            self.say("Paste the scanner's raw-data password, or press Enter to skip it and set it later with: "
+            self.say("Paste the scanner's RRDF password, or press Enter to skip it and set it later with: "
                      "hyperwheel scanner password")
         for _ in range(3):
             try:
@@ -610,7 +610,7 @@ class Setup:
                 return
             scannercmd.save(path, password)
             self.progress("scanner_password_at")
-            self.say(f"The scanner accepted it ({folders} raw-data folder{'s' if folders != 1 else ''} found). "
+            self.say(f"The scanner accepted it ({folders} RRDF folder{'s' if folders != 1 else ''} found). "
                      "Saved.")
             return
         self.say("Skipped. Set it later with: hyperwheel scanner password")
