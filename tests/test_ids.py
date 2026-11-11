@@ -40,7 +40,8 @@ def test_raw_names_are_any_h5_file_grip_would_accept():
                  "0T1SPGRFA30_4x224scale.user_rrdf_20261007_110757.h5",
                  "no_date_or_time.h5", "a b.h5", ".hidden.h5", "x" * 252 + ".h5"):
         assert ids.is_rrdf_name(name), name
-    for name in ("", "   ", "x.txt", "../x.h5", "x..y.h5", "x/y.h5", "x\\y.h5", "x" * 253 + ".h5", "a\nb.h5", None):
+    for name in ("", "   ", "x.txt", "../x.h5", "x..y.h5", "x/y.h5", "x\\y.h5", "x" * 253 + ".h5", "a\nb.h5", None,
+                 " lead.h5", "trail.h5 ", "é" * 127 + ".h5", "bad\ufffd.h5"):  # spaces at the ends, over 255 bytes
         assert not ids.is_rrdf_name(name), name
 
 

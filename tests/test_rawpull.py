@@ -325,3 +325,54 @@ def test_end_to_end_orthanc_to_grip(env, scanner):
     session = env.fake.study_for(uid)
     assert len(session.stored) == 11 and sorted(session.raw) == sorted(PHANTOM_RAW)
     assert all(r.complete for r in session.raw.values())
+
+
+def test_a_name_near_the_length_limit_is_fetched(env, scanner):
+    uid = phantom_study(env)
+    long_name = "x" * 252 + ".h5"  # 255 bytes: the Pi's temporary name for it must still fit
+    raw(scanner, FOLDER, long_name)
+    p = puller(env, scanner)
+    p.pull_once()
+    p.pull_once()
+    f = env.store.rrdf_file(FOLDER, long_name)
+    assert f.state == "pulled" and f.study_id == env.store.study_by_uid(uid).id
+
+
+def test_a_held_file_of_an_archived_study_moves_in_and_goes_up(env, scanner):
+    uid = phantom_study(env)
+    study = env.store.study_by_uid(uid)
+    for state in ("uploading", "uploaded", "archived"):
+        env.store.move_study(study.id, state)  # its 7 days passed while the file was held
+    held = env.site.staging_dir / "_unassigned" / FOLDER / "late_rrdf_20261027_151400.h5"
+    held.parent.mkdir(parents=True)
+    held.write_bytes(b"raw")
+    row = env.store.add_file(kind="rrdf", name=held.name, state="seen", study_id=None, scanner_folder=FOLDER, size=3)
+    env.store.move_file(row.id, "unassigned", path=str(held))
+    puller(env, scanner).pull_once()
+    assert env.store.file(row.id).state == "pulled" and env.store.file(row.id).study_id == study.id
+    assert env.store.study(study.id).state == "uploading"
+
+
+def test_a_held_file_that_cant_be_moved_doesnt_stop_the_others_or_the_pass(env, scanner, monkeypatch):
+    uid = phantom_study(env)
+    rows = []
+    for name in ("a_rrdf_20261027_151400.h5", "b_rrdf_20261027_151401.h5"):
+        held = env.site.staging_dir / "_unassigned" / FOLDER / name
+        held.parent.mkdir(parents=True, exist_ok=True)
+        held.write_bytes(b"raw")
+        row = env.store.add_file(kind="rrdf", name=name, state="seen", study_id=None, scanner_folder=FOLDER, size=3)
+        rows.append(env.store.move_file(row.id, "unassigned", path=str(held)))
+    import hyperwheel.rawpull as rp
+    real_link = rp.os.link
+
+    def link(src, dst):
+        if Path(src).name.startswith("a_"):
+            raise OSError(28, "No space left on device")
+        return real_link(src, dst)
+    monkeypatch.setattr(rp.os, "link", link)
+    raw(scanner, FOLDER, "fse_fast_t2_rrdf_20261027_134000.h5")
+    p = puller(env, scanner)
+    p.pull_once()
+    p.pull_once()  # no exception: the pass carries on
+    assert env.store.file(rows[0].id).state == "unassigned" and env.store.file(rows[1].id).state == "pulled"
+    assert env.store.rrdf_file(FOLDER, "fse_fast_t2_rrdf_20261027_134000.h5").state == "pulled"

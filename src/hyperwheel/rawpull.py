@@ -211,36 +211,44 @@ class RawPuller:
         """Raw files a release before 0.1.16 held as unassigned move into the study their folder names. No study
         for the folder (or a different file of that name already there): it stays where it is, as before."""
         for row in self.store.files(kind="rrdf", states=("unassigned",)):
-            when = rrdf_folder_time(row.scanner_folder or "")
-            study = next((s for s in self.store.studies(states=_SETTLED) if s.project and when is not None
-                          and parse_datetime(s.study_date, s.study_time) == when), None)
-            if study is None:
-                continue
-            src = Path(row.path or "")
-            directory = self.site.staging_dir / study.project / study.study_uid / "RRDF"
-            directory.mkdir(parents=True, exist_ok=True)
-            dest = directory / row.name
-            if not src.is_file():
-                continue
-            if dest.exists():
-                if not os.path.samefile(src, dest):
-                    continue
-            else:
-                os.link(src, dest)  # never overwrites
-                _fsync_dir(directory)
-            self.store.move_file(row.id, "pulled", study_id=study.id, path=str(dest))
-            src.unlink(missing_ok=True)
-            _fsync_dir(src.parent)
-            for folder in (src.parent, src.parent.parent):  # _unassigned/<scanner folder>, then _unassigned
-                if folder.name and folder != self.site.staging_dir and folder.is_dir() and not any(folder.iterdir()):
-                    folder.rmdir()
-            self.store.clear_flags("UNASSIGNED_RAW", file_id=row.id)
-            self.store.clear_flags("RAW_FILE_UNASSIGNED", study_id=study.id)
-            if self.store.study(study.id).state == "uploaded":
-                self.store.move_study(study.id, "uploading")
-            if report is not None:
-                report.pulled += 1
-            log.info("raw file %s: held by an earlier release, now with study %s", row.name, study.study_uid)
+            try:
+                self._adopt(row, report)
+            except OSError as e:  # one file that can't be moved (a full disk) doesn't stop the rest, or the pass
+                log.warning("raw file %s held by an earlier release: not moved yet (%s). Will try again", row.name,
+                            e.strerror)
+
+    def _adopt(self, row: File, report: PullReport | None) -> None:
+        when = rrdf_folder_time(row.scanner_folder or "")
+        # Archived too: a held file never let its study finish, but the study was archived after 7 days all the same.
+        study = next((s for s in self.store.studies(states=(*_SETTLED, "archived")) if s.project and when is not None
+                      and parse_datetime(s.study_date, s.study_time) == when), None)
+        if study is None:
+            return
+        src = Path(row.path or "")
+        directory = self.site.staging_dir / study.project / study.study_uid / "RRDF"
+        if not src.is_file():
+            return
+        directory.mkdir(parents=True, exist_ok=True)
+        dest = directory / row.name
+        if dest.exists():
+            if not os.path.samefile(src, dest):
+                return  # a different file of that name is already there: it stays held and flagged
+        else:
+            os.link(src, dest)  # never overwrites
+            _fsync_dir(directory)
+        self.store.move_file(row.id, "pulled", study_id=study.id, path=str(dest))
+        self.store.clear_flags("UNASSIGNED_RAW", file_id=row.id)
+        self.store.clear_flags("RAW_FILE_UNASSIGNED", study_id=study.id)
+        if self.store.study(study.id).state in ("uploaded", "archived"):
+            self.store.move_study(study.id, "uploading")
+        if report is not None:
+            report.pulled += 1
+        log.info("raw file %s: held by an earlier release, now with study %s", row.name, study.study_uid)
+        src.unlink(missing_ok=True)
+        _fsync_dir(src.parent)
+        for folder in (src.parent, src.parent.parent):  # _unassigned/<scanner folder>, then _unassigned
+            if folder.name and folder != self.site.staging_dir and folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
 
     # ---- one file -----------------------------------------------------------------
 
@@ -261,7 +269,7 @@ class RawPuller:
                                   ref=f"{folder}/{row.name}")
             return False
 
-        part = directory / f".{row.name}.part"
+        part = directory / f".hyperwheel-{row.id}.part"  # short: a name near the limit still fits
         digest = hashlib.sha256()
         written = 0
         try:

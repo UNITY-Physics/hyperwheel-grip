@@ -51,7 +51,10 @@ def is_rrdf_name(name: object) -> bool:
     """A raw file name the Pi fetches and GRIP accepts, unchanged: a .h5 file whose name isn't empty or only
     spaces, has no '/', '\\' or '..', and is at most 255 characters (and no control characters, which no file
     name of the scanner's has). Any other name stays on the scanner and is flagged."""
-    return (isinstance(name, str) and name.endswith(".h5") and bool(name.strip()) and len(name) <= 255
+    # Also kept on the scanner: a name with a space at either end (the scanner's listing can't show it as it is) or
+    # one that isn't valid text (the listing shows it changed), so the Pi could never fetch it by that name.
+    return (isinstance(name, str) and name.endswith(".h5") and len(name.encode("utf-8", "replace")) <= 255
+            and name == name.strip() and "\ufffd" not in name
             and "/" not in name and "\\" not in name and ".." not in name
             and not any(ord(c) < 32 or ord(c) == 127 for c in name))
 
