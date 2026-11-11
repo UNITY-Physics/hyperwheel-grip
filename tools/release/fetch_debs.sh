@@ -25,7 +25,25 @@ Signed-By: /keys/raspberrypi-archive-keyring.pgp
 SRC
   # The image already lists Debian trixie, trixie-updates and trixie-security.
   apt-get -qq update
-  cd /out && rm -f ./*.deb && apt-get -qq download $pkgs
+  cd /out && rm -f ./*.deb
+  for want in $pkgs; do
+    name=\${want%%=*}; version=\${want#*=}
+    if apt-get -qq download \"\$want\" 2>/dev/null; then continue; fi
+    # A newer version replaced it in the archive's index, but the archives keep old files in their pool. Fetch
+    # that exact file from there: debs.lock's checksum (checked below) says it's the one pinned.
+    source=\$(apt-cache show \"\$name\" | sed -n 's/^Source: \\([^ ]*\\).*/\\1/p' | head -n1)
+    source=\${source:-\$name}
+    case \$source in lib*) letter=\${source:0:4} ;; *) letter=\${source:0:1} ;; esac
+    for arch in arm64 all; do
+      file=\"\${name}_\${version#*:}_\${arch}.deb\"
+      for base in http://archive.raspberrypi.com/debian http://deb.debian.org/debian http://deb.debian.org/debian-security; do
+        if /usr/lib/apt/apt-helper -qq download-file \"\$base/pool/main/\$letter/\$source/\$file\" \"/out/\$file\" 2>/dev/null; then
+          echo \"\$want: no longer in the archive's index, fetched from its pool\"; continue 3
+        fi
+      done
+    done
+    echo \"\$want: not in the archives' index or pool\" >&2; exit 1
+  done
   chown $(id -u):$(id -g) /out/*.deb
 "
 cd "$out"
