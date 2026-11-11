@@ -87,10 +87,10 @@ def pi(env, new):
 
 def test_the_new_address_is_saved_only_after_grip_there_gave_every_dataset_a_token(pi, env, new):
     before = pi.site_path.read_text()
-    typed = Scripted(answers=[new.base_url + "/", ""])
+    typed = Scripted(answers=[new.base_url + "/", "", "yes"])
     assert pi.run(typed) == 0, typed.text
-    assert new.token_requests == 1  # the dataset's own key, at the new address
-    assert not pi.answered  # a key was checked, so no made-up one is needed
+    assert new.token_requests == 2  # a made-up key first, then the dataset's own
+    assert pi.answered == [new.token_url]
 
     after = pi.site_path.read_text()
     site = load_site(pi.site_path)
@@ -110,7 +110,7 @@ def test_the_new_address_is_saved_only_after_grip_there_gave_every_dataset_a_tok
 
 
 def test_a_token_address_of_its_own_can_be_given(pi, env, new):
-    typed = Scripted(answers=[new.base_url, new.base_url + "/get/token"])
+    typed = Scripted(answers=[new.base_url, new.base_url + "/get/token", "yes"])
     assert pi.run(typed) == 0, typed.text
     assert load_site(pi.site_path).grip.token_url == new.token_url
 
@@ -118,7 +118,7 @@ def test_a_token_address_of_its_own_can_be_given(pi, env, new):
 def test_a_key_the_new_address_refuses_changes_nothing(pi, env, new):
     new.clients["site-a-sandbox-client"] = "another-secret"
     before = pi.files()
-    typed = Scripted(answers=[new.base_url, ""])
+    typed = Scripted(answers=[new.base_url, "", "yes"])
     assert pi.run(typed) == 1
     assert pi.files() == before and not pi.restarts
     assert "refused" in typed.text and "Nothing was changed" in typed.text and "hyperwheel datasets change" in typed.text
@@ -128,10 +128,10 @@ def test_an_address_that_doesnt_answer_changes_nothing(pi, env, new):
     url = new.base_url
     new.stop()
     before = pi.files()
-    typed = Scripted(answers=[url, ""])
+    typed = Scripted(answers=[url, "", "yes"])
     assert pi.run(typed) == 1
     assert pi.files() == before and not pi.restarts
-    assert "couldn't be reached" in typed.text
+    assert "doesn't answer like GRIP" in typed.text
 
 
 @pytest.mark.parametrize("typed_url", ["grip.example.org/api", "ftp://grip.example.org/api",
@@ -160,9 +160,9 @@ def test_a_dataset_with_an_address_of_its_own_keeps_it_and_isnt_checked(pi, env,
             PROJECT: {"logins": ["sandbox"]},
             OTHER: {"logins": ["other"], "api_base_url": elsewhere.base_url, "token_url": elsewhere.token_url}}))
         env.keys.write(OTHER, Credentials("other", "other-secret"))
-        typed = Scripted(answers=[new.base_url, ""])
+        typed = Scripted(answers=[new.base_url, "", "yes"])
         assert pi.run(typed) == 0, typed.text
-        assert elsewhere.token_requests == 0 and new.token_requests == 1
+        assert elsewhere.token_requests == 0 and new.token_requests == 2
         routing = load_routing(pi.routing_path, test_mode=True, grip=load_site(pi.site_path).grip)
         assert routing.projects[OTHER].api_base_url == elsewhere.base_url
         assert routing.projects[PROJECT].api_base_url == new.base_url
@@ -174,19 +174,20 @@ def test_a_dataset_with_an_address_of_its_own_keeps_it_and_isnt_checked(pi, env,
 def test_with_no_key_to_check_the_new_address_must_answer_like_grip(pi, env, new):
     pi.routing_path.write_text(render_routing_toml({}))
     before = pi.files()
-    typed = Scripted(answers=[new.base_url, ""])
+    typed = Scripted(answers=[new.base_url, "", "yes"])
     assert pi.run(typed, answers=False) == 1
     assert pi.files() == before and "doesn't answer like GRIP" in typed.text
-    typed = Scripted(answers=[new.base_url, ""])
+    typed = Scripted(answers=[new.base_url, "", "yes"])
     assert pi.run(typed) == 0, typed.text
     assert pi.answered[-1] == new.token_url and load_site(pi.site_path).grip.api_base_url == new.base_url
 
 
 def test_a_dataset_with_no_key_is_said_and_the_rest_are_checked(pi, env, new):
     env.keys.path(PROJECT).unlink()
-    typed = Scripted(answers=[new.base_url, ""])
+    typed = Scripted(answers=[new.base_url, "", "yes"])
     assert pi.run(typed) == 0, typed.text
     assert "has no key stored" in typed.text and pi.answered == [new.token_url]
+    assert "no dataset key to check it with" in typed.text
 
 
 def test_answers_like_grip_only_for_a_token_address_that_refuses_a_made_up_key(new):
@@ -211,3 +212,41 @@ def test_a_grip_section_not_written_the_usual_way_is_left_alone():
 def test_only_root_runs_it(pi):
     typed = Scripted(answers=["https://grip.example.org/api"])
     assert pi.run(typed, root=False) == 2 and "administrator rights" in typed.text
+
+
+def test_no_key_goes_to_an_address_that_doesnt_answer_like_grip(pi, env, new):
+    before = pi.files()
+    typed = Scripted(answers=[new.base_url, "", "yes"])
+    assert pi.run(typed, answers=False) == 1
+    assert new.token_requests == 0  # not one real key was sent
+    assert pi.files() == before and "no key was sent there" in typed.text
+
+
+def test_nothing_is_sent_or_saved_unless_the_new_address_is_confirmed(pi, env, new):
+    before = pi.files()
+    typed = Scripted(answers=[new.base_url, "", "no"])
+    assert pi.run(typed) == 0
+    assert new.token_requests == 0 and not pi.answered and pi.files() == before
+    assert "Nothing was changed" in typed.text
+
+
+def test_an_address_that_redirects_doesnt_answer_like_grip(new):
+    import http.server
+    import threading
+
+    class Redirect(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(307)
+            self.send_header("Location", new.token_url)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert not answers_like_grip(f"http://127.0.0.1:{server.server_port}/get/token", 5)
+        assert new.token_requests == 0
+    finally:
+        server.shutdown()

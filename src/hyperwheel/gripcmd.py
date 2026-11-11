@@ -11,12 +11,14 @@ gives) and the token address (by default the API address followed by
 ``/get/token``). It asks rather than taking the address after the command, so
 the sudo rule still allows only exact words.
 
-The new address is checked **before** it is saved: every dataset that uses the
-site's address gets a token from GRIP at the new address with its own key. A
-key the new address refuses, or one that can't be checked because GRIP doesn't
-answer there, stops the command and nothing is saved. A dataset whose key is
-missing can't be checked, and is said so. With no key to check, the new token
-address must at least answer the way GRIP does (it refuses a made-up key).
+The new address is checked **before** it is saved. It is shown back and must
+be confirmed with "yes". Then, before any real key goes there, the new token
+address must refuse a made-up key the way GRIP does (no redirects followed),
+so a mistyped address never receives the Pi's keys. Only then every dataset
+that uses the site's address gets a token from GRIP at the new address with
+its own key. A key the new address refuses, or one that can't be checked
+because GRIP doesn't answer there, stops the command and nothing is saved. A
+dataset whose key is missing can't be checked, and is said so.
 
 Only the two lines of ``[grip]`` change. The rest of ``site.toml`` (comments
 included) stays as it was, and the new file is read back and compared before it
@@ -51,11 +53,12 @@ _LINE = re.compile(r"(\s*)(api_base_url|token_url)(\s*=\s*)\S.*")
 def answers_like_grip(token_url: str, timeout_s: float) -> bool:
     """Whether this token address refuses a made-up key the way GRIP does (HTTP 400, 401 or 403)."""
     with requests.Session() as session:
+        session.max_redirects = 0  # an address that sends elsewhere isn't GRIP's
         try:
             TokenManager(token_url, lambda: NO_SUCH_CLIENT, session, timeout_s=timeout_s).get()
         except KeyRejected:
             return True
-        except (GripError, requests.RequestException):
+        except (GripError, requests.RequestException, OSError):
             return False
     return False  # it gave a token for a key that doesn't exist: not GRIP
 
@@ -116,6 +119,11 @@ class GripAddress:
                 [p for p in projects if (p.api_base_url, p.token_url) != now])
 
     def _check(self, new: GripSettings, following: list[Project]) -> None:
+        self.c.say("Checking that the new address answers like GRIP ...")
+        if not self.answers(new.token_url, self.site.upload.timeout_s):
+            raise Stop("The new token address doesn't answer like GRIP. Nothing was changed, and no key was sent "
+                       "there.\nCheck the address with your Hyperwheel admin, and the Pi's connection with: "
+                       "hyperwheel doctor") from None
         checked = 0
         for project in following:
             try:
@@ -139,13 +147,8 @@ class GripAddress:
                            "address, and the Pi's connection with: hyperwheel doctor\nThen try again.") from None
             self.c.say("GRIP accepted it.")
             checked += 1
-        if checked:
-            return
-        self.c.say("Checking that the new address answers like GRIP ...")
-        if not self.answers(new.token_url, self.site.upload.timeout_s):
-            raise Stop("The new token address doesn't answer like GRIP. Nothing was changed.\nCheck the address "
-                       "with your Hyperwheel admin, and the Pi's connection with: hyperwheel doctor") from None
-        self.c.say("It answers like GRIP. There was no dataset key to check it with.")
+        if not checked:
+            self.c.say("It answers like GRIP. There was no dataset key to check it with.")
 
     def _save(self, new: GripSettings) -> None:
         """Replace site.toml with the new address: written beside it, read back and compared, then swapped in
@@ -202,6 +205,12 @@ class GripAddress:
         new = GripSettings(api, token)
         if new == now:
             self.c.say("That is the address already. Nothing was changed.")
+            return 0
+        self.c.say("The new address would be:")
+        self.c.say(f"  {new.api_base_url}")
+        self.c.say(f"  Token address: {new.token_url}")
+        if self.c.ask("Type yes to check it with GRIP and save it: ").strip().lower() != "yes":
+            self.c.say("Nothing was changed.")
             return 0
         following, own = self._following()
         self._check(new, following)
