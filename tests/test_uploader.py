@@ -389,3 +389,56 @@ def test_continues_from_grip_offset_when_the_size_matches(env):
     assert env.store.file(raw.id).state == "deleted"
     resumed = env.fake.requests_matching("PUT", r"/raw/")[puts_before]
     assert resumed[2]["Content-Range"].startswith(f"bytes {2 * 1024 * 1024}-")
+
+
+# ---- refused files are tried again once a day --------------------------------------------------------------
+
+
+def test_a_refused_file_is_tried_again_after_a_day_and_its_flag_clears_once_grip_takes_it(env):
+    from hyperwheel.uploader import REFUSED_RETRY_S
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    env.fake.add_fault("POST", r"/dicomweb/studies/.*", 400)  # once
+    env.uploader().run_once()
+    assert states(env, study) == ["refused"]
+    env.advance(REFUSED_RETRY_S - 60)
+    env.uploader().run_once()
+    assert states(env, study) == ["refused"]  # not before a day
+    env.advance(120)
+    env.uploader().run_once()  # GRIP fixed it on its side
+    assert states(env, study) == ["deleted"]
+    assert not any(fl.code == "STOW_REFUSED" for fl in env.store.open_flags(study_id=study.id))
+
+
+def test_a_file_grip_still_refuses_stays_flagged_and_waits_another_day(env):
+    from hyperwheel.uploader import REFUSED_RETRY_S
+    study = env.stage_study(n_dicom=0, raw_sizes=(500_000,))
+    bad = env.store.files(study.id, kind="rrdf")[0]
+    env.fake.invalid_names.add(bad.name)
+    dicom = env.add_dicom(study, "1.2.3.4.5")
+    env.uploader().run_once()
+    assert env.store.file(bad.id).state == "refused"
+    for _ in range(2):
+        env.advance(REFUSED_RETRY_S + 60)
+        env.uploader().run_once()
+        assert env.store.file(bad.id).state == "refused"
+        flags = [fl for fl in env.store.open_flags(study_id=study.id) if fl.code == "RAW_NAME_REFUSED"]
+        assert len(flags) == 1
+    assert env.store.file(dicom).state == "deleted"
+    env.fake.invalid_names.clear()
+    env.advance(REFUSED_RETRY_S + 60)
+    env.uploader().run_once()
+    assert env.store.file(bad.id).state == "deleted"
+    assert not any(fl.code == "RAW_NAME_REFUSED" for fl in env.store.open_flags(study_id=study.id))
+
+
+def test_a_problem_with_the_pis_own_copy_isnt_tried_again(env):
+    from hyperwheel.uploader import REFUSED_RETRY_S
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    f = env.store.files(study.id)[0]
+    Path(f.path).unlink()  # the staged copy is gone
+    env.uploader().run_once()
+    assert env.store.file(f.id).state == "refused"
+    env.advance(REFUSED_RETRY_S + 60)
+    env.uploader().run_once()
+    assert env.store.file(f.id).state == "refused"
+    assert any(fl.code == "LOCAL_FILE_MISSING" for fl in env.store.open_flags(study_id=study.id))

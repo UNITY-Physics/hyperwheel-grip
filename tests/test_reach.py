@@ -160,7 +160,7 @@ def test_only_refused_or_held_files_left_is_safe_with_a_badge_of_its_own(env):
     env.store.move_file(f.id, "refused")
     s = snap(env)
     assert s["safe_to_switch_off"] and s["badge_style"] == "admin"
-    assert s["badge"] == "Safe to switch off. Some files need your Hyperwheel admin."
+    assert s["badge"] == "Safe to switch off. Some files are not on GRIP. Ask your Hyperwheel admin if they stay."
     assert s["headline"] == "Not everything is on GRIP" and ";" not in s["subline"]
     held = env.store.add_study("1.2.91", state="held", project="SiteA-Sandbox")  # mixed logins
     env.store.add_file(kind="dicom", name="b.dcm", state="staged", study_id=held.id, sop_uid="1.2.91.1")
