@@ -767,17 +767,6 @@ def test_a_held_session_with_everything_staged_on_grip_still_needs_delete_them(p
     assert PROJECT in pi.routing().projects and env.store.study(study.id).state == "held"
 
 
-def test_unassigned_raw_files_of_its_sessions_are_said_and_kept(pi, env):
-    env.store.add_study("1.2.50", state="uploaded", project=PROJECT, study_date="20261027", study_time="132802",
-                        stable_at=env.clock())
-    kept = env.store.add_file(kind="rrdf", name="x_rrdf_20261027_134000.h5", state="unassigned", study_id=None,
-                              scanner_folder="rrdf_20261027_132802")
-    typed = Scripted(answers=["1", PROJECT])
-    assert pi.run("remove", typed) == 0
-    assert "1 raw file of its sessions is on this Pi, held because the Pi couldn't tell which session" in typed.text
-    assert env.store.file(kept.id).state == "unassigned"
-
-
 def test_a_session_back_to_receiving_long_ago_still_needs_delete_them(pi, env):
     study = env.stage_study(n_dicom=1, raw_sizes=())
     f = env.store.files(study.id)[0]

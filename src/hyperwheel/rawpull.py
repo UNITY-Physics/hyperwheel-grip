@@ -1,19 +1,15 @@
-"""Pulls raw data (RRDF) from the scanner and assigns each file to its study.
+"""Pulls raw data (RRDF) from the scanner into its study.
 
 The rule. The scanner keeps each exam's raw files in
-``RRDF/rrdf_<StudyDate>_<StudyTime>/`` (scanner local time). A raw file is
-assigned to a study only if both hold:
+``RRDF/rrdf_<StudyDate>_<StudyTime>/`` (scanner local time). A folder whose name
+is the StudyDate and StudyTime of a routed study on this Pi is that study's, and
+every ``.h5`` file in it belongs to that study. Nothing else is checked: not the
+time in a file's name, and not the next study's start.
 
-1. its folder name equals the StudyDate and StudyTime of exactly one study on
-   this Pi, and that study is routed;
-2. the timestamp in its own name lies between the study's start and its last
-   acquisition plus a margin (60 min), and before the next study's start.
-
-- A folder that matches no study, or only an unrouted one, is never pulled:
-  that raw data never leaves the scanner.
-- A file that fails rule 2, or a folder that matches more than one study, is
-  pulled into ``stagingArea/_unassigned/<folder>/``, held and flagged. It is
-  never uploaded or deleted on a guess.
+- A folder that matches no routed study is never pulled: that raw data never
+  leaves the scanner.
+- Every ``.h5`` file in a matched folder is fetched, unless GRIP would refuse its
+  name (``ids.is_rrdf_name``): that one stays on the scanner and is flagged.
 - A file is pulled only once its size is the same on two listings, so a file
   still being written is never taken.
 - Files keep their names. A file already pulled (or uploaded and deleted) is
@@ -23,8 +19,10 @@ assigned to a study only if both hold:
   in the folder are fetched, and they join the same study.
 - A file already fetched that shows up again with a different size is
   flagged, not fetched again: the Pi doesn't guess which version is right.
-- A file held as unassigned is checked again when its study's window grows
-  (more of the exam's DICOM arrived): if it now fits, it joins the study.
+- Folders are checked for 7 days after their study's DICOM arrived.
+
+Releases before 0.1.16 held some raw files as "unassigned" (in
+``stagingArea/_unassigned/``). They move into their study (``adopt_held``).
 
 File modification times on the scanner are never used: they are not in the
 scanner's local time.
@@ -42,18 +40,16 @@ import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
 from .config import SiteConfig
 from .dicominfo import parse_datetime
-from .ids import is_rrdf_name, rrdf_folder_time, rrdf_timestamp
+from .ids import is_rrdf_name, rrdf_folder_time
 from .state import File, Store, Study
 
 log = logging.getLogger("hyperwheel.rawpull")
 
-UNASSIGNED = "_unassigned"
 _SETTLED = ("checking", "held", "ready", "uploading", "uploaded")
 _BLOCK = 1024 * 1024
 
@@ -76,7 +72,6 @@ class ScannerFiles(Protocol):
 @dataclass
 class PullReport:
     pulled: int = 0
-    unassigned: int = 0
     waiting: int = 0
 
 
@@ -103,6 +98,7 @@ class RawPuller:
         report = PullReport()
         if not self.site.rrdf.enabled:
             return report
+        self.adopt_held(report)
         watched = self._watched()
         if not watched:
             return report
@@ -154,7 +150,6 @@ class RawPuller:
         folders = {name: t for name in scanner.list_folders() if (t := rrdf_folder_time(name)) is not None}
         studies = self.store.studies()
         starts = {s.id: start for s in studies if (start := parse_datetime(s.study_date, s.study_time))}
-        boundaries = sorted(set(starts.values()) | set(folders.values()))
         watched_ids = {s.id for s in watched}
         seen_folders = set()
 
@@ -162,19 +157,19 @@ class RawPuller:
             matches = [s for s in studies if starts.get(s.id) == folder_time]
             if not matches or any(m.state in ("receiving", "stable") for m in matches):
                 continue  # not ours, or its DICOM is still arriving
-            routed = [m for m in matches if m.project and m.state in _SETTLED]
-            if not routed or not any(m.id in watched_ids for m in routed):
+            routed = [m for m in matches if m.project and m.state in _SETTLED and m.id in watched_ids]
+            if not routed:
                 continue  # unrouted, held without a project, or past the watch period
-            target = routed[0] if len(matches) == 1 else None
-            seen_folders.update(m.id for m in routed)
-            next_start = next((b for b in boundaries if b > folder_time), None)
+            study = routed[0]  # a folder is one exam: its StudyDate and StudyTime are one study's
+            seen_folders.add(study.id)
             for name, size in scanner.list_files(folder):
                 if not name.endswith(".h5"):
                     continue
                 if not is_rrdf_name(name):
-                    self.store.raise_flag("RAW_NAME_UNEXPECTED", f"A raw file in scanner folder {folder} has an "
-                                          "unexpected name and was not fetched. Please contact your Hyperwheel admin.",
-                                          level="alert", ref=f"{folder}/{name}")
+                    self.store.raise_flag("RAW_NAME_UNEXPECTED", f"A raw file in scanner folder {folder} has a "
+                                          "name GRIP won't accept and was not fetched. It stays on the scanner. "
+                                          "Please contact your Hyperwheel admin.", level="alert",
+                                          ref=f"{folder}/{name}")
                     continue
                 row = self.store.rrdf_file(folder, name)
                 if row is not None and row.state != "seen":
@@ -189,15 +184,8 @@ class RawPuller:
                         self.store.update_file(row.id, size=size)
                     report.waiting += 1
                     continue
-                window_ok = target is not None and self._in_window(target, rrdf_timestamp(name), next_start)
-                destination = target if window_ok else None
-                self._pull(scanner, folder, row, destination, matches, report)
-            if target is not None:
-                for row in self.store.files(kind="rrdf", states=("unassigned",)):
-                    if row.scanner_folder == folder and self._in_window(target, rrdf_timestamp(row.name), next_start):
-                        self._assign_held(folder, row, target, report)
-                target = self.store.study(target.id)
-                self.store.update_study(target.id, raw_checked_at=self.clock())
+                self._pull(scanner, folder, row, study, report)
+            self.store.update_study(study.id, raw_checked_at=self.clock())
 
         for study in watched:
             if study.id in seen_folders:
@@ -207,16 +195,6 @@ class RawPuller:
             # in case a folder turns up.
             if study.raw_checked_at is None:
                 self.store.update_study(study.id, raw_checked_at=self.clock())
-
-    def _in_window(self, study: Study, ts: datetime | None, next_start: datetime | None) -> bool:
-        start = parse_datetime(study.study_date, study.study_time)
-        if ts is None or start is None or ts < start:
-            return False
-        last = datetime.fromisoformat(study.last_acquisition) if study.last_acquisition else start
-        end = last + timedelta(minutes=self.site.rrdf.margin_minutes)
-        if next_start is not None:
-            end = min(end, next_start - timedelta(seconds=1))
-        return ts <= end
 
     def _changed_on_scanner(self, folder: str, row: File, size: int) -> None:
         ref = f"{folder}/{row.name}"
@@ -229,40 +207,45 @@ class RawPuller:
             log.warning("raw file %s in %s: size changed on the scanner after it was fetched. Flagged, not fetched "
                         "again", row.name, folder)
 
-    def _assign_held(self, folder: str, row: File, study: Study, report: PullReport) -> None:
-        """Move a held raw file into its study once the study's window covers it."""
-        src = Path(row.path or "")
-        directory = self.site.staging_dir / study.project / study.study_uid / "RRDF"
-        directory.mkdir(parents=True, exist_ok=True)
-        dest = directory / row.name
-        if not src.is_file():
-            return  # the held copy is missing; it stays held and flagged for a person
-        if dest.exists():
-            if not os.path.samefile(src, dest):
-                return  # a different file of that name is already there; it stays held and flagged
-        else:
-            os.link(src, dest)  # never overwrites
-            _fsync_dir(directory)
-        self.store.move_file(row.id, "pulled", study_id=study.id, path=str(dest))
-        src.unlink(missing_ok=True)
-        _fsync_dir(src.parent)
-        self.store.clear_flags("UNASSIGNED_RAW", file_id=row.id)
-        if not any(f.scanner_folder == folder for f in self.store.files(kind="rrdf", states=("unassigned",))):
+    def adopt_held(self, report: PullReport | None = None) -> None:
+        """Raw files a release before 0.1.16 held as unassigned move into the study their folder names. No study
+        for the folder (or a different file of that name already there): it stays where it is, as before."""
+        for row in self.store.files(kind="rrdf", states=("unassigned",)):
+            when = rrdf_folder_time(row.scanner_folder or "")
+            study = next((s for s in self.store.studies(states=_SETTLED) if s.project and when is not None
+                          and parse_datetime(s.study_date, s.study_time) == when), None)
+            if study is None:
+                continue
+            src = Path(row.path or "")
+            directory = self.site.staging_dir / study.project / study.study_uid / "RRDF"
+            directory.mkdir(parents=True, exist_ok=True)
+            dest = directory / row.name
+            if not src.is_file():
+                continue
+            if dest.exists():
+                if not os.path.samefile(src, dest):
+                    continue
+            else:
+                os.link(src, dest)  # never overwrites
+                _fsync_dir(directory)
+            self.store.move_file(row.id, "pulled", study_id=study.id, path=str(dest))
+            src.unlink(missing_ok=True)
+            _fsync_dir(src.parent)
+            for folder in (src.parent, src.parent.parent):  # _unassigned/<scanner folder>, then _unassigned
+                if folder.name and folder != self.site.staging_dir and folder.is_dir() and not any(folder.iterdir()):
+                    folder.rmdir()
+            self.store.clear_flags("UNASSIGNED_RAW", file_id=row.id)
             self.store.clear_flags("RAW_FILE_UNASSIGNED", study_id=study.id)
-        if self.store.study(study.id).state == "uploaded":
-            self.store.move_study(study.id, "uploading")
-        report.pulled += 1
-        log.info("raw file %s: held until now, fits study %s after more of its images arrived", row.name,
-                 study.study_uid)
+            if self.store.study(study.id).state == "uploaded":
+                self.store.move_study(study.id, "uploading")
+            if report is not None:
+                report.pulled += 1
+            log.info("raw file %s: held by an earlier release, now with study %s", row.name, study.study_uid)
 
     # ---- one file -----------------------------------------------------------------
 
-    def _pull(self, scanner: ScannerFiles, folder: str, row: File, study: Study | None, matches: list[Study],
-              report: PullReport) -> bool:
-        if study is not None:
-            directory = self.site.staging_dir / study.project / study.study_uid / "RRDF"
-        else:
-            directory = self.site.staging_dir / UNASSIGNED / folder
+    def _pull(self, scanner: ScannerFiles, folder: str, row: File, study: Study, report: PullReport) -> bool:
+        directory = self.site.staging_dir / study.project / study.study_uid / "RRDF"
         directory.mkdir(parents=True, exist_ok=True)
         stop = int(self.site.disk.stop_free_gb * 1024 ** 3)
         if self.free_bytes(directory) - (row.size or 0) < stop:
@@ -272,10 +255,6 @@ class RawPuller:
         self.store.clear_flags("DISK_LOW")
 
         final = directory / row.name
-        if final.exists() and study is not None:
-            study, directory = None, self.site.staging_dir / UNASSIGNED / folder
-            directory.mkdir(parents=True, exist_ok=True)
-            final = directory / row.name
         if final.exists():
             self.store.raise_flag("RAW_NAME_CLASH", f"Raw file {row.name} from scanner folder {folder} has the same "
                                   "name as a file already on the Pi. It was not fetched.", level="alert",
@@ -301,27 +280,12 @@ class RawPuller:
         _fsync_dir(directory)
 
         sha = digest.hexdigest()
-        if study is not None:
-            self.store.move_file(row.id, "pulled", study_id=study.id, path=str(final), sha256=sha)
-            self.store.clear_flags("RAW_FILE_UNASSIGNED", study_id=study.id)
-            current = self.store.study(study.id)
-            if current.state == "uploaded":
-                self.store.move_study(study.id, "uploading")
-            report.pulled += 1
-            log.info("raw file %s: fetched for study %s", row.name, study.study_uid)
-            return True
-
-        f = self.store.move_file(row.id, "unassigned", path=str(final), sha256=sha)
-        why = ("its scanner folder matches more than one session" if len(matches) > 1
-               else "its time doesn't fit the session's time window")
-        self.store.raise_flag("UNASSIGNED_RAW", f"Raw file {row.name} from scanner folder {folder} is kept on the Pi "
-                              f"but not uploaded: {why}. Please contact your Hyperwheel admin.", file_id=f.id,
-                              level="hold")
-        for m in matches:
-            self.store.raise_flag("RAW_FILE_UNASSIGNED", "A raw file in this session's scanner folder could not be "
-                                  "matched to it and is held on the Pi.", study_id=m.id)
-        report.unassigned += 1
-        log.warning("raw file %s from %s: not assigned (%s). Kept and held", row.name, folder, why)
+        self.store.move_file(row.id, "pulled", study_id=study.id, path=str(final), sha256=sha)
+        current = self.store.study(study.id)
+        if current.state == "uploaded":
+            self.store.move_study(study.id, "uploading")
+        report.pulled += 1
+        log.info("raw file %s: fetched for study %s", row.name, study.study_uid)
         return True
 
 

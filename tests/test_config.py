@@ -130,3 +130,11 @@ def test_a_site_may_override_grips_address_with_both_settings(tmp_path):
     with pytest.raises(ConfigError, match="unknown"):
         load_site(write(tmp_path, base + '[grip]\nurl = "https://g.example.org"\n'))
     assert load_site(write(tmp_path, base)).grip == GripSettings()
+
+
+def test_an_old_margin_minutes_setting_is_ignored(tmp_path):
+    base = 'schema_version = 1\nsite = "s"\nstaging_dir = "/s"\nstate_db = "/s.db"\nkeys_dir = "/k"\n'
+    site = load_site(write(tmp_path, base + "[rrdf]\nenabled = true\nmargin_minutes = 60\nwatch_days = 7\n"))
+    assert site.rrdf.enabled and site.rrdf.watch_days == 7 and not hasattr(site.rrdf, "margin_minutes")
+    with pytest.raises(ConfigError, match="unknown"):
+        load_site(write(tmp_path, base + "[rrdf]\nmargin_minuets = 60\n"))  # a real typo is still an error

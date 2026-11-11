@@ -12,7 +12,7 @@ from fakes import FakeScanner
 from pydicom.uid import generate_uid
 
 from hyperwheel.organiser import Organiser
-from hyperwheel.rawpull import UNASSIGNED, RawPuller
+from hyperwheel.rawpull import RawPuller
 
 # A phantom study: series (description, acquisition time, image type) and the
 # raw files in its scanner folder, as on the scanner.
@@ -76,7 +76,7 @@ def test_phantom_study_raw_files_all_assigned_unchanged(env, scanner):
     first = p.pull_once()
     assert first.waiting == 9 and first.pulled == 0  # sizes are checked twice before pulling
     second = p.pull_once()
-    assert second.pulled == 9 and second.unassigned == 0
+    assert second.pulled == 9
     study = env.store.study_by_uid(uid)
     files = env.store.files(study.id, kind="rrdf")
     assert sorted(f.name for f in files) == sorted(PHANTOM_RAW) and {f.state for f in files} == {"pulled"}
@@ -103,44 +103,62 @@ def test_a_series_with_no_raw_file_isnt_flagged_and_what_is_there_uploads(env, s
     assert env.store.open_flags(study_id=study.id) == []
 
 
-def test_file_outside_the_window_is_held_unassigned(env, scanner):
+def test_every_h5_file_in_the_folder_is_the_studys_whatever_its_name_says(env, scanner):
     uid = phantom_study(env)
-    raw(scanner, FOLDER, "fse_fast_t2_rrdf_20261027_151400.h5")  # 61 min after the last acquisition
-    raw(scanner, FOLDER, "fse_fast_t2_rrdf_20261027_132801.h5")  # before the study started
+    phantom_study(env, study_time="142500", series=[("T2 AXI Fast", "142600", ("ORIGINAL", "PRIMARY", "T2"))])
+    names = ["fse_fast_t2_rrdf_20261027_151400.h5",  # long after the last acquisition
+             "fse_fast_t2_rrdf_20261027_132801.h5",  # before the study started
+             "fse_fast_t2_rrdf_20261027_142700.h5",  # after the next study began
+             "a scan with no time.h5"]
+    for name in names:
+        raw(scanner, FOLDER, name)
+    raw(scanner, FOLDER, "notes.txt")  # not raw data
     p = puller(env, scanner)
     p.pull_once()
     report = p.pull_once()
-    assert report.unassigned == 2 and report.pulled == 0
-    files = env.store.files(kind="rrdf")
-    assert {f.state for f in files} == {"unassigned"} and {f.study_id for f in files} == {None}
-    assert all(Path(f.path).parent == env.site.staging_dir / UNASSIGNED / FOLDER for f in files)
-    held = [f for f in env.store.open_flags() if f.code == "UNASSIGNED_RAW"]
-    assert len(held) == 2 and {f.level for f in held} == {"hold"}
-    assert "RAW_FILE_UNASSIGNED" in {f.code for f in env.store.open_flags(study_id=env.store.study_by_uid(uid).id)}
+    study = env.store.study_by_uid(uid)
+    files = env.store.files(study.id, kind="rrdf")
+    assert report.pulled == 4 and sorted(f.name for f in files) == sorted(names)
+    assert {f.state for f in files} == {"pulled"}
+    assert all(Path(f.path) == env.site.staging_dir / PROJECT / uid / "RRDF" / f.name for f in files)
+    assert not [f for f in env.store.open_flags() if f.code.startswith(("RAW", "UNASSIGNED"))]
+    assert not (env.site.staging_dir / "_unassigned").exists()
 
 
-def test_window_ends_before_the_next_study(env, scanner):
+def test_a_name_grip_would_refuse_stays_on_the_scanner_and_is_flagged(env, scanner):
     phantom_study(env)
-    phantom_study(env, study_time="142500", series=[("T2 AXI Fast", "142600", ("ORIGINAL", "PRIMARY", "T2"))])
-    raw(scanner, FOLDER, "fse_fast_t2_rrdf_20261027_142700.h5")  # inside the margin, but after the next study began
-    raw(scanner, "rrdf_20261027_142500", "fse_fast_t2_rrdf_20261027_142600.h5")
+    raw(scanner, FOLDER, "x..y.h5")
+    raw(scanner, FOLDER, "ok_rrdf_20261027_133500.h5")
     p = puller(env, scanner)
     p.pull_once()
     p.pull_once()
-    by_name = {f.name: f for f in env.store.files(kind="rrdf")}
-    assert by_name["fse_fast_t2_rrdf_20261027_142700.h5"].state == "unassigned"
-    assert by_name["fse_fast_t2_rrdf_20261027_142600.h5"].state == "pulled"
+    assert [f.name for f in env.store.files(kind="rrdf")] == ["ok_rrdf_20261027_133500.h5"]
+    flags = [f for f in env.store.open_flags() if f.code == "RAW_NAME_UNEXPECTED"]
+    assert len(flags) == 1 and "x..y.h5" in flags[0].ref and "stays on the scanner" in flags[0].detail
 
 
-def test_window_also_ends_at_an_exam_the_pi_never_received(env, scanner):
-    phantom_study(env)
-    raw(scanner, FOLDER, "fse_fast_t2_rrdf_20261027_142700.h5")
-    raw(scanner, "rrdf_20261027_142500", "clinical_rrdf_20261027_142600.h5")  # a clinical exam not sent to the Pi
-    p = puller(env, scanner)
-    p.pull_once()
-    p.pull_once()
-    files = env.store.files(kind="rrdf")
-    assert [(f.name, f.state) for f in files] == [("fse_fast_t2_rrdf_20261027_142700.h5", "unassigned")]
+def test_raw_files_an_earlier_release_held_as_unassigned_move_into_their_study(env, scanner):
+    uid = phantom_study(env)
+    held = env.site.staging_dir / "_unassigned" / FOLDER / "fse_fast_t2_rrdf_20261027_151400.h5"
+    held.parent.mkdir(parents=True)
+    held.write_bytes(b"raw")
+    row = env.store.add_file(kind="rrdf", name=held.name, state="seen", study_id=None, scanner_folder=FOLDER,
+                             size=3, path=None)
+    env.store.move_file(row.id, "unassigned", path=str(held))
+    env.store.raise_flag("UNASSIGNED_RAW", "held", file_id=row.id, level="hold")
+    study = env.store.study_by_uid(uid)
+    env.store.raise_flag("RAW_FILE_UNASSIGNED", "held", study_id=study.id)
+    other = env.store.add_file(kind="rrdf", name="lost_rrdf_20261001_090000.h5", state="seen", study_id=None,
+                               scanner_folder="rrdf_20261001_090000", size=1)
+    env.store.move_file(other.id, "unassigned", path=str(env.tmp / "lost.h5"))
+    puller(env, scanner).pull_once()
+    moved = env.store.file(row.id)
+    assert moved.state == "pulled" and moved.study_id == study.id
+    assert Path(moved.path) == env.site.staging_dir / PROJECT / uid / "RRDF" / held.name
+    assert Path(moved.path).read_bytes() == b"raw" and not held.exists()
+    assert not (env.site.staging_dir / "_unassigned").exists()
+    assert not [f for f in env.store.open_flags() if f.code in ("UNASSIGNED_RAW", "RAW_FILE_UNASSIGNED")]
+    assert env.store.file(other.id).state == "unassigned"  # no study for its folder: left as it was
 
 
 def test_unrouted_and_unknown_exams_are_never_pulled(env, scanner):
