@@ -9,7 +9,9 @@ that file's own upload, i.e.
 
 Anything else (a timeout, an error, a 202/409, a 200 that doesn't list the
 file) keeps the file. Transient problems park it in ``retry_wait``; refusals
-park it in ``refused`` and raise a flag for a person to look at.
+park it in ``refused`` and raise a flag. A refused file is tried again once a
+day (most refusals are something GRIP fixes on its side): if GRIP takes it, it
+goes up and its flag clears, and if not, it stays refused and flagged.
 
 Order: one file per request; every study's DICOM before any raw file. A
 study's raw files go once GRIP has the study (at least one of its DICOM files
@@ -64,6 +66,12 @@ class _ProjectBlocked(Exception):
     """Stop uploading this project for this run (its key doesn't work)."""
 
 
+# A file GRIP refused is tried again after this long.
+REFUSED_RETRY_S = 24 * 3600
+# GRIP's refusals: those are tried again. A problem with the Pi's own copy (missing, changed, empty) isn't.
+_REFUSED_FLAGS = ("STOW_REFUSED", "STOW_FAILED", "RAW_NAME_REFUSED", "RAW_REFUSED", "RAW_CHECKSUM")
+
+
 @dataclass
 class RunReport:
     confirmed: int = 0
@@ -103,6 +111,7 @@ class Uploader:
         self._report = RunReport()
         self._key_ok = set()
         self.finish_confirmed()
+        self.retry_refused()
         for kind in ("dicom", "rrdf"):
             blocked: set[str] = set()
             for study in self.store.studies(states=("ready", "uploading", "uploaded", "archived")):
@@ -120,6 +129,24 @@ class Uploader:
         """Delete every file GRIP has confirmed but that is still on disk (e.g. after a power cut)."""
         for f in self.store.files(states=("confirmed",)):
             self._delete_local(f)
+
+    def retry_refused(self) -> None:
+        """Files GRIP refused at least a day ago go back in line to be tried again. Their flags stay until GRIP
+        takes them."""
+        cutoff = self.clock() - REFUSED_RETRY_S
+        for f in self.store.files(states=("refused",)):
+            if f.updated_at > cutoff:
+                continue
+            if not any(fl.code in _REFUSED_FLAGS for fl in self.store.open_flags(study_id=f.study_id)
+                       if fl.file_id == f.id):
+                continue  # not GRIP's refusal: a problem with the Pi's copy, which trying again won't change
+            self.store.move_file(f.id, "staged" if f.kind == "dicom" else "pulled", checksum_resets=0)
+            log.info("%s %s: refused by GRIP a day or more ago. Trying it again", _label(f), _ident(f))
+
+    def _confirmed(self, f: File, **fields) -> None:
+        self.store.move_file(f.id, "confirmed", last_error=None, **fields)
+        for code in _REFUSED_FLAGS:  # refused before, and GRIP has taken it now
+            self.store.clear_flags(code, study_id=f.study_id, file_id=f.id)
 
     # ---- per study ---------------------------------------------------------------
 
@@ -268,7 +295,7 @@ class Uploader:
         self._grip_answered()
 
         if result.status == 200 and f.sop_uid in result.stored:
-            self.store.move_file(f.id, "confirmed", last_error=None)
+            self._confirmed(f)
             self._report.confirmed += 1
             log.info("DICOM %s of study %s: stored on GRIP", f.sop_uid, study.study_uid)
             self._delete_local(self.store.file(f.id))
@@ -399,7 +426,7 @@ class Uploader:
                     else:
                         good = 0
                     if result.complete:
-                        self.store.move_file(f.id, "confirmed", upload_offset=size, last_error=None)
+                        self._confirmed(f, upload_offset=size)
                         self._report.confirmed += 1
                         log.info("raw file %s of study %s: stored on GRIP", f.name, study.study_uid)
                         self._delete_local(self.store.file(f.id))

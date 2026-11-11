@@ -100,7 +100,11 @@ file sends it back to `uploading`.
 
 File: `staged`/`pulled → sending → confirmed → deleted`, with `retry_wait`
 (timeouts, 5xx, 429) and `refused` (other 4xx and STOW failure reasons: kept
-and flagged). A raw file listed on the scanner but not fetched yet is `seen`.
+and flagged). A file GRIP refused is tried again once a day, since most
+refusals are something GRIP fixes on its side: if GRIP takes it, it goes up
+and its flag clears, and if not, it stays refused and flagged. A problem with
+the Pi's own copy (missing, changed or empty) isn't tried again. A raw file
+listed on the scanner but not fetched yet is `seen`.
 
 ## Upload order and retries
 
