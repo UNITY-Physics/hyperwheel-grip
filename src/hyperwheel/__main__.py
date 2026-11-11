@@ -115,7 +115,7 @@ def _main(argv: list[str]) -> int:
         print(f"  [{f['level']}] {f['text']}")
     for st in s["studies"]:
         print(f"\n{st['session']}  {st['project']}  {st['state']}")
-        print(f"  {st['dicom']['text']}, {st['raw']['text']}")
+        print(f"  {st['dicom']['text']}. {st['raw']['text']}.")
         for f in st["flags"]:
             print(f"  [{f['level']}] {f['text']}")
     print("\nGRIP datasets:" if s["keys"] else "\nGRIP datasets: none yet")
