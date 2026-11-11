@@ -11,9 +11,12 @@ It:
   only in memory, for 8 hours or until the service restarts;
 - **slows down wrong passwords** from each address (1, 2, 4 ... up to 30 seconds before the next try), and checks
   one password at a time, so guessing can't overload the Pi. Never a lockout;
-- **lets nobody delete, modify or upload.** Only GET and HEAD go through, plus the three POSTs OE2 uses to search
-  (``/tools/find``, ``/tools/lookup``, ``/tools/count-resources``). Everything else is refused here, whatever
-  the page shows. Downloads (zip and DICOM files) are GETs, so they go through, and each is logged;
+- **lets people look, download and upload, never delete or modify.** Only GET and HEAD go through, plus the
+  three POSTs OE2 uses to search (``/tools/find``, ``/tools/lookup``, ``/tools/count-resources``) and its
+  upload (``POST /instances``: one DICOM file or a zip of them per request, streamed to Orthanc, not held in
+  memory). Everything else is refused here, whatever the page shows. Downloads (zip and DICOM files) are GETs.
+  Each download and upload is logged. An uploaded study is routed by its login like a scanner exam: one whose
+  login has no dataset is deleted on the Pi and never uploaded;
 - **adds Orthanc's internal login** itself. Nobody ever sees it.
 
 The certificate is made once on each Pi (``installer.viewer_certificate``). Browsers warn about it on the first
@@ -65,14 +68,19 @@ LOGIN = "/hyperwheel/sign-in"
 LOGOUT = "/hyperwheel/sign-out"
 MAX_PASSWORD = 128
 MAX_POST_BODY = 64 * 1024
+# One upload request: a DICOM file, or a zip of files. Orthanc holds a request in memory, so a big study
+# goes up as separate files. Larger requests are refused before anything is read.
+MAX_UPLOAD_BYTES = 500 * 1024 ** 2
+UPLOAD = "/instances"
 FIRST_WAIT_S, LONGEST_WAIT_S = 1.0, 30.0
 CHECK_QUEUE_S = 5.0
 
-# OE2's searches. Each is a read. Anything else that isn't a GET or a HEAD changes something, so it's refused.
+# OE2's searches. Each is a read. Apart from these and OE2's upload, anything that isn't a GET or a HEAD changes
+# or deletes something, so it's refused.
 READ_ONLY_POSTS = ("/tools/find", "/tools/lookup", "/tools/count-resources")
 DOWNLOAD = re.compile(r"/(patients|studies|series)/([0-9a-f-]{1,64})/archive|/instances/([0-9a-f-]{1,64})/file"
                       r"|/tools/create-archive")
-LOOK_ONLY = "Orthanc Explorer 2 on this Pi is for looking and downloading only."
+LOOK_ONLY = "Orthanc Explorer 2 on this Pi can't delete or change anything. Looking, downloading and uploading work."
 
 # Request headers passed on to Orthanc. Never the browser's cookies or its Authorization.
 FORWARD = ("Accept", "Accept-Encoding", "Accept-Language", "Content-Type", "If-Modified-Since", "If-None-Match",
@@ -215,10 +223,20 @@ class Sessions:
 
 
 def allowed(method: str, path: str) -> bool:
-    """Whether a request may go to Orthanc. Reads only: GET and HEAD, and OE2's searches."""
+    """Whether a request may go to Orthanc: GET and HEAD, OE2's searches and its upload. Never a delete or a
+    change."""
     if method in ("GET", "HEAD"):
         return True
-    return method == "POST" and urlsplit(path).path in READ_ONLY_POSTS and "?" not in path
+    return method == "POST" and "?" not in path and (urlsplit(path).path in READ_ONLY_POSTS or path == UPLOAD)
+
+
+def same_origin(origin: str | None, host: str | None) -> bool:
+    """An upload comes from OE2's own page on this Pi. Browsers send Origin with every POST: one from another
+    site's page is refused (the session cookie is SameSite=Strict as well)."""
+    if origin is None:
+        return True
+    parts = urlsplit(origin)
+    return bool(host) and parts.scheme in ("http", "https") and parts.netloc == host and not parts.path
 
 
 def safe_next(target: str) -> str:
@@ -334,9 +352,27 @@ class Viewer:
                     return self._send(401, json.dumps({"message": "Sign in again."}).encode(), "application/json")
                 if not allowed(self.command, self.path):
                     self._drain()
-                    log.info("Viewer: %s tried %s on %s, refused (look only).", account, self.command, path)
+                    log.info("Viewer: %s tried %s on %s, refused (no deleting or changing).", account,
+                             self.command, path)
                     return self._send(403, LOOK_ONLY.encode())
+                if self.command == "POST" and self.path == UPLOAD:
+                    return self._upload(account)
                 self._forward(account)
+
+            def _upload(self, account: str):
+                if not same_origin(self.headers.get("Origin"), self.headers.get("Host")):
+                    self.close_connection = True
+                    log.info("Viewer: an upload for %s from another site's page was refused.", account)
+                    return self._send(403, b"Upload from Orthanc Explorer 2 on this Pi.")
+                try:
+                    length = int(self.headers.get("Content-Length") or "")
+                except ValueError:
+                    length = -1
+                if self.headers.get("Transfer-Encoding") or not 0 < length <= MAX_UPLOAD_BYTES:
+                    self.close_connection = True
+                    return self._send(413, f"Upload at most {MAX_UPLOAD_BYTES // 1024 ** 2} MB at a time. "
+                                           "Send a big study as separate files.".encode())
+                self._forward(account, upload=length)
 
             def _sign_in(self):
                 address = self.client_address[0]
@@ -367,23 +403,41 @@ class Viewer:
                                   f"{why} Wait {seconds} second{'s' if seconds != 1 else ''} before you try again.",
                                   target)
 
-            def _forward(self, account: str):
-                body = self._drain() if self.command == "POST" else b""
+            def _streamed(self, length: int):
+                left = length
+                while left:
+                    data = self.rfile.read(min(left, 1024 * 1024))
+                    if not data:
+                        raise ConnectionError("the browser stopped sending")
+                    left -= len(data)
+                    yield data
+
+            def _forward(self, account: str, upload: int | None = None):
                 headers = {name: self.headers[name] for name in FORWARD if self.headers.get(name)}
                 headers["Authorization"] = viewer.authorization()
-                if self.command == "POST":
-                    headers["Content-Length"] = str(len(body))
+                if upload is not None:
+                    body = self._streamed(upload)
+                    headers["Content-Length"] = str(upload)
+                else:
+                    body = self._drain() if self.command == "POST" else b""
+                    if self.command == "POST":
+                        headers["Content-Length"] = str(len(body))
                 upstream = http.client.HTTPConnection(*viewer.orthanc, timeout=600)
                 try:
                     upstream.request(self.command, self.path, body=body or None, headers=headers)
                     response = upstream.getresponse()
                 except OSError:
                     upstream.close()
+                    if upload is not None:
+                        self.close_connection = True  # part of the body may be unread
                     return self._send(502, b"Orthanc isn't answering. It may be starting. Try again in a minute.")
                 try:
                     found = DOWNLOAD.fullmatch(urlsplit(self.path).path)
                     if found and response.status == 200 and self.command == "GET":
                         log.info("Viewer: %s downloaded %s.", account, urlsplit(self.path).path)
+                    if upload is not None:
+                        log.info("Viewer: %s uploaded a file of %d bytes (Orthanc answered %d).", account, upload,
+                                 response.status)
                     self.send_response(response.status)
                     length = response.getheader("Content-Length")
                     for name, value in response.getheaders():

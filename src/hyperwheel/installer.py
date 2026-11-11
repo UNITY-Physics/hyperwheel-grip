@@ -605,10 +605,11 @@ def _atomic_link(link: Path, target: str) -> None:
     os.replace(tmp, link)
 
 
-# OE2 is for looking and downloading only. These hide what changes anything, and what this Pi doesn't have.
-# The viewer refuses those requests as well, whatever the page shows.
+# OE2 is for looking, downloading and uploading. These hide what deletes or changes anything, and what this Pi
+# doesn't have. The viewer refuses those requests as well, whatever the page shows. Uploaded studies are routed by
+# their login like scanner exams.
 OE2_UI = {
-    "EnableUpload": False, "EnableDeleteResources": False, "EnableModification": False,
+    "EnableUpload": True, "EnableDeleteResources": False, "EnableModification": False,
     "EnableAnonymization": False, "EnableAddSeries": False, "EnableSendTo": False, "EnableEditLabels": False,
     "EnableDicomModalities": False, "EnableDicomWebServers": False, "EnableWorklists": False,
     "EnableSettings": False, "EnableLinkToLegacyUi": False, "EnableApiViewMenu": False,

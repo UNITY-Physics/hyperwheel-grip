@@ -212,10 +212,17 @@ Connect key on it. The installer deletes any such key left on a Pi.
   - Wrong passwords from an address wait 1, 2, 4 ... up to 30 seconds before the
     next try, and one password is checked at a time. Never a lockout. Failed
     sign-ins are logged with the account and address, never what was typed.
-  - Nobody can delete, modify or upload through OE2. Those buttons are hidden,
-    and the proxy refuses the requests too: only reads go through, plus OE2's
-    three searches. Downloads (zip and DICOM files) stay on for both accounts,
-    and each one is logged.
+  - Nobody can delete or modify anything through OE2. Those buttons are
+    hidden, and the proxy refuses the requests too: only reads go through,
+    plus OE2's three searches and its upload. Downloads (zip and DICOM files)
+    stay on for both accounts, and each one is logged.
+  - Both accounts can upload DICOM through OE2, for example from a laptop on
+    the hotspot: one file, or a zip of files, per request, up to 500 MB each (a big study
+    goes up as separate files),
+    only from OE2's own page. Each upload is logged. An uploaded study is
+    routed by its login like a scanner exam: one whose login has no dataset is
+    deleted on the Pi and never uploaded. Its raw data is fetched from the
+    scanner if the scanner has a folder for the study's date and time.
   - Orthanc's own login stays internal and root-only. The proxy adds it.
   - The service runs as a user systemd makes for it, in the `shadow` group so
     it can check passwords. It can't read the staged files or the GRIP keys.

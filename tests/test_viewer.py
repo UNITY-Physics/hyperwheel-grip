@@ -145,13 +145,15 @@ def test_sessions_end_after_8_hours_or_when_signed_out():
 @pytest.mark.parametrize("method,path", [
     ("GET", "/ui/app/"), ("GET", "/studies/abc/archive"), ("GET", "/instances/abc/file"), ("HEAD", "/system"),
     ("GET", "/tools/create-archive?resources=a,b"), ("POST", "/tools/find"), ("POST", "/tools/lookup"),
-    ("POST", "/tools/count-resources")])
-def test_reading_and_downloading_go_through(method, path):
+    ("POST", "/tools/count-resources"), ("POST", "/instances")])
+def test_reading_downloading_and_uploading_go_through(method, path):
     assert allowed(method, path)
 
 
 @pytest.mark.parametrize("method,path", [
-    ("DELETE", "/studies/abc"), ("POST", "/instances"), ("POST", "/studies/abc/modify"),
+    ("DELETE", "/studies/abc"), ("DELETE", "/instances/abc"), ("POST", "/instances?x=1"),
+    ("POST", "/instances/abc"), ("PUT", "/instances"), ("POST", "/instances/../tools/reset"),
+    ("POST", "/studies/abc/modify"),
     ("POST", "/studies/abc/anonymize"), ("POST", "/tools/bulk-delete"), ("POST", "/tools/execute-script"),
     ("PUT", "/studies/abc/labels/x"), ("PUT", "/tools/log-level"), ("POST", "/modalities/x/store"),
     ("POST", "/tools/find/../execute-script"), ("POST", "/tools/find?x=1"), ("POST", "/tools/reset"),
@@ -167,9 +169,10 @@ def test_after_signing_in_it_goes_only_to_this_pi():
         assert safe_next(target) == "/ui/app/"
 
 
-def test_oe2_hides_what_changes_anything_and_keeps_downloads():
+def test_oe2_hides_what_deletes_or_changes_anything_and_keeps_downloads_and_upload():
     ui = orthanc_json([])["OrthancExplorer2"]["UiOptions"]
-    for option in ("EnableUpload", "EnableDeleteResources", "EnableModification", "EnableAnonymization",
+    assert ui["EnableUpload"] is True
+    for option in ("EnableDeleteResources", "EnableModification", "EnableAnonymization",
                    "EnableSendTo", "EnableEditLabels", "EnableAddSeries", "EnableSettings"):
         assert ui[option] is False
     assert ui["EnableDownloadZip"] and ui["EnableDownloadDicomFile"]
@@ -323,11 +326,41 @@ def test_signed_in_nothing_can_be_changed(site):
     port, orthanc = site
     cookie = {"Cookie": cookie_of(sign_in(port, "admin", ADMIN_PW)[0])}
     before = len(orthanc.requests)
-    for method, path in (("DELETE", "/studies/abc"), ("POST", "/instances"), ("POST", "/studies/abc/modify"),
-                         ("PUT", "/tools/log-level"), ("POST", "/tools/bulk-delete")):
+    for method, path in (("DELETE", "/studies/abc"), ("DELETE", "/instances/abc"), ("POST", "/studies/abc/modify"),
+                         ("PUT", "/tools/log-level"), ("POST", "/tools/bulk-delete"), ("POST", "/instances?x=1")):
         r, data = call(port, method, path, body=b"{}", headers=cookie)
-        assert r.status == 403 and b"for looking and downloading only" in data
+        assert r.status == 403 and b"can't delete or change anything" in data
     assert len(orthanc.requests) == before
+
+
+def test_signed_in_a_file_is_uploaded_to_orthanc_unchanged(site, caplog):
+    port, orthanc = site
+    cookie = {"Cookie": cookie_of(sign_in(port)[0])}
+    dicom = bytes(range(256)) * 12_000  # about 3 MB, more than any other request may carry
+    with caplog.at_level(logging.INFO):
+        r, data = call(port, "POST", "/instances", body=dicom,
+                       headers={**cookie, "Origin": f"http://127.0.0.1:{port}"})
+    assert r.status == 200
+    method, path, headers, body = orthanc.requests[-1]
+    assert (method, path, body) == ("POST", "/instances", dicom)
+    assert headers["Authorization"].startswith("Basic ") and "Cookie" not in headers
+    assert f"datamanager uploaded a file of {len(dicom)} bytes (Orthanc answered 200)" in caplog.text
+
+
+def test_an_upload_from_another_sites_page_or_too_big_never_reaches_orthanc(site, monkeypatch):
+    port, orthanc = site
+    cookie = {"Cookie": cookie_of(sign_in(port)[0])}
+    before = len(orthanc.requests)
+    r, _ = call(port, "POST", "/instances", body=b"DICM", headers={**cookie, "Origin": "https://elsewhere.example"})
+    assert r.status == 403
+    assert viewer.MAX_UPLOAD_BYTES == 500 * 1024 ** 2
+    monkeypatch.setattr(viewer, "MAX_UPLOAD_BYTES", 10)
+    r, data = call(port, "POST", "/instances", body=b"x" * 11, headers=cookie)
+    assert r.status == 413 and b"Upload at most" in data
+    r, _ = call(port, "POST", "/instances", body=b"", headers=cookie)
+    assert r.status == 413
+    assert len(orthanc.requests) == before
+    assert call(port, "POST", "/instances", body=b"DICM")[0].status == 401  # and nothing without signing in
 
 
 def test_signing_out_ends_the_session(site):
