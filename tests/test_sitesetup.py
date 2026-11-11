@@ -8,11 +8,11 @@ import stat
 from pathlib import Path
 
 import pytest
-from test_keyscmd import Scripted
+from test_datasetscmd import Scripted
 
 from hyperwheel import passwords, reach
 from hyperwheel.adminpw import AdminError
-from hyperwheel.config import load_routing, load_site
+from hyperwheel.config import GRIP_API_BASE_URL, GripSettings, load_routing, load_site
 from hyperwheel.installer import Layout, sudo_rule
 from hyperwheel.rawpull import LoginRefused
 from hyperwheel.sitesetup import (BOOT_HOTSPOT, CABLE_FILE, CLEAR_SCREEN, HOTSPOT_FILE, NM_DIR, Accounts, Setup,
@@ -104,8 +104,22 @@ def pi(tmp_path):
     return FakePi(tmp_path / "pi")
 
 
+# The example site file with two datasets in it: one with an address of its own (as on Pis set up before GRIP's
+# address was site-wide), one using the site's.
+WITH_DATASETS = TEMPLATE.read_text().replace("# end of site file", """[projects.SiteA-StudyOne]
+logins = ["study_one"]
+api_base_url = "https://grip.example.org/api"
+token_url = "https://grip.example.org/api/get/token"
+
+[projects.SiteA-Sandbox]
+client_id = "site-a-sandbox"
+logins = ["sandbox", "phantom"]
+
+# end of site file""")
+
+
 def template_lines():
-    return TEMPLATE.read_text().splitlines()
+    return WITH_DATASETS.splitlines()
 
 
 def no_admin_file(site):
@@ -205,7 +219,24 @@ def test_the_pis_name_comes_from_the_site(site, name):
 
 def test_the_example_site_file_in_the_repo_is_accepted(pi):
     parsed = parse_site_file(TEMPLATE.read_text(), zoneinfo=pi.root / "usr/share/zoneinfo")
-    assert parsed.site.site == "site-a" and set(parsed.routing.projects) == {"SiteA-StudyOne", "SiteA-Sandbox"}
+    assert parsed.site.site == "site-a" and parsed.routing.projects == {}
+    assert parsed.site.grip == GripSettings()  # the release's GRIP address: the site file needs none
+    parsed = parse_site_file(WITH_DATASETS, zoneinfo=pi.root / "usr/share/zoneinfo")
+    assert set(parsed.routing.projects) == {"SiteA-StudyOne", "SiteA-Sandbox"}
+    own, shared = parsed.routing.projects["SiteA-StudyOne"], parsed.routing.projects["SiteA-Sandbox"]
+    assert own.api_base_url == "https://grip.example.org/api" and shared.api_base_url == GRIP_API_BASE_URL
+    assert shared.label == "site-a-sandbox" and own.label == "SiteA-StudyOne"
+
+
+def test_a_site_file_may_give_its_own_grip_address(pi):
+    text = TEMPLATE.read_text().replace('# [grip]\n# api_base_url = "https://grip.example.org/api"\n'
+                                        '# token_url = "https://grip.example.org/api/get/token"',
+                                        '[grip]\napi_base_url = "https://grip.example.org/api"\n'
+                                        'token_url = "https://grip.example.org/api/get/token"')
+    assert "\n[grip]\n" in text
+    parsed = parse_site_file(text, zoneinfo=pi.root / "usr/share/zoneinfo")
+    assert parsed.site.grip == GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token")
+    assert "[grip]" in parsed.site_toml
 
 
 def test_setup_says_restart_and_restarts_only_on_yes(pi):
@@ -298,14 +329,14 @@ def test_a_datamanager_password_set_before_is_kept_unless_asked(pi):
 @pytest.mark.parametrize("change, says", [
     (("Europe/London", "Europe/Atlantis"), "isn't a time zone this Pi knows"),
     (('"GB"', '"UK"'), "isn't a two-letter country code"),
-    (('logins = ["study_one"]', 'logins = ["Study One"]'), "must be lower case letters"),
+    (('StudyOne]\nlogins = ["study_one"]', 'StudyOne]\nlogins = ["Study One"]'), "must be lower case letters"),
     (('update_channel = "stable"', 'update_channel = "beta"'), "channel must be dev, pilot or stable"),
     (("https://grip.example.org/api\"\ntoken", "http://grip.example.org/api\"\ntoken"), "must be https://"),
     (("schema_version = 1", "schema_version = 1\nsite_name = \"x\""), "settings setup doesn't know: site_name"),
 ])
 def test_a_wrong_site_file_is_explained_and_another_can_be_pasted(pi, change, says):
-    wrong = TEMPLATE.read_text().replace(*change, 1)
-    assert wrong != TEMPLATE.read_text()
+    wrong = WITH_DATASETS.replace(*change, 1)
+    assert wrong != WITH_DATASETS
     typed = Scripted(answers=[*wrong.splitlines(), *template_lines(), "yes", DM_PW, "no"], hidden=[""])
     setup, _ = make(pi, typed)
     assert setup.main() == 0, typed.text
@@ -313,13 +344,14 @@ def test_a_wrong_site_file_is_explained_and_another_can_be_pasted(pi, change, sa
     assert "/tmp" not in typed.text and "site.toml:" not in typed.text
 
 
-def test_a_site_file_with_no_projects_or_an_answer_other_than_yes_is_not_used(pi):
-    no_projects = TEMPLATE.read_text().split("[projects.")[0]
-    typed = Scripted(answers=[*no_projects.splitlines(), "# end of site file", *template_lines(), "no",
-                              *template_lines(), "yes", DM_PW, "no"], hidden=[""])
+def test_an_answer_other_than_yes_is_not_used_and_a_site_file_needs_no_datasets(pi):
+    no_datasets = [*TEMPLATE.read_text().split("[projects.")[0].splitlines(), "# end of site file"]
+    typed = Scripted(answers=[*template_lines(), "no", *no_datasets, "yes", DM_PW, "no"], hidden=[""])
     setup, _ = make(pi, typed)
     assert setup.main() == 0
-    assert "lists no projects" in typed.text and "Not used." in typed.text
+    assert "Not used." in typed.text and "  Datasets: none yet (added after setup)" in typed.shown
+    assert "[projects." not in (pi.root / "etc/hyperwheel/routing.toml").read_text()
+    assert "Next, the data manager adds each GRIP dataset and its key. Type: hyperwheel datasets add" in typed.shown
 
 
 def test_one_site_file_already_there_is_never_overwritten(pi):

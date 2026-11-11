@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 import socket
 import sys
@@ -98,7 +100,7 @@ def test_files_waiting_for_a_key_say_so_not_uploading(env):
     assert s["headline"] == "Waiting for a GRIP key" and s["safe_to_switch_off"]
     assert any("nearly full" in g["text"] for g in s["general"])
     # Another project's files still go up, so the Pi is uploading (the key alert names the one that isn't).
-    env.routing.projects["Other"] = env.routing.projects[PROJECT]
+    env.routing.projects["Other"] = replace(env.routing.projects[PROJECT], name="Other", logins=("other",))
     other = env.store.add_study("1.2.6", state="ready", project="Other", raw_checked_at=env.clock())
     env.store.add_file(kind="dicom", name="b.dcm", state="staged", study_id=other.id, sop_uid="1.2.6.1")
     env.store.set_key_status("Other", "working")
@@ -336,3 +338,30 @@ def test_the_pis_own_bookmark_and_start_page_open_the_upload_monitor_on_127_0_0_
     assert policy["HomepageLocation"] == "http://127.0.0.1:5000/"
     assert policy["RestoreOnStartup"] == 4 and policy["RestoreOnStartupURLs"] == ["http://127.0.0.1:5000/"]
     assert policy["BrowserSignin"] == 0 and policy["SyncDisabled"] is True
+
+
+def test_a_dataset_is_shown_by_its_client_id(env):
+    from hyperwheel.config import Routing
+    named = replace(env.routing.projects[PROJECT], client_id="unity/site-a-sandbox")
+    env.routing = Routing(projects={PROJECT: named})
+    env.store.add_study("1.2.8", state="ready", project=PROJECT, raw_checked_at=env.clock())
+    env.store.add_study("1.2.9", state="receiving", operators_name="site_a/sandbox")
+    s = snap(env)
+    assert [c["project"] for c in s["studies"]] == ["unity/site-a-sandbox", "unity/site-a-sandbox"]
+    assert s["keys"][0]["project"] == "unity/site-a-sandbox"
+
+
+def test_a_session_sent_again_and_still_arriving_keeps_the_scanner_on(env):
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    env.store.add_study("1.2.70", state="unrouted", stable_at=None, operators_name="site_a/sandbox")
+    s = snap(env)
+    assert not s["on_pi_complete"] and s["headline"] == "Receiving images from the scanner" and s["studies"] == []
+
+
+def test_a_session_sent_again_that_never_finished_stops_counting_as_receiving_after_an_hour(env):
+    from hyperwheel.organiser import STUCK_S
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    env.store.add_study("1.2.71", state="unrouted", stable_at=None, operators_name="site_a/sandbox")
+    env.advance(STUCK_S + 1)
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    assert snap(env)["on_pi_complete"]

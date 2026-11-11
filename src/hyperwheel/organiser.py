@@ -25,9 +25,12 @@ from pathlib import Path
 from . import checks
 from .config import Project, Routing, SiteConfig
 from .dicominfo import InstanceInfo, instance_info
-from .ids import is_uid
+from .ids import login_from_operators_name, is_uid
 from .orthanc import Orthanc, OrthancError, OrthancNotFound
 from .state import Store, Study
+
+# An unrouted session sent again with no word from Orthanc for this long isn't arriving any more.
+STUCK_S = 3600
 
 log = logging.getLogger("hyperwheel.organiser")
 
@@ -92,9 +95,11 @@ class Organiser:
         fields = {}
         if info.acquisition and (study.last_acquisition is None or _iso(info.acquisition) > study.last_acquisition):
             fields["last_acquisition"] = _iso(info.acquisition)
-        if study.state == "purged":
-            self.store.move_study(study.id, "unrouted", **fields)
-        elif study.state in ("receiving", "unrouted"):
+        if study.state in ("purged", "unrouted"):
+            # Sent again: not stable until Orthanc says so, so housekeeping leaves it while it arrives (its login
+            # may have a dataset now, and a purge then would cut the study short).
+            self.store.move_study(study.id, "unrouted", stable_at=None, operators_name=info.operators_name, **fields)
+        elif study.state == "receiving":
             if fields:
                 self.store.update_study(study.id, **fields)
         else:
@@ -153,13 +158,28 @@ class Organiser:
         project = self.routing.project_for_login(login)
         if study.project and (project is None or project.name != study.project):
             # The routing changed after this study was routed: keep it with its first project.
-            self.store.raise_flag("ROUTING_CHANGED", f"This study's login now routes to "
-                                  f"{project.name if project else 'nothing'}. It stays with {study.project}.",
+            self.store.raise_flag("ROUTING_CHANGED", f"This study's login now goes to "
+                                  f"{project.label if project else 'no dataset'}. It stays with "
+                                  f"{self.routing.label(study.project)}.",
                                   study_id=study.id, level="alert")
             project = self.routing.projects.get(study.project)
         if project is None:
             self._purge(study, login)
             return
+        if study.state in ("unrouted", "purged"):
+            # Deleted on the Pi while its login had no dataset (or after its dataset was removed), and sent again
+            # now that the login has one: it goes through as a new study does, with its details from the images.
+            first = infos[0]
+            study = self.store.move_study(study.id, "stable", project=None, patient_id=first.patient_id,
+                                          patient_name=first.patient_name, patient_sex=first.patient_sex,
+                                          patient_birth_date=first.patient_birth_date,
+                                          operators_name=first.operators_name)
+            self.store.clear_study_flags(study.id, ["ROUTING_CHANGED"])
+            self.store.clear_flags("SENT_AGAIN_UNFINISHED", ref=study.study_uid)
+            self.store.raise_flag("SENT_AGAIN", "Sent again after it was deleted on this Pi, so only what the "
+                                  "scanner sent again is uploaded. Check it is complete on GRIP.", study_id=study.id,
+                                  level="flag")
+            log.info("study %s: sent again, and its login now goes to %s", uid, project.name)
 
         if study.project is None:
             study = self.store.update_study(study.id, project=project.name)
@@ -222,6 +242,14 @@ class Organiser:
         for study in self.store.studies(states=("unrouted",)):
             if study.stable_at is not None:
                 self._purge(study, None)
+            elif self.clock() - study.updated_at > STUCK_S:
+                # Sent again, and Orthanc never said it was complete (its timer is lost if Orthanc restarts).
+                if self.routing.project_for_login(login_from_operators_name(study.operators_name)) is None:
+                    self._purge(study, None)  # no dataset for its login: deleted as it would have been
+                else:
+                    self.store.raise_flag("SENT_AGAIN_UNFINISHED", "A session sent again from the scanner never "
+                                          "finished arriving, so it isn't uploaded. Send it again from the "
+                                          "scanner.", ref=study.study_uid, level="alert")
         cutoff = self.clock() - self.site.rrdf.watch_days * 86400
         for study in self.store.studies(states=("uploaded",)):
             if study.stable_at is not None and study.stable_at < cutoff:

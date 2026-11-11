@@ -230,3 +230,79 @@ def test_patient_data_not_logged(env, caplog):
     scan(env, n=1, operators="hospital/clinical")
     organiser(env).follow()
     assert PATIENT_ID not in caplog.text and "DONOTLOG" not in caplog.text
+
+
+def test_a_study_deleted_before_its_login_had_a_dataset_goes_through_when_sent_again(env):
+    uid = scan(env, operators="site_a/later")
+    organiser(env).follow()
+    study = env.store.study_by_uid(uid)
+    assert study.state == "purged" and env.store.files(study.id) == []
+    later = Project("SiteA-Later", ("later",), env.fake.base_url, env.fake.token_url)
+    env.routing = Routing(projects={**env.routing.projects, later.name: later})
+    scan(env, study_uid=uid, operators="site_a/later")  # the scanner sends it again
+    organiser(env).follow()
+    study = env.store.study_by_uid(uid)
+    assert study.state == "ready" and study.project == "SiteA-Later" and study.patient_id == PATIENT_ID
+    assert len(env.store.files(study.id, kind="dicom")) == 3
+    assert "SENT_AGAIN" in codes(env, study)  # only what was sent again goes up: check it's complete
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "ready"  # not purged again
+
+
+def test_a_re_sent_study_isnt_purged_while_it_arrives(env):
+    uid = scan(env, operators="site_a/later")
+    organiser(env).follow()
+    assert env.store.study_by_uid(uid).state == "purged"
+    later = Project("SiteA-Later", ("later",), env.fake.base_url, env.fake.token_url)
+    env.routing = Routing(projects={**env.routing.projects, later.name: later})
+    scan(env, n=2, study_uid=uid, operators="site_a/later", stable=False)  # the first images of the re-send
+    organiser(env).follow()
+    deleted = list(env.orthanc.deleted_studies)
+    organiser(env).housekeeping()  # runs while the rest is still arriving
+    assert env.orthanc.deleted_studies == deleted and env.store.study_by_uid(uid).state == "unrouted"
+    scan(env, n=3, study_uid=uid, operators="site_a/later")  # the rest, then stable
+    organiser(env).follow()
+    study = env.store.study_by_uid(uid)
+    assert study.state == "ready" and len(env.store.files(study.id, kind="dicom")) == 5
+
+
+def test_a_re_sent_study_whose_login_still_has_no_dataset_is_purged_once_stable(env):
+    uid = scan(env, operators="hospital/clinical")
+    organiser(env).follow()
+    scan(env, n=1, study_uid=uid, operators="hospital/clinical")
+    organiser(env).follow()
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "purged"
+    assert env.orthanc.deleted_studies.count(env.orthanc.study_id(uid)) == 2
+
+
+def test_a_re_sent_unrouted_study_that_never_gets_stable_is_purged_after_an_hour_if_its_login_has_no_dataset(env):
+    from hyperwheel.organiser import STUCK_S
+    uid = scan(env, operators="hospital/clinical")
+    organiser(env).follow()
+    scan(env, n=1, study_uid=uid, operators="hospital/clinical", stable=False)  # its StableStudy never comes
+    organiser(env).follow()
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "unrouted"
+    env.advance(STUCK_S + 1)
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "purged"
+
+
+def test_a_re_sent_study_that_never_finishes_arriving_for_a_dataset_raises_an_alert_and_is_kept(env):
+    from hyperwheel.organiser import STUCK_S
+    uid = scan(env, operators="site_a/later")
+    organiser(env).follow()
+    later = Project("SiteA-Later", ("later",), env.fake.base_url, env.fake.token_url)
+    env.routing = Routing(projects={**env.routing.projects, later.name: later})
+    scan(env, n=1, study_uid=uid, operators="site_a/later", stable=False)  # its StableStudy never comes
+    organiser(env).follow()
+    env.advance(STUCK_S + 1)
+    organiser(env).housekeeping()
+    assert env.store.study_by_uid(uid).state == "unrouted"  # kept, in Orthanc
+    flags = [f for f in env.store.open_flags() if f.code == "SENT_AGAIN_UNFINISHED"]
+    assert len(flags) == 1 and flags[0].level == "alert" and "Send it again from the scanner" in flags[0].detail
+    scan(env, n=3, study_uid=uid, operators="site_a/later")  # sent again, complete this time
+    organiser(env).follow()
+    assert env.store.study_by_uid(uid).state == "ready"
+    assert not [f for f in env.store.open_flags() if f.code == "SENT_AGAIN_UNFINISHED"]

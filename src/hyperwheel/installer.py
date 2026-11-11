@@ -69,8 +69,9 @@ def sudo_rule(set_up: bool = True) -> str:
 # Written by Hyperwheel (installer and setup), and written again by every release: changes made here are lost.
 # The {DATA_MANAGER} account may run only these Hyperwheel commands as root, with exactly these words.
 Cmnd_Alias HYPERWHEEL_LOOK = /usr/local/bin/hyperwheel status, /usr/local/bin/hyperwheel doctor, \\
-    /usr/local/bin/hyperwheel keys list, /usr/local/bin/hyperwheel update status
-Cmnd_Alias HYPERWHEEL_KEYS = /usr/local/bin/hyperwheel keys set, /usr/local/bin/hyperwheel scanner password
+    /usr/local/bin/hyperwheel datasets list, /usr/local/bin/hyperwheel update status
+Cmnd_Alias HYPERWHEEL_KEYS = /usr/local/bin/hyperwheel datasets add, /usr/local/bin/hyperwheel datasets change, \\
+    /usr/local/bin/hyperwheel datasets remove, /usr/local/bin/hyperwheel scanner password
 {DATA_MANAGER} ALL = (root) NOPASSWD: HYPERWHEEL_LOOK
 {DATA_MANAGER} ALL = (root) HYPERWHEEL_KEYS
 {setup}"""
@@ -264,8 +265,8 @@ class Installer:
     def sudo_rule(self) -> None:
         set_up = is_set_up(self.layout.etc)
         if write_sudo_rule(self.layout, set_up, self.run):
-            self.say(f"Data-manager commands: sudo rule written ({DATA_MANAGER} may run only keys, the scanner "
-                     "password, status, doctor and update status as root"
+            self.say(f"Data-manager commands: sudo rule written ({DATA_MANAGER} may run only the dataset commands, "
+                     "the scanner password, status, doctor and update status as root"
                      + (")." if set_up else ", and setup until this Pi is set up)."))
         else:
             self.say("Data-manager commands: sudo rule already there.")

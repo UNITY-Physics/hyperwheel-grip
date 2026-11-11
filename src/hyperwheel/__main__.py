@@ -60,8 +60,8 @@ def _main(argv: list[str]) -> int:
     sub.add_parser("dashboard", help="run the Upload Monitor web page")
     sub.add_parser("status", help="show what the Upload Monitor shows, as text")
     sub.add_parser("doctor", help="check the scanner, GRIP, Orthanc, clock, disk and keys")
-    keys = sub.add_parser("keys", help="GRIP keys: list, or set one project's key (as root)")
-    keys.add_argument("action", choices=["list", "set"])
+    datasets = sub.add_parser("datasets", help="GRIP datasets: list, add, change or remove one (as root)")
+    datasets.add_argument("action", choices=["list", "add", "change", "remove"])
     scanner = sub.add_parser("scanner", help="set the scanner's raw-data password (as root)")
     scanner.add_argument("action", choices=["password"])
     sub.add_parser("update", help="updates: check, now, hold, release-hold, status, channel (as root)")
@@ -73,7 +73,7 @@ def _main(argv: list[str]) -> int:
         return 0
     try:
         site = load_site(args.site)
-        routing = load_routing(args.routing, test_mode=site.test_mode)
+        routing = load_routing(args.routing, test_mode=site.test_mode, grip=site.grip)
     except ConfigError as e:
         print(f"Configuration problem: {e}", file=sys.stderr)
         return 2
@@ -90,9 +90,9 @@ def _main(argv: list[str]) -> int:
     if args.command == "dashboard":
         serve(site, routing)
         return 0
-    if args.command == "keys":
-        from . import keyscmd
-        return keyscmd.main(site, routing, [args.action])
+    if args.command == "datasets":
+        from . import datasetscmd
+        return datasetscmd.main(site, [args.action], routing_path=args.routing)
     if args.command == "scanner":
         from . import scannercmd
         return scannercmd.main(site, [args.action])
@@ -119,7 +119,7 @@ def _main(argv: list[str]) -> int:
         print(f"  {st['dicom']['text']}, {raw[0].lower()}{raw[1:]}")
         for f in st["flags"]:
             print(f"  [{f['level']}] {f['text']}")
-    print("\nGRIP keys:")
+    print("\nGRIP datasets:" if s["keys"] else "\nGRIP datasets: none yet")
     for k in s["keys"]:
         print(f"  {k['project']}: {k['status']}")
     print(f"\nRaspberry Pi Connect: {s['connect']['text']}")

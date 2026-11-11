@@ -26,20 +26,20 @@ update_channel = "stable"
 # interface and the internet through the Pi. Leave out to allow it.
 # hotspot_routing = false
 
-# Which scanner logins go to which GRIP project (a GRIP dataset). The login is
-# the part of the scanner's operator name after the last '/', in lower case
-# ("site_a/study_one" is "study_one"). A login that isn't listed here is never
-# uploaded. Each project's key is stored on the Pi with `hyperwheel keys set`.
-[projects.SiteA-StudyOne]
-logins = ["study_one"]
-api_base_url = "https://grip.example.org/api"
-token_url = "https://grip.example.org/api/get/token"
-# Optional: Patient IDs that don't look like this are flagged (never changed).
-# patient_id_pattern = 'S1-\d{4}'
+# GRIP datasets are usually added after setup, by the data manager, with
+# `hyperwheel datasets add` (it asks for the dataset's client ID, its scanner
+# login and its secret). They can also be listed here, without their keys:
+# [projects.site-a-study-one]
+# client_id = "site-a-study-one"
+# logins = ["study_one"]
+# The login is the part of the scanner's operator name after the last '/', in
+# lower case ("site_a/study_one" is "study_one"). A login that isn't listed is
+# never uploaded.
 
-[projects.SiteA-Sandbox]
-logins = ["sandbox", "phantom"]
-api_base_url = "https://grip.example.org/api"
-token_url = "https://grip.example.org/api/get/token"
+# GRIP's address comes with the release, the same on every Pi. Only to use
+# another one for this site, uncomment both lines.
+# [grip]
+# api_base_url = "https://grip.example.org/api"
+# token_url = "https://grip.example.org/api/get/token"
 
 # end of site file

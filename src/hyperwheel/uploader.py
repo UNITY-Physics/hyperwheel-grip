@@ -132,7 +132,7 @@ class Uploader:
         project = self.routing.projects.get(study.project or "")
         if project is None:
             self.store.raise_flag("PROJECT_NOT_ROUTED",
-                                  f"Project {study.project} is no longer in the routing file. Files are kept.",
+                                  f"The dataset {study.project} is no longer on this Pi. Files are kept.",
                                   study_id=study.id, level="alert")
             return
         self.store.clear_flags("PROJECT_NOT_ROUTED", study_id=study.id)
@@ -239,8 +239,8 @@ class Uploader:
 
     def _key_failed(self, project: Project, status: str, message: str) -> None:
         self.store.set_key_status(project.name, status, message)
-        self.store.raise_flag("KEY_NOT_WORKING", f"GRIP key for {project.name}: {message}. Nothing is uploaded "
-                              "for this project until the key works. Files are kept.", project=project.name,
+        self.store.raise_flag("KEY_NOT_WORKING", f"GRIP key for {project.label}: {message}. Nothing is uploaded "
+                              "for this dataset until the key works. Files are kept.", project=project.name,
                               level="alert")
         log.error("project %s: GRIP key not working (%s). Uploads paused for this project, files kept",
                   project.name, message)

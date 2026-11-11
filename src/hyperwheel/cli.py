@@ -25,8 +25,10 @@ ADMIN_GROUP = "sudo"
 DATA_MANAGER = (
     ("status", "Is everything on GRIP, and is it safe to switch off?"),
     ("doctor", "Check the cable, the scanner and the internet"),
-    ("keys list", "Which GRIP keys are stored, and are they working"),
-    ("keys set", "Store a GRIP key for a project (asks your password)"),
+    ("datasets list", "The GRIP datasets, their scanner logins, and whether each key works"),
+    ("datasets add", "Add a GRIP dataset with its login and key (asks your password)"),
+    ("datasets change", "Change a dataset's logins, or replace its key (asks your password)"),
+    ("datasets remove", "Remove a dataset and its key (asks your password)"),
     ("scanner password", "Set the scanner's raw-data password (asks your password)"),
     ("update status", "Which version is running, and is an update waiting"),
 )
@@ -40,9 +42,11 @@ ADMIN = (
 )
 
 # run, dashboard, viewer, firewall and connect-watch are the services, and first-boot runs once on a newly flashed Pi
-COMMANDS = {"help", "status", "doctor", "keys", "scanner", "update", "setup", "run", "dashboard", "first-boot",
+COMMANDS = {"help", "status", "doctor", "datasets", "keys", "scanner", "update", "setup", "run", "dashboard", "first-boot",
             "connect-watch", "viewer", "firewall"}
-KEYS_ACTIONS = {"list", "set"}
+DATASETS_ACTIONS = {"list", "add", "change", "remove"}
+# The commands of releases before 0.1.16, which sites may have in their notes.
+OLD_KEYS = {"list": "hyperwheel datasets list", "set": "hyperwheel datasets change"}
 SCANNER_ACTIONS = {"password"}
 UPDATE_ACTIONS = {"check", "now", "hold", "release-hold", "status", "channel"}
 
@@ -93,10 +97,13 @@ def problem(argv: Sequence[str]) -> str | None:
         return None
     if command not in COMMANDS:
         return f"There's no command 'hyperwheel {command}'."
-    if command == "keys" and rest and rest[0] not in KEYS_ACTIONS:
-        return f"There's no command 'hyperwheel keys {argv[1]}'."
-    if command == "keys" and not rest:
-        return "'hyperwheel keys' needs one more word: list or set."
+    if command == "keys":
+        now = OLD_KEYS.get(argv[1] if rest else "", "hyperwheel datasets list")
+        return f"This is now: {now}" + ("\nFor a new dataset: hyperwheel datasets add" if rest == ["set"] else "")
+    if command == "datasets" and rest and rest[0] not in DATASETS_ACTIONS:
+        return f"There's no command 'hyperwheel datasets {argv[1]}'."
+    if command == "datasets" and not rest:
+        return "'hyperwheel datasets' needs one more word: list, add, change or remove."
     if command == "scanner" and rest and rest[0] not in SCANNER_ACTIONS:
         return f"There's no command 'hyperwheel scanner {argv[1]}'."
     if command == "scanner" and not rest:
@@ -113,7 +120,7 @@ def needs_root(argv: Sequence[str]) -> bool:
     (started by systemd under their own account), and ``update status`` reads only public files."""
     if not argv or "-h" in argv or "--help" in argv:
         return False
-    if argv[0] in ("status", "doctor", "keys", "scanner", "setup", "first-boot", "connect-watch"):
+    if argv[0] in ("status", "doctor", "datasets", "scanner", "setup", "first-boot", "connect-watch"):
         return True
     return argv[0] == "update" and argv[1:2] != ["status"]
 

@@ -157,8 +157,9 @@ Connect key on it. The installer deletes any such key left on a Pi.
     sudo rule (`/etc/sudoers.d/hyperwheel`, written by every release and
     checked with `visudo` first) lets it run exactly these as root, with no
     other arguments: `hyperwheel status`, `hyperwheel doctor`,
-    `hyperwheel keys list` and `hyperwheel update status` without a password,
-    and `hyperwheel keys set` and `hyperwheel scanner password` with its own
+    `hyperwheel datasets list` and `hyperwheel update status` without a
+    password, and `hyperwheel datasets add`, `datasets change`,
+    `datasets remove` and `hyperwheel scanner password` with its own
     password. From the end of setup, the screen locks
     after 15 minutes idle and unlocks with that Pi's `datamanager` password.
   - Data managers never type `sudo`. `hyperwheel help` lists what they can
@@ -234,8 +235,11 @@ up, setup refuses to run, and the sudo rule no longer lists it.
 
 1. **The site file.** The admin writes one per site, from
    `config/examples/site-file.toml`: the site name, time zone, Wi-Fi country,
-   update channel, phantom Patient ID, and which scanner logins go to which
-   GRIP project. No keys or passwords are in it. Setup asks for it to be
+   update channel and phantom Patient ID. Which scanner logins go to which
+   GRIP dataset is optional: datasets are usually added after setup, with
+   `hyperwheel datasets add`. GRIP's address comes with the release, so the
+   site file needs none (its `[grip]` section can override it for one site).
+   No keys or passwords are in it. Setup asks for it to be
    pasted (it ends with the line `# end of site file`), checks it, shows it
    back and writes `site.toml` and `routing.toml` once it is confirmed. Site
    settings already on the Pi are never overwritten.
@@ -304,58 +308,118 @@ freshly flashed card. The SOP will give each step with pictures. So far:
 
 1. Before the card is wiped: the old Flywheel backlog has finished (or is
    copied off), and the site's scanner logins are noted for its site file.
-2. Flash the card, run `hyperwheel setup`, and store each project's key with
-   `hyperwheel keys set`.
+2. Flash the card, run `hyperwheel setup`, and add each GRIP dataset with
+   `hyperwheel datasets add`.
 3. **Check each scanner's DICOM destination** in the scanner's settings: IP
    address 10.42.0.88, port 4242, AE title HYPERWHEEL. The Pi is always
    10.42.0.88 on the scanner cable, so a scanner sending anywhere else is
    changed to it.
 4. Send a test exam and check it on GRIP and on the Upload Monitor.
 
-## GRIP keys (SOP outline)
+## GRIP datasets (SOP outline)
 
-One API key per project (a GRIP dataset), agreed with GRIP. Keys don't
-expire; they are rotated or revoked by hand. Each site's data managers own
-their keys and set them through the **data-manager account**, which can run
-only the key and status commands. The SOP has a page for each step, with
-screenshots.
+One API key per GRIP dataset, agreed with GRIP. Keys don't expire. They are
+rotated or revoked by hand. Each dataset is named by its **client ID**, the
+one GRIP gives with its key (for example `site-a-study-one`): that's the name
+`hyperwheel datasets list` and the Upload Monitor show. On the Pi, a client ID
+that can't be a folder name gets a safe one made from it, which people never
+need to see.
 
-`hyperwheel keys list` shows each project on the Pi, whether it has a key
-(with only the last four characters of the client ID) and whether it last
-worked. It never shows a secret.
+GRIP's address is the same for every dataset and every Pi: it comes with the
+release (for now GRIP's test gateway, then production's once GRIP sends it,
+reaching every Pi as a normal update). A site file's `[grip]` section can give
+another for one site, just in case. `hyperwheel doctor` shows the address a Pi
+uses. Nobody types it. On a Pi set up before 0.1.16, each dataset still has
+GRIP's address in its own entry. The first `hyperwheel datasets` change drops
+that entry's address if it's the site's, and from then on the dataset follows
+the site's. An entry whose address differs keeps it (doctor lists it), so
+before the release that changes the default, check those Pis.
 
-**Setting a key** (at install, or for a new project):
+Each site's data managers own their datasets and keys, and manage them through
+the **data-manager account**, which can run only the dataset, scanner-password
+and status commands. Datasets are usually added after setup (the site file's
+datasets are optional). The SOP has a page for each step, with screenshots.
 
-1. Get the project's client ID and secret from GRIP.
-2. On the Pi, open the "GRIP keys" launcher on the desktop (or log in over
-   SSH as the data-manager user) and type `hyperwheel keys set`. It asks
-   for the data-manager password. (`hyperwheel help` lists everything the
-   data-manager account can run.)
-3. Pick the project from the list by its number, then paste the client ID
-   and the secret. The secret is typed hidden and never shown, logged or put
-   on a command line. Pressing Enter at any question stops, and nothing is
-   saved.
-4. The command asks GRIP for a token with the new key **before** saving it.
-   If GRIP refuses it, or can't be reached to check it, nothing is saved and
-   the old key stays.
-5. The key is saved root-only (mode 600), and the upload service is
-   restarted so it picks the key up. Uploads continue where they stopped.
-6. The service checks every key when it starts, so a minute later
-   `hyperwheel keys list` and the Upload Monitor show the project's key
-   as working.
+- `hyperwheel datasets list` shows each dataset, its scanner logins, and
+  whether its key last worked. It never shows a secret.
+- `hyperwheel datasets add` asks for the client ID, the scanner login (the
+  part of the operator name after the last `/`, lower case, then any more
+  logins) and the secret. A login can belong to only one dataset: one that's
+  already used stops it, naming the dataset that has it. It asks GRIP for a
+  token with the key **before** saving anything. If GRIP refuses it, or can't
+  be reached to check it, nothing is saved.
+- `hyperwheel datasets change` changes a dataset's logins (only for scans that
+  finish after the change, and logins left out are then deleted on the Pi. It
+  waits while images are still arriving from a login being left out. To move a
+  login to another dataset, take it off one, then add it to the other), or
+  replaces its key. A new key is checked with GRIP the same way. If GRIP's
+  new key has another client ID, it shows the old and new one and asks once:
+  the dataset then takes the new client ID as its name, and its files
+  waiting on the Pi stay and go up with the new key.
+- `hyperwheel datasets remove` deletes a dataset and its key from the Pi,
+  after saying that scans from its logins will then be deleted on the Pi, not
+  uploaded, and asking for the dataset's name to confirm. While the Pi is
+  receiving images for one of its sessions, it waits (try again once the
+  Upload Monitor no longer says it's receiving). Images that reach the Pi
+  during the removal itself are treated like scans from a login with no
+  dataset: deleted on the Pi (the scanner keeps them). It refuses while
+  Hyperwheel isn't running, since the Pi may then have scans it hasn't looked
+  at yet. If any of its sessions would be deleted on the Pi
+  (not all on GRIP: files waiting or refused, or a session held for a check),
+  it says how many and stops unless the person also types `delete them`. Raw
+  files of its sessions held as unassigned stay on the Pi, flagged, and it
+  says so. Raw data of its sessions still on the scanner (not fetched
+  yet) is never fetched once it's removed: it says so and asks for `go on`,
+  also when the Pi hasn't been able to check the scanner for some of its
+  sessions yet, or fetching raw data is failing. Then, with the upload service stopped for a moment, it counts
+  again (stopping if more arrived), deletes those sessions on the Pi and in
+  Orthanc like a study from a login with no dataset, and only then takes the
+  dataset and its key off the Pi. Stopped part-way, the dataset is still
+  there, and running `remove` again finishes it. What's on GRIP stays there.
+- While an update is being installed, `add`, `change` and `remove` change
+  nothing and say to try again in a few minutes.
+- A session deleted on the Pi because its login had no dataset (or its
+  dataset was removed) goes through as a new one if the scanner sends it again
+  once its login has a dataset. One that was fully on GRIP before its dataset
+  was removed, sent again once its login belongs to another dataset, goes
+  there as DICOM only: its raw data was already uploaded to the first dataset
+  and isn't fetched again. The data manager can see that on GRIP. Only what the scanner sent again is uploaded,
+  so it's flagged to check it's complete on GRIP. While it arrives, the
+  Upload Monitor says it's receiving. If it never finishes arriving (Orthanc
+  restarted part-way), after an hour there's an alert to send it again.
 
-**Rotating a key** (on a schedule, e.g. once a year; at once if a key may
+Every command asks for the data-manager password (except `list`). The secret
+is typed hidden and never shown, logged or put on a command line. Pressing
+Enter at any question stops, and nothing is changed. Keys are saved root-only
+(mode 600). The dataset settings (`/etc/hyperwheel/routing.toml`) are checked,
+then replaced in one step. After a change, Hyperwheel and the Upload Monitor
+restart to use it, and uploads continue where they stopped. The service checks
+every key when it starts, so a minute later `hyperwheel datasets list` and the
+Upload Monitor show the key as working.
+
+A release before 0.1.16 can't read dataset settings written by these commands
+(a dataset with no address of its own, or a client ID). So while a release is
+being installed and checked, which is when it may roll back, the commands
+change nothing and say to try again. That includes the update that installs
+0.1.16 itself, run by the earlier release's updater: for half an hour after a
+release switch, a running update check counts as installing. Don't install an
+older release by hand on a Pi whose datasets were changed.
+
+The old commands, `hyperwheel keys list` and `keys set`, now say which
+`datasets` command replaced them.
+
+**Rotating a key** (on a schedule, e.g. once a year, or at once if a key may
 have leaked or someone who had it leaves):
 
-1. Ask GRIP for a new key for the project, keeping the old one active.
-2. Set the new key on the Pi as above. The command checks it with GRIP before
-   saving it.
+1. Ask GRIP for a new secret for the dataset, keeping the old one active.
+2. On the Pi, type `hyperwheel datasets change`, pick the dataset and
+   replace its key. The command checks it with GRIP before saving it.
 3. Check the Upload Monitor shows the key as "Working".
-4. Only then ask GRIP to revoke the old key.
+4. Only then ask GRIP to revoke the old one.
 5. Note the date in the site's records (not on the Pi).
 
 If a key stops working (revoked, or entered wrong), the Upload Monitor shows
-an alert for that project. Only that project's uploads pause, and its files
+an alert for that dataset. Only that dataset's uploads pause, and its files
 are kept until a working key is set.
 
 ## Scanner raw-data password (SOP outline)

@@ -3,12 +3,15 @@
 Two files, both site-specific and both kept outside the release:
 
 - ``site.toml``: paths, upload settings, the raw-data rule, disk limits, the
-  site's phantom Patient ID, time zone and Wi-Fi country.
+  site's phantom Patient ID, time zone and Wi-Fi country, and GRIP's address
+  (``[grip]``, the release's default unless the site file gives one).
+- ``routing.toml``: scanner login -> GRIP dataset (a "project" in the code).
+  Each dataset is named by its GRIP client ID. A dataset may carry its own API
+  address and token URL (Pis set up before GRIP's address was site-wide), else
+  it uses the site's. Keys are not in here: they live in the key store (see
+  ``keys.py``). ``hyperwheel datasets`` changes it after setup.
 
-Both are written by ``hyperwheel setup`` from the site file (see ``sitesetup``).
-- ``routing.toml``: scanner login -> GRIP project, with that project's API
-  address and token URL. Keys are not in here; they live in the key store
-  (see ``keys.py``).
+Both are first written by ``hyperwheel setup`` from the site file (see ``sitesetup``).
 
 Unknown settings are an error, so a typo can't silently fall back to a default.
 """
@@ -117,6 +120,18 @@ class UpdateSettings:
     url: str = "https://github.com/UNITY-Physics/hyperwheel-grip/releases/download"
 
 
+# GRIP's address for every dataset, unless a site's [grip] section gives another (just in case). For now this
+# is GRIP's test gateway. Production's goes here when GRIP sends it, and reaches every Pi as a normal update.
+GRIP_API_BASE_URL = "https://gateway.mncnh-neuro-grip-research.org/api"
+GRIP_TOKEN_URL = "https://gateway.mncnh-neuro-grip-research.org/api/get/token"
+
+
+@dataclass(frozen=True)
+class GripSettings:
+    api_base_url: str = GRIP_API_BASE_URL
+    token_url: str = GRIP_TOKEN_URL
+
+
 @dataclass(frozen=True)
 class DiskSettings:
     warn_free_gb: float = 10.0
@@ -143,10 +158,12 @@ class SiteConfig:
     dashboard: DashboardSettings = field(default_factory=DashboardSettings)
     updates: UpdateSettings = field(default_factory=UpdateSettings)
     hotspot: HotspotSettings = field(default_factory=HotspotSettings)
+    grip: GripSettings = field(default_factory=GripSettings)
 
 
 @dataclass(frozen=True)
 class Project:
+    # The name on the Pi: a safe folder and file name (the key file, the staging folder, the state store).
     name: str
     logins: tuple[str, ...]
     api_base_url: str
@@ -154,6 +171,13 @@ class Project:
     # Optional: what this study's Patient IDs look like, e.g. "R2-\\d{4}".
     # A Patient ID that doesn't match is flagged, never changed.
     patient_id_pattern: str | None = None
+    # The dataset's GRIP client ID, which is its name for people. Datasets from before it was stored have none.
+    client_id: str | None = None
+
+    @property
+    def label(self) -> str:
+        """The dataset's name as people see it: its client ID, or the name on the Pi if none is stored."""
+        return self.client_id or self.name
 
 
 @dataclass(frozen=True)
@@ -167,6 +191,11 @@ class Routing:
             if login in project.logins:
                 return project
         return None
+
+    def label(self, name: str | None) -> str:
+        """A dataset's name as people see it, also for one no longer on this Pi."""
+        project = self.projects.get(name or "")
+        return project.label if project else (name or "")
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -232,6 +261,14 @@ def load_site(path: Path) -> SiteConfig:
     hotspot = _section(HotspotSettings, data.get("hotspot", {}), f"{where} [hotspot]")
     if not isinstance(hotspot.routing, bool):
         raise ConfigError(f"{where} [hotspot].routing must be true or false")
+    grip_data = data.get("grip", {})
+    if not isinstance(grip_data, dict):
+        raise ConfigError(f"{where} [grip]: expected a table")
+    unknown = set(grip_data) - {"api_base_url", "token_url"}
+    if unknown:
+        raise ConfigError(f"{where} [grip]: unknown setting(s) {', '.join(sorted(unknown))}")
+    if bool(grip_data) and set(grip_data) != {"api_base_url", "token_url"}:
+        raise ConfigError(f"{where} [grip]: give both api_base_url and token_url, or leave the section out")
     updates = _section(UpdateSettings, data.get("updates", {}), f"{where} [updates]")
     if updates.channel not in ("dev", "pilot", "stable"):
         raise ConfigError(f"{where} [updates].channel must be dev, pilot or stable")
@@ -267,6 +304,10 @@ def load_site(path: Path) -> SiteConfig:
         updates=UpdateSettings(updates.channel, check_url(updates.url, f"{where} [updates].url",
                                                           test_mode=test_mode)),
         hotspot=hotspot,
+        grip=GripSettings(
+            check_url(grip_data.get("api_base_url", GRIP_API_BASE_URL), f"{where} [grip].api_base_url",
+                      test_mode=test_mode),
+            check_url(grip_data.get("token_url", GRIP_TOKEN_URL), f"{where} [grip].token_url", test_mode=test_mode)),
     )
 
 
@@ -289,7 +330,12 @@ def check_url(url: object, where: str, *, test_mode: bool) -> str:
     raise ConfigError(f"{where}: must be https:// (plain http:// only to this machine, with test_mode on)")
 
 
-def load_routing(path: Path, *, test_mode: bool = False) -> Routing:
+CLIENT_ID = re.compile(r"[\x21-\x7e]{1,256}")  # printable, no spaces
+
+
+def load_routing(path: Path, *, test_mode: bool = False, grip: GripSettings | None = None) -> Routing:
+    """The routing file. A dataset with no address of its own uses ``grip`` (the site's)."""
+    grip = grip or GripSettings()
     data = _read_toml(path)
     where = str(path)
     unknown = set(data) - {"projects"}
@@ -305,7 +351,7 @@ def load_routing(path: Path, *, test_mode: bool = False) -> Routing:
             raise ConfigError(f"{at}: project listed twice")
         if not isinstance(entry, dict):
             raise ConfigError(f"{at}: expected a table")
-        unknown = set(entry) - {"logins", "api_base_url", "token_url", "patient_id_pattern"}
+        unknown = set(entry) - {"logins", "api_base_url", "token_url", "patient_id_pattern", "client_id"}
         if unknown:
             raise ConfigError(f"{at}: unknown setting(s) {', '.join(sorted(unknown))}")
         logins = entry.get("logins")
@@ -317,6 +363,15 @@ def load_routing(path: Path, *, test_mode: bool = False) -> Routing:
             if login in owner:
                 raise ConfigError(f"{at}: login {login!r} is already routed to {owner[login]}")
             owner[login] = name
+        client_id = entry.get("client_id")
+        if client_id is not None:
+            if not isinstance(client_id, str) or not CLIENT_ID.fullmatch(client_id):
+                raise ConfigError(f"{at}.client_id: expected a client ID (printable characters, no spaces)")
+            if client_id in {p.client_id for p in projects.values()}:
+                raise ConfigError(f"{at}: client ID {client_id!r} is listed twice")
+        if ("api_base_url" in entry) != ("token_url" in entry):
+            raise ConfigError(f"{at}: give both api_base_url and token_url, or neither (then GRIP's address is "
+                              "the site's)")
         pattern = entry.get("patient_id_pattern")
         if pattern is not None:
             try:
@@ -326,8 +381,10 @@ def load_routing(path: Path, *, test_mode: bool = False) -> Routing:
         projects[name] = Project(
             name=name,
             logins=tuple(logins),
-            api_base_url=check_url(entry.get("api_base_url"), f"{at}.api_base_url", test_mode=test_mode),
-            token_url=check_url(entry.get("token_url"), f"{at}.token_url", test_mode=test_mode),
+            api_base_url=check_url(entry.get("api_base_url", grip.api_base_url), f"{at}.api_base_url",
+                                   test_mode=test_mode),
+            token_url=check_url(entry.get("token_url", grip.token_url), f"{at}.token_url", test_mode=test_mode),
             patient_id_pattern=pattern,
+            client_id=client_id,
         )
     return Routing(projects=projects)

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, connect, reach
-from .config import Routing, SiteConfig
+from .config import Project, Routing, SiteConfig
 from .dashboard import HEARTBEAT, KEY_TEXT, clock_synced
 from .installer import is_set_up
 from .state import Store
@@ -103,9 +103,14 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
             if failing:
                 out.append((PROBLEM, "Raw data from the scanner", failing[0].detail))
 
-    hosts = reach.grip_hosts(routing)
+    own = sorted({p.api_base_url for p in routing.projects.values()} - {site.grip.api_base_url})
+    out.append((NOTE, "GRIP address", site.grip.api_base_url
+                + (f" (and for some datasets: {', '.join(own)})" if own else "")))
+    # With no datasets yet, GRIP's own address is still worth checking.
+    site_grip = Routing(projects={"": Project("", (), site.grip.api_base_url, site.grip.token_url)})
+    hosts = reach.grip_hosts(routing) or reach.grip_hosts(site_grip)
     if not hosts:
-        out.append((NOTE, "GRIP", "no projects in routing.toml"))
+        out.append((NOTE, "GRIP", "no address to check"))
     else:
         down = [hp for hp in hosts if not p.answers(*hp)]
         if not down:
@@ -150,14 +155,16 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
         out.append((PROBLEM, "Disk", f"free space can't be read ({e.strerror})"))
 
     if store is not None:
-        for name in routing.projects:
+        if not routing.projects:
+            out.append((NOTE, "GRIP datasets", "none yet. To add one, type: hyperwheel datasets add"))
+        for name, project in routing.projects.items():
             status = store.key_status(name)
             if status is None:
-                out.append((NOTE, f"GRIP key for {name}", "not used yet"))
+                out.append((NOTE, f"GRIP key for {project.label}", "not used yet"))
             elif status[0] == "working":
-                out.append((OK, f"GRIP key for {name}", "working"))
+                out.append((OK, f"GRIP key for {project.label}", "working"))
             else:
-                out.append((PROBLEM, f"GRIP key for {name}", KEY_TEXT.get(status[0], status[0])))
+                out.append((PROBLEM, f"GRIP key for {project.label}", KEY_TEXT.get(status[0], status[0])))
         store.close()
 
     result, text = connect.describe(p.connect_state(), now, set_up=is_set_up(p.etc))

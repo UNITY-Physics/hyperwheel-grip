@@ -15,8 +15,10 @@ DATA_MANAGER_HELP = """\
 What you can do on this Pi:
   hyperwheel status             Is everything on GRIP, and is it safe to switch off?
   hyperwheel doctor             Check the cable, the scanner and the internet
-  hyperwheel keys list          Which GRIP keys are stored, and are they working
-  hyperwheel keys set           Store a GRIP key for a project (asks your password)
+  hyperwheel datasets list      The GRIP datasets, their scanner logins, and whether each key works
+  hyperwheel datasets add       Add a GRIP dataset with its login and key (asks your password)
+  hyperwheel datasets change    Change a dataset's logins, or replace its key (asks your password)
+  hyperwheel datasets remove    Remove a dataset and its key (asks your password)
   hyperwheel scanner password   Set the scanner's raw-data password (asks your password)
   hyperwheel update status      Which version is running, and is an update waiting
 
@@ -55,8 +57,9 @@ def test_no_words_or_help_shows_the_help(argv, capsys, monkeypatch):
 
 @pytest.mark.parametrize("argv, line", [
     (["frob"], "There's no command 'hyperwheel frob'."),
-    (["keys", "delete"], "There's no command 'hyperwheel keys delete'."),
-    (["keys"], "'hyperwheel keys' needs one more word: list or set."),
+    (["datasets", "delete"], "There's no command 'hyperwheel datasets delete'."),
+    (["datasets"], "'hyperwheel datasets' needs one more word: list, add, change or remove."),
+    (["keys", "set"], "This is now: hyperwheel datasets change\nFor a new dataset: hyperwheel datasets add"),
     (["scanner"], "'hyperwheel scanner' needs one more word: password."),
     (["scanner", "key"], "There's no command 'hyperwheel scanner key'."),
     (["update", "now-please"], "There's no command 'hyperwheel update now-please'."),
@@ -70,11 +73,12 @@ def test_an_unknown_command_says_so_in_one_line_then_shows_the_help(argv, line, 
 
 
 def test_which_commands_need_root():
-    for argv in (["status"], ["doctor"], ["keys", "list"], ["keys", "set"], ["scanner", "password"], ["update", "now"],
+    for argv in (["status"], ["doctor"], ["datasets", "list"], ["datasets", "add"], ["datasets", "remove"],
+                 ["scanner", "password"], ["update", "now"],
                  ["update", "hold", "--reason", "x"], ["update", "release-hold"], ["update", "check"]):
         assert cli.needs_root(argv), argv
     for argv in (["update", "status"], ["run"], ["dashboard"], ["help"], [], ["--site", "x", "status"],
-                 ["update", "--help"], ["keys", "set", "-h"]):
+                 ["update", "--help"], ["datasets", "add", "-h"]):
         assert not cli.needs_root(argv), argv
 
 
@@ -96,10 +100,10 @@ class Sudo:
 
 def test_an_allowed_command_runs_again_through_sudo_with_exactly_the_same_words():
     sudo = Sudo(allowed=True)
-    sudo.go(["keys", "set"])
-    assert sudo.checked == [["/usr/bin/sudo", "-n", "-l", "/usr/local/bin/hyperwheel", "keys", "set"]]
+    sudo.go(["datasets", "add"])
+    assert sudo.checked == [["/usr/bin/sudo", "-n", "-l", "/usr/local/bin/hyperwheel", "datasets", "add"]]
     assert sudo.execd == [("/usr/bin/sudo", ["/usr/bin/sudo", "-p", "Your password (%p): ",
-                                             "/usr/local/bin/hyperwheel", "keys", "set"])]
+                                             "/usr/local/bin/hyperwheel", "datasets", "add"])]
     assert sudo.said == []
 
 
@@ -128,7 +132,7 @@ def test_an_ordinary_account_typing_a_root_command_goes_through_run_as_root(monk
     seen = []
     monkeypatch.setattr(entry.os, "geteuid", lambda: 1001)
     monkeypatch.setattr(cli, "run_as_root", lambda argv: seen.append(list(argv)) or 2)
-    assert entry.main(["keys", "list"]) == 2 and seen == [["keys", "list"]]
+    assert entry.main(["datasets", "list"]) == 2 and seen == [["datasets", "list"]]
 
 
 def test_root_runs_the_command_itself(monkeypatch):

@@ -27,6 +27,7 @@ from pathlib import Path
 from . import connect, hostkeys, reach
 from .config import DashboardSettings, Routing, SiteConfig
 from .ids import login_from_operators_name
+from .organiser import STUCK_S
 from .state import PENDING_FILE_STATES, Store
 
 log = logging.getLogger("hyperwheel.dashboard")
@@ -93,7 +94,7 @@ def _and_list(names: list[str]) -> str:
 def _routed_project(routing: Routing, operators_name: str | None) -> str | None:
     """The project a study's login routes to, for a study not routed yet (its images are still arriving)."""
     project = routing.project_for_login(login_from_operators_name(operators_name))
-    return project.name if project else None
+    return project.label if project else None
 
 
 def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
@@ -105,10 +106,13 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         from .updater import Paths, hold_text
         update_hold = lambda: hold_text(Paths())  # noqa: E731
     free_bytes = free_bytes or (lambda p: shutil.disk_usage(p).free)
+    # A session sent again after it was deleted on the Pi waits, hidden, until Orthanc says it's complete: it's
+    # still arriving, so the page mustn't say it's safe to switch off.
+    resent = any(s.stable_at is None and now - s.updated_at <= STUCK_S for s in store.studies(states=("unrouted",)))
     studies = [s for s in store.studies() if s.state not in _HIDDEN]
-    cards, receiving, fetching = [], False, False
+    cards, receiving, fetching = [], resent, False
     for s in sorted(studies, key=lambda s: (s.study_date or "", s.study_time or ""), reverse=True):
-        project = s.project or _routed_project(routing, s.operators_name)
+        project = routing.label(s.project) if s.project else _routed_project(routing, s.operators_name)
         if project is None and s.state in ("receiving", "stable"):
             # Images still arriving from a login with no routing entry: never shown. They still count as
             # arriving, so the page never says it's safe to switch off while the scanner is sending (the first
@@ -184,7 +188,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         # a long wait or a low disk (that has its own alert).
         headline = "Waiting for a GRIP key"
         sub = (f"Everything from the scanner is on the Pi. {files} still to upload. Uploads for "
-               f"{_and_list(no_key)} start once a working GRIP key is set. The Pi keeps the files, so you can "
+               f"{_and_list(sorted(routing.label(n) for n in no_key))} start once a working GRIP key is set. The Pi keeps the files, so you can "
                "switch the scanner off.")
     elif pending:
         offline = scanner_down or links.internet_down(now)
@@ -209,9 +213,10 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         badge = "Everything from the scanner is on the Pi: safe to switch off"
 
     keys = []
-    for name in routing.projects:
+    for name, dataset in routing.projects.items():
         status = store.key_status(name)
-        keys.append({"project": name, "status": KEY_TEXT.get(status[0], status[0]) if status else "Not checked yet",
+        keys.append({"project": dataset.label,
+                     "status": KEY_TEXT.get(status[0], status[0]) if status else "Not checked yet",
                      "ok": bool(status and status[0] == "working")})
 
     connect_result, connect_text = connect.describe(connect_state(), now, set_up=True)
@@ -398,7 +403,7 @@ PAGE = """<!doctype html>
   </section>
   <h2>Sessions</h2>
   <div id="studies"></div>
-  <h2>GRIP keys</h2>
+  <h2>GRIP datasets</h2>
   <section class="card keys" id="keys"></section>
   <h2>Raspberry Pi Connect</h2>
   <section class="card keys"><div class="key"><span>Remote access</span><span id="connect"></span></div></section>
@@ -453,7 +458,7 @@ function render(s) {
 
   const keys = document.getElementById("keys");
   keys.replaceChildren();
-  if (!s.keys.length) keys.appendChild(el("div", "meta", "No projects set up."));
+  if (!s.keys.length) keys.appendChild(el("div", "meta", "No GRIP datasets on this Pi yet."));
   for (const k of s.keys) {
     const row = el("div", "key");
     row.appendChild(el("span", "", k.project));

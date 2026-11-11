@@ -12,9 +12,12 @@ project. A local file is deleted only once GRIP has confirmed it.
   stored (`00081199`), or the last raw-file chunk accepted with
   `complete: true`. Anything else keeps the file.
 - **Routing on the Pi.** The part of `OperatorsName` after the last `/` picks
-  the GRIP project, its API address and its key (one key per project). A
-  login with no routing entry is never uploaded: its DICOM is deleted on the
-  Pi and its raw files are never pulled from the scanner.
+  the GRIP dataset (a "project" in the code) and its key (one key per
+  dataset, named by its client ID). GRIP's address is the site's: the
+  release's default unless the site file gives one. A login with no routing
+  entry is never uploaded: its DICOM is deleted on the Pi and its raw files
+  are never pulled from the scanner. Data managers change the datasets with
+  `hyperwheel datasets`.
 - **One GRIP session per StudyInstanceUID**, never closed. GRIP's API has
   no session calls: GRIP files everything by StudyInstanceUID, and files that
   arrive later join the same study. A resend overwrites (DICOM by SOP
@@ -29,8 +32,8 @@ project. A local file is deleted only once GRIP has confirmed it.
 
 ```
 /etc/hyperwheel/site.toml          site settings            (kept across updates)
-/etc/hyperwheel/routing.toml       login -> project          (kept across updates)
-/etc/hyperwheel/keys/<project>.json  one key per project, root only, mode 600
+/etc/hyperwheel/routing.toml       login -> dataset          (kept across updates)
+/etc/hyperwheel/keys/<project>.json  one key per dataset, root only, mode 600
 /var/lib/hyperwheel/state.db       state of every study and file
 /var/lib/hyperwheel/stagingArea/<project>/<StudyInstanceUID>/DICOM/<SOPInstanceUID>.dcm
 /var/lib/hyperwheel/stagingArea/<project>/<StudyInstanceUID>/RRDF/<original name>
@@ -203,7 +206,7 @@ as HTML.
 
 ## Keys
 
-One key (client ID + secret) per project, stored root-only and read by the
+One key (client ID + secret) per dataset, stored root-only and read by the
 service through systemd's `LoadCredential=`. A key is tested against GRIP
 before it replaces the old one. The state store keeps each project's key
 status (`working`, `rejected`, `missing`, `unreadable`); a key that stops

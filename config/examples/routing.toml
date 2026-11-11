@@ -1,16 +1,21 @@
-# /etc/hyperwheel/routing.toml: which scanner logins go to which GRIP project.
+# /etc/hyperwheel/routing.toml: which scanner logins go to which GRIP dataset.
+# Written by hyperwheel setup and changed with hyperwheel datasets (add, change,
+# remove), which check it first. Change it with those commands, not by hand.
 #
 # The login is the part of OperatorsName after the last '/', in lower case
-# (e.g. "site_a/sandbox" -> "sandbox"). A login that isn't listed
-# here is never uploaded: its DICOM is deleted on the Pi and its raw files are
-# never pulled from the scanner.
+# (e.g. "site_a/sandbox" -> "sandbox"). A login belongs to at most one dataset.
+# A login that isn't listed here is never uploaded: its DICOM is deleted on the
+# Pi and its raw files are never pulled from the scanner.
 #
-# Each project has its own key, stored with `hyperwheel keys set`; no keys here.
+# Each dataset is named by its GRIP client ID. The name in [projects.<name>] is
+# the dataset's name on the Pi (its folder and key file), made from the client
+# ID. GRIP's address is the site's ([grip] in site.toml, the release's default
+# unless the site file gave one). Each dataset's key is stored by
+# hyperwheel datasets add, never here.
 schema_version = 1
 
-[projects.Example-Project]
+[projects.site-a-study-one]
+client_id = "site-a-study-one"
 logins = ["example"]
-api_base_url = "https://grip.example.org/api"
-token_url = "https://grip.example.org/api/get/token"
 # Optional: Patient IDs that don't match are flagged (never changed).
 # patient_id_pattern = 'R2-\d{4}'
