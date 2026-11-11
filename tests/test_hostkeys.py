@@ -157,7 +157,8 @@ def test_status_prints_the_notice(env, capsys, monkeypatch):
     monkeypatch.setattr("hyperwheel.updater.hold_text", lambda paths: None)
     site, routing = env.tmp / "site.toml", env.tmp / "routing.toml"
     site.write_text(f'schema_version = 1\nsite = "site-a"\nstaging_dir = "{env.site.staging_dir}"\n'
-                    f'state_db = "{env.site.state_db}"\nkeys_dir = "{env.site.keys_dir}"\n')
+                    f'state_db = "{env.site.state_db}"\nkeys_dir = "{env.site.keys_dir}"\n'
+                    '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n')
     routing.write_text("schema_version = 1\n")
     assert entry.main(["--site", str(site), "--routing", str(routing), "status"]) == 0
     out = capsys.readouterr().out

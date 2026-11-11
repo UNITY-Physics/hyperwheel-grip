@@ -8,6 +8,7 @@ import pwd
 import shutil
 import stat
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -114,10 +115,15 @@ def installer(release, signers, pi, said=None, **kw):
                      **kw)
 
 
+GRIP_TOML = '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n'
+
+
 def site_setup(tmp: Path) -> Path:
     setup = tmp / "setup"
     (setup / "keys").mkdir(parents=True, exist_ok=True)
-    (setup / "site.toml").write_text('schema_version = 1\nsite = "site-a"\n')
+    (setup / "site.toml").write_text('schema_version = 1\nsite = "site-a"\n[grip]\n'
+                                     'api_base_url = "https://grip.example.org/api"\n'
+                                     'token_url = "https://grip.example.org/api/get/token"\n')
     (setup / "routing.toml").write_text("schema_version = 1\n")
     (setup / "scanner.json").write_text('{"password": "scanner-pw-not-for-logs"}')
     (setup / "keys" / "SiteA-Sandbox.json").write_text('{"client_id": "c", "client_secret": "key-not-for-logs"}')
@@ -167,10 +173,11 @@ def test_site_setup_adds_only_what_is_missing_and_never_prints_secrets(tmp_path,
     root, fake = pi
     etc = root / "etc/hyperwheel"
     etc.mkdir(parents=True)
-    (etc / "site.toml").write_text("schema_version = 1\nsite = \"already-here\"\n")  # the site's own
+    own = "schema_version = 1\nsite = \"already-here\"\n[grip]\napi_base_url = \"https://grip.example.org/api\"\ntoken_url = \"https://grip.example.org/api/get/token\"\n"
+    (etc / "site.toml").write_text(own)  # the site's own
     said = []
     installer(make_release(tmp_path, key), signers, pi, said, site_setup=site_setup(tmp_path)).install()
-    assert (etc / "site.toml").read_text() == "schema_version = 1\nsite = \"already-here\"\n"
+    assert (etc / "site.toml").read_text() == own
     assert (etc / "routing.toml").exists() and mode(etc / "scanner.json") == 0o600
     assert mode(etc / "keys" / "SiteA-Sandbox.json") == 0o600 and mode(etc / "keys") == 0o700
     text = "\n".join(said)
@@ -314,7 +321,7 @@ def test_a_pi_that_is_not_set_up_lets_the_data_manager_run_setup_without_a_passw
     assert SETUP_LINE in rule.splitlines()
     # half way through setup (site settings written, not finished), it still may
     (root / "etc/hyperwheel/setup.json").write_text("{}")
-    (root / "etc/hyperwheel/site.toml").write_text("")
+    (root / "etc/hyperwheel/site.toml").write_text(GRIP_TOML)
     installer(make_release(tmp_path, key, "0.2.0"), signers, pi).install()
     assert SETUP_LINE in (root / "etc/sudoers.d/hyperwheel").read_text().splitlines()
     # once setup has finished, an update leaves the line out
@@ -468,3 +475,46 @@ def test_a_pis_first_release_installs_the_os_updates_straight_away(tmp_path, key
     fake.packages["libssl3t64"] = "3.5.7-1~deb13u3+rpt1"
     installer(make_release(tmp_path, key), signers, pi, []).install()  # no release on the Pi yet
     assert fake.packages["libssl3t64"] == "3.5.9-1~deb13u1+rpt1"
+
+
+def _old_release_with_grip_built_in(root: Path, version: str = "0.1.16") -> None:
+    """What a release before 0.1.17 looks like where the GRIP address is concerned (made-up address)."""
+    config = root / f"opt/hyperwheel/releases/{version}/venv/lib/python3.13/site-packages/hyperwheel/config.py"
+    config.parent.mkdir(parents=True)
+    config.write_text('GRIP_API_BASE_URL = "https://grip-old.example.org/api"\n'
+                      'GRIP_TOKEN_URL = "https://grip-old.example.org/api/get/token"\n'
+                      'raise SystemExit("never run")\n')
+
+
+def test_an_update_keeps_the_grip_address_the_pi_used_in_its_site_settings(tmp_path, key, signers, pi):
+    root, fake = pi
+    installer(make_release(tmp_path, key, "0.1.16"), signers, pi, site_setup=site_setup(tmp_path)).install()
+    _old_release_with_grip_built_in(root)
+    site = root / "etc/hyperwheel/site.toml"
+    old = 'schema_version = 1\nsite = "site-a"  # a comment kept\n\n[hotspot]\nrouting = false\n'
+    site.write_text(old)  # set up before the address was a site setting
+    said = []
+    installer(make_release(tmp_path, key, "0.1.17"), signers, pi, said).install()
+    text = site.read_text()
+    assert text.startswith(old) and mode(site) == 0o644  # nothing else in the file changes
+    added = tomllib.loads(text)
+    assert added["grip"] == {"api_base_url": "https://grip-old.example.org/api",
+                             "token_url": "https://grip-old.example.org/api/get/token"}
+    assert added["hotspot"] == {"routing": False}
+    assert "grip-old.example.org" not in "\n".join(said)  # site settings are never printed
+    assert os.readlink(root / "opt/hyperwheel/current") == "releases/0.1.17"
+    installer(make_release(tmp_path, key, "0.1.18"), signers, pi).install()
+    assert site.read_text() == text  # added once, then kept as it is
+
+
+def test_with_no_grip_address_to_keep_the_install_stops_before_anything_changes(tmp_path, key, signers, pi):
+    root, fake = pi
+    installer(make_release(tmp_path, key, "0.1.15"), signers, pi, site_setup=site_setup(tmp_path)).install()
+    site = root / "etc/hyperwheel/site.toml"
+    site.write_text('schema_version = 1\nsite = "site-a"\n')  # and 0.1.15 had no address built in
+    ran = len(fake.commands)
+    with pytest.raises(InstallError, match=r"no \[grip\] section"):
+        installer(make_release(tmp_path, key, "0.1.17"), signers, pi).install()
+    assert len(fake.commands) == ran and not (root / "opt/hyperwheel/releases/0.1.17").exists()
+    assert os.readlink(root / "opt/hyperwheel/current") == "releases/0.1.15"
+    assert site.read_text() == 'schema_version = 1\nsite = "site-a"\n'

@@ -34,7 +34,8 @@ def test_the_rules_replace_the_table_in_one_step():
 
 def site_toml(tmp_path, extra=""):
     path = tmp_path / "site.toml"
-    path.write_text('schema_version = 1\nsite = "t"\nstaging_dir = "/x"\nstate_db = "/x.db"\nkeys_dir = "/k"\n' + extra)
+    path.write_text('schema_version = 1\nsite = "t"\nstaging_dir = "/x"\nstate_db = "/x.db"\nkeys_dir = "/k"\n' + extra
+                    + '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n')
     return path
 
 

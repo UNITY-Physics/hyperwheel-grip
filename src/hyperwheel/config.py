@@ -4,7 +4,7 @@ Two files, both site-specific and both kept outside the release:
 
 - ``site.toml``: paths, upload settings, the raw-data rule, disk limits, the
   site's phantom Patient ID, time zone and Wi-Fi country, and GRIP's address
-  (``[grip]``, the release's default unless the site file gives one).
+  (``[grip]``, required: GRIP's addresses are never in the release).
 - ``routing.toml``: scanner login -> GRIP dataset (a "project" in the code).
   Each dataset is named by its GRIP client ID. A dataset may carry its own API
   address and token URL (Pis set up before GRIP's address was site-wide), else
@@ -116,16 +116,12 @@ class UpdateSettings:
     url: str = "https://github.com/UNITY-Physics/hyperwheel-grip/releases/download"
 
 
-# GRIP's address for every dataset, unless a site's [grip] section gives another (just in case). For now this
-# is GRIP's test gateway. Production's goes here when GRIP sends it, and reaches every Pi as a normal update.
-GRIP_API_BASE_URL = "https://gateway.mncnh-neuro-grip-research.org/api"
-GRIP_TOKEN_URL = "https://gateway.mncnh-neuro-grip-research.org/api/get/token"
-
-
+# GRIP's address (one per region) is a site setting, [grip] in site.toml, never in the release: GRIP keeps its
+# addresses out of public code. Every dataset uses it, unless its routing entry gives its own.
 @dataclass(frozen=True)
 class GripSettings:
-    api_base_url: str = GRIP_API_BASE_URL
-    token_url: str = GRIP_TOKEN_URL
+    api_base_url: str
+    token_url: str
 
 
 @dataclass(frozen=True)
@@ -154,7 +150,7 @@ class SiteConfig:
     dashboard: DashboardSettings = field(default_factory=DashboardSettings)
     updates: UpdateSettings = field(default_factory=UpdateSettings)
     hotspot: HotspotSettings = field(default_factory=HotspotSettings)
-    grip: GripSettings = field(default_factory=GripSettings)
+    grip: GripSettings | None = None  # always set by load_site
 
 
 @dataclass(frozen=True)
@@ -260,14 +256,16 @@ def load_site(path: Path) -> SiteConfig:
     hotspot = _section(HotspotSettings, data.get("hotspot", {}), f"{where} [hotspot]")
     if not isinstance(hotspot.routing, bool):
         raise ConfigError(f"{where} [hotspot].routing must be true or false")
-    grip_data = data.get("grip", {})
+    if "grip" not in data:
+        raise ConfigError(f"{where}: the [grip] section (GRIP's api_base_url and token_url) is required")
+    grip_data = data["grip"]
     if not isinstance(grip_data, dict):
         raise ConfigError(f"{where} [grip]: expected a table")
     unknown = set(grip_data) - {"api_base_url", "token_url"}
     if unknown:
         raise ConfigError(f"{where} [grip]: unknown setting(s) {', '.join(sorted(unknown))}")
-    if bool(grip_data) and set(grip_data) != {"api_base_url", "token_url"}:
-        raise ConfigError(f"{where} [grip]: give both api_base_url and token_url, or leave the section out")
+    if set(grip_data) != {"api_base_url", "token_url"}:
+        raise ConfigError(f"{where} [grip]: give both api_base_url and token_url")
     updates = _section(UpdateSettings, data.get("updates", {}), f"{where} [updates]")
     if updates.channel not in ("dev", "pilot", "stable"):
         raise ConfigError(f"{where} [updates].channel must be dev, pilot or stable")
@@ -304,9 +302,8 @@ def load_site(path: Path) -> SiteConfig:
                                                           test_mode=test_mode)),
         hotspot=hotspot,
         grip=GripSettings(
-            check_url(grip_data.get("api_base_url", GRIP_API_BASE_URL), f"{where} [grip].api_base_url",
-                      test_mode=test_mode),
-            check_url(grip_data.get("token_url", GRIP_TOKEN_URL), f"{where} [grip].token_url", test_mode=test_mode)),
+            check_url(grip_data["api_base_url"], f"{where} [grip].api_base_url", test_mode=test_mode),
+            check_url(grip_data["token_url"], f"{where} [grip].token_url", test_mode=test_mode)),
     )
 
 
@@ -332,9 +329,8 @@ def check_url(url: object, where: str, *, test_mode: bool) -> str:
 CLIENT_ID = re.compile(r"[\x21-\x7e]{1,256}")  # printable, no spaces
 
 
-def load_routing(path: Path, *, test_mode: bool = False, grip: GripSettings | None = None) -> Routing:
+def load_routing(path: Path, *, grip: GripSettings, test_mode: bool = False) -> Routing:
     """The routing file. A dataset with no address of its own uses ``grip`` (the site's)."""
-    grip = grip or GripSettings()
     data = _read_toml(path)
     where = str(path)
     unknown = set(data) - {"projects"}

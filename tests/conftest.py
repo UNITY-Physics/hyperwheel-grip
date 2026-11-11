@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fakegrip import FakeGrip  # noqa: E402
 from fakes import FakeOrthanc  # noqa: E402
 
-from hyperwheel.config import Project, Routing, SiteConfig, UploadSettings  # noqa: E402
+from hyperwheel.config import GripSettings, Project, Routing, SiteConfig, UploadSettings  # noqa: E402
 from hyperwheel.keys import Credentials, KeyStore  # noqa: E402
 from hyperwheel.state import Store, Study  # noqa: E402
 from hyperwheel.uploader import Uploader  # noqa: E402
@@ -140,6 +140,7 @@ def env(tmp_path, fake):
         site="test", staging_dir=tmp_path / "stagingArea", state_db=tmp_path / "state.db", keys_dir=keys_dir,
         test_mode=True,
         upload=UploadSettings(chunk_bytes=1024 * 1024, timeout_s=5, attempts_per_call=3),
+        grip=GripSettings(fake.base_url, fake.token_url),
     )
     routing = Routing(projects={PROJECT: Project(PROJECT, ("sandbox",), fake.base_url, fake.token_url)})
     keys = KeyStore(keys_dir)

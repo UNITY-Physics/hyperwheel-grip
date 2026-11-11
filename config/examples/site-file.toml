@@ -36,10 +36,10 @@ update_channel = "stable"
 # lower case ("site_a/study_one" is "study_one"). A login that isn't listed is
 # never uploaded.
 
-# GRIP's address comes with the release, the same on every Pi. Only to use
-# another one for this site, uncomment both lines.
-# [grip]
-# api_base_url = "https://grip.example.org/api"
-# token_url = "https://grip.example.org/api/get/token"
+# GRIP's address for the site's region (required). GRIP gives it to your
+# Hyperwheel admin. It is never in the release or the public repository.
+[grip]
+api_base_url = "https://grip.example.org/api"
+token_url = "https://grip.example.org/api/get/token"
 
 # end of site file

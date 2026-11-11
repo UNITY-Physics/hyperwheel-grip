@@ -9,8 +9,8 @@ refuses to run once the Pi is set up. The steps:
    ``config/examples/site-file.toml``): the site name, time zone, Wi-Fi
    country, update channel, phantom Patient ID, and optionally which scanner
    logins go to which GRIP dataset (datasets are usually added after setup, with
-   ``hyperwheel datasets add``). GRIP's address is the release's, unless the
-   site file's ``[grip]`` gives another. It is checked and shown back to
+   ``hyperwheel datasets add``), and GRIP's address for the site's region
+   (``[grip]``, required: it is never in the release). It is checked and shown back to
    confirm, then written as ``site.toml`` and ``routing.toml``. Site settings
    already on the Pi are never overwritten.
 2. **The Pi's name, time zone and Wi-Fi country**, from the site file. The name
@@ -137,9 +137,10 @@ def render_site_toml(data: dict) -> str:
         "# sudo systemctl reload hyperwheel-firewall",
         f"routing = {'false' if data.get('hotspot_routing') is False else 'true'}",
         "",
-        *(["[grip]", "# GRIP's address for this site only, from the site file (every other Pi uses the release's).",
-           *(f"{key} = {_q(str(value))}" for key, value in data["grip"].items()), ""]
-          if isinstance(data.get("grip"), dict) and data["grip"] else []),
+        "[grip]",
+        "# GRIP's address for this site's region, from the site file. Never in the release.",
+        *(f"{key} = {_q(str(value))}" for key, value in data["grip"].items()),
+        "",
     ])
 
 
@@ -181,8 +182,9 @@ def parse_site_file(text: str, *, zoneinfo: Path) -> SiteFile:
     projects = data.get("projects", {})
     if not isinstance(projects, dict) or any(not isinstance(entry, dict) for entry in projects.values()):
         raise SetupError("each dataset must be a [projects.<name>] table")
-    if "grip" in data and not isinstance(data["grip"], dict):
-        raise SetupError("grip must be a [grip] table with api_base_url and token_url, or left out")
+    if not isinstance(data.get("grip"), dict) or set(data["grip"]) != {"api_base_url", "token_url"}:
+        raise SetupError("the site file needs a [grip] section with GRIP's api_base_url and token_url. "
+                         "Your Hyperwheel admin has them")
     site_toml, routing_toml = render_site_toml(data), render_routing_toml(projects)
     with tempfile.TemporaryDirectory() as tmp:
         site_path, routing_path = Path(tmp) / "site.toml", Path(tmp) / "routing.toml"

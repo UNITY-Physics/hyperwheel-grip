@@ -24,7 +24,8 @@ def broken_site(tmp_path):
     site.write_text('schema_version = 1\nsite = "site-a"\n'
                     f'staging_dir = "{tmp_path}/staging"\n'
                     f'state_db = "{tmp_path}/not-there/state.db"\n'  # a folder that doesn't exist
-                    f'keys_dir = "{tmp_path}/keys"\n')
+                    f'keys_dir = "{tmp_path}/keys"\n'
+                    '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n')
     routing = tmp_path / "routing.toml"
     routing.write_text("schema_version = 1\n")
     return ["--site", str(site), "--routing", str(routing)]
