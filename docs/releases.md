@@ -217,7 +217,8 @@ Connect key on it. The installer deletes any such key left on a Pi.
     plus OE2's three searches and its upload. Downloads (zip and DICOM files)
     stay on for both accounts, and each one is logged.
   - Both accounts can upload DICOM through OE2, for example from a laptop on
-    the hotspot: one file, or a zip of files, per request, up to 4 GB each,
+    the hotspot: one file, or a zip of files, per request, up to 500 MB each (a big study
+    goes up as separate files),
     only from OE2's own page. Each upload is logged. An uploaded study is
     routed by its login like a scanner exam: one whose login has no dataset is
     deleted on the Pi and never uploaded. Its raw data is fetched from the

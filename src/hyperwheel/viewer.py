@@ -68,8 +68,9 @@ LOGIN = "/hyperwheel/sign-in"
 LOGOUT = "/hyperwheel/sign-out"
 MAX_PASSWORD = 128
 MAX_POST_BODY = 64 * 1024
-# One upload request: a DICOM file, or a zip of a study. Larger ones are refused before anything is read.
-MAX_UPLOAD_BYTES = 4 * 1024 ** 3
+# One upload request: a DICOM file, or a zip of files. Orthanc holds a request in memory, so a big study
+# goes up as separate files. Larger requests are refused before anything is read.
+MAX_UPLOAD_BYTES = 500 * 1024 ** 2
 UPLOAD = "/instances"
 FIRST_WAIT_S, LONGEST_WAIT_S = 1.0, 30.0
 CHECK_QUEUE_S = 5.0
@@ -369,8 +370,8 @@ class Viewer:
                     length = -1
                 if self.headers.get("Transfer-Encoding") or not 0 < length <= MAX_UPLOAD_BYTES:
                     self.close_connection = True
-                    return self._send(413, f"Upload one file of at most {MAX_UPLOAD_BYTES // 1024 ** 3} GB "
-                                           "at a time.".encode())
+                    return self._send(413, f"Upload at most {MAX_UPLOAD_BYTES // 1024 ** 2} MB at a time. "
+                                           "Send a big study as separate files.".encode())
                 self._forward(account, upload=length)
 
             def _sign_in(self):

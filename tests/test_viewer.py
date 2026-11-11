@@ -353,9 +353,10 @@ def test_an_upload_from_another_sites_page_or_too_big_never_reaches_orthanc(site
     before = len(orthanc.requests)
     r, _ = call(port, "POST", "/instances", body=b"DICM", headers={**cookie, "Origin": "https://elsewhere.example"})
     assert r.status == 403
+    assert viewer.MAX_UPLOAD_BYTES == 500 * 1024 ** 2
     monkeypatch.setattr(viewer, "MAX_UPLOAD_BYTES", 10)
     r, data = call(port, "POST", "/instances", body=b"x" * 11, headers=cookie)
-    assert r.status == 413 and b"Upload one file" in data
+    assert r.status == 413 and b"Upload at most" in data
     r, _ = call(port, "POST", "/instances", body=b"", headers=cookie)
     assert r.status == 413
     assert len(orthanc.requests) == before
