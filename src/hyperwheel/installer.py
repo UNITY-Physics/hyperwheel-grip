@@ -20,7 +20,11 @@ The same steps are used to build the image (release 1 pre-loaded, with
    (``/etc/sudoers.d/hyperwheel``, checked with ``visudo`` before it's put in
    place), which belong to the release.
 6. Site settings and secrets in ``/etc/hyperwheel``: added from ``--site-setup``
-   only where missing, never overwritten, reset, printed or logged.
+   only where missing, never overwritten, reset, printed or logged. Releases
+   before 0.1.17 had GRIP's address built in: a Pi whose ``site.toml`` has no
+   ``[grip]`` gets the address its current release uses added to it, and
+   nothing else in the file changes. If there's none to copy, the install
+   stops before anything is switched.
 7. ``current`` switched to the new release (``previous`` kept), services
    restarted, and a health check.
 
@@ -34,6 +38,7 @@ boot (``firstboot``), and units are only enabled.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import pwd
@@ -43,6 +48,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -154,6 +160,7 @@ class Installer:
         except ReleaseError as e:
             raise InstallError(f"the release can't be used: {e}") from None
         self.say(f"Release {manifest.version} ({manifest.channel}), signed by {signer}: checked.")
+        self._grip_to_add()  # stops here, before anything changes, if GRIP's address can't be kept
         self.service_account()
         self.debs()
         target = self.copy_release(manifest)
@@ -313,6 +320,8 @@ class Installer:
             added.append("orthanc.json (new Orthanc login)")
         if not self.image and self.viewer_certificate():
             added.append("viewer (new certificate for Orthanc Explorer 2)")
+        if self.grip_address():
+            added.append("site.toml ([grip], the GRIP address this Pi already used)")
         link = self.layout.orthanc_conf / "hyperwheel.json"
         if link.is_symlink() or link.exists():
             link.unlink()
@@ -330,6 +339,40 @@ class Installer:
         if not configured:
             self.say("This Pi isn't set up yet (no site.toml or routing.toml): Hyperwheel won't start until it is.")
         return configured
+
+    def grip_address(self) -> bool:
+        """GRIP's address into site.toml if it has none, from the release this Pi runs now (releases before 0.1.17
+        had it built in). Only a [grip] section is added at the end: nothing else in the file changes. Returns True
+        if it was added."""
+        missing = self._grip_to_add()
+        if missing is None:
+            return False
+        text, (api, token) = missing
+        self._write_secret(self.layout.etc / "site.toml", text.rstrip("\n") + "\n\n[grip]\n"
+                           "# GRIP's address for this site's region, kept from the release this Pi ran before 0.1.17\n"
+                           f"api_base_url = {json.dumps(api)}\ntoken_url = {json.dumps(token)}\n", mode=0o644)
+        return True
+
+    def _grip_to_add(self) -> tuple[str, tuple[str, str]] | None:
+        """site.toml's text and the address to add to it, or None if there's nothing to add. Raises InstallError if
+        site.toml has no GRIP address and there's none to copy (checked first, so the install stops before
+        anything changes)."""
+        site = self.layout.etc / "site.toml"
+        if not site.is_file():
+            return None
+        text = site.read_text()
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            return None  # left as it is: the health check reports it, and the update is rolled back
+        if "grip" in data:
+            return None
+        found = release_grip_address(self.layout.current)
+        if found is None:
+            raise InstallError("site.toml has no [grip] section with GRIP's address, and the release this Pi runs "
+                               "now has none to copy. Add [grip] with api_base_url and token_url to "
+                               "/etc/hyperwheel/site.toml, then install again")
+        return text, found
 
     def orthanc_login(self) -> bool:
         """Orthanc's login: made once and never changed by an update. Returns True if it was made now."""
@@ -469,6 +512,25 @@ class Installer:
 # them straight away. They're
 # never downgraded, so a rollback to a release with older ones keeps the newer.
 OS_PACKAGES = frozenset({"libssl3t64", "openssl", "libssl-dev", "openssl-provider-legacy"})
+
+
+def release_grip_address(release: Path) -> tuple[str, str] | None:
+    """The GRIP address an installed release had built in (GRIP_API_BASE_URL and GRIP_TOKEN_URL in its config.py,
+    releases 0.1.16 and before), read without running any of its code. None if it has none."""
+    for config in sorted(release.glob("venv/lib/python3*/site-packages/hyperwheel/config.py")):
+        try:
+            tree = ast.parse(config.read_text())
+        except (OSError, SyntaxError, ValueError):
+            continue
+        values = {}
+        for node in tree.body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+                values[node.targets[0].id] = node.value.value
+        api, token = values.get("GRIP_API_BASE_URL"), values.get("GRIP_TOKEN_URL")
+        if api and token and api.startswith("https://") and token.startswith("https://"):
+            return api, token
+    return None
 
 
 def plan_debs(folder: Path, run: Callable[..., str]) -> tuple[list[str], list[str]]:

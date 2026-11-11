@@ -38,7 +38,7 @@ _STATE_TEXT = {
     "receiving": "Receiving images",
     "stable": "Checking",
     "checking": "Checking",
-    "held": "Held: needs a data manager",
+    "held": "Held for a check. Ask your Hyperwheel admin.",
     "ready": "Waiting to upload",
     "uploading": "Uploading",
     "uploaded": "On GRIP",
@@ -111,7 +111,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
     resent = any(s.stable_at is None and now - s.updated_at <= STUCK_S for s in store.studies(states=("unrouted",)))
     studies = [s for s in store.studies() if s.state not in _HIDDEN]
     cards, receiving, fetching = [], resent, False
-    stuck = False  # something of a shown session isn't on GRIP and won't go without a person (refused, or held)
+    stuck = False  # something of a shown session isn't on GRIP and isn't waiting to upload (refused, or held)
     for s in sorted(studies, key=lambda s: (s.study_date or "", s.study_time or ""), reverse=True):
         project = routing.label(s.project) if s.project else _routed_project(routing, s.operators_name)
         if project is None and s.state in ("receiving", "stable"):
@@ -201,18 +201,19 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         sub = f"Everything from the scanner is on the Pi. {files} still to upload. {keep_on}"
     elif stuck:
         headline = "Not everything is on GRIP"
-        sub = ("Everything that can upload is on GRIP. Some files were refused by GRIP or are held for a check, "
-               "and need your Hyperwheel admin. You can switch the scanner off.")
+        sub = ("Everything that can upload is on GRIP. GRIP refused some files, or some are held for a check. "
+               "Refused files are tried again once a day. If they stay, ask your Hyperwheel admin. "
+               "You can switch the scanner off.")
     else:
         headline, sub = "Everything is on GRIP", "Nothing is waiting on the Pi."
     on_pi_complete = running and not receiving and not fetching
-    # Safe once everything that can upload is on GRIP. Green only if that's everything: files left that only a
-    # person can move on (refused, or held for a check) get a badge of their own.
+    # Safe once everything that can upload is on GRIP. Green only if that's everything: refused files (tried
+    # again once a day) and sessions held for a check get a badge of their own.
     safe = on_pi_complete and not pending
     if safe and not stuck:
         badge, badge_style = "Everything is on GRIP: safe to switch off", "yes"
     elif safe:
-        badge, badge_style = "Safe to switch off. Some files need your Hyperwheel admin.", "admin"
+        badge, badge_style = "Safe to switch off. Some files are not on GRIP. Ask your Hyperwheel admin if they stay.", "admin"
     elif scanner_down and not on_pi_complete:
         badge, badge_style = "Waiting for the scanner", "no"
     else:

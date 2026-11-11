@@ -50,3 +50,9 @@ channel = "stable"           # dev on the dev Pi, pilot at the pilot site, stabl
 [disk]
 warn_free_gb = 10
 stop_free_gb = 4
+
+[grip]
+# GRIP's address for this site's region (required). GRIP keeps its addresses out
+# of this repository: your Hyperwheel admin puts the real one in the site file.
+api_base_url = "https://grip.example.org/api"
+token_url = "https://grip.example.org/api/get/token"

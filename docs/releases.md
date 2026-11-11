@@ -243,9 +243,9 @@ up, setup refuses to run, and the sudo rule no longer lists it.
    `config/examples/site-file.toml`: the site name, time zone, Wi-Fi country,
    update channel and phantom Patient ID. Which scanner logins go to which
    GRIP dataset is optional: datasets are usually added after setup, with
-   `hyperwheel datasets add`. GRIP's address comes with the release, so the
-   site file needs none (its `[grip]` section can override it for one site).
-   No keys or passwords are in it. Setup asks for it to be
+   `hyperwheel datasets add`. GRIP's address for the site's region goes in
+   its `[grip]` section, which is required (setup refuses a site file
+   without it). No keys or passwords are in it. Setup asks for it to be
    pasted (it ends with the line `# end of site file`), checks it, shows it
    back and writes `site.toml` and `routing.toml` once it is confirmed. Site
    settings already on the Pi are never overwritten.
@@ -331,15 +331,19 @@ one GRIP gives with its key (for example `site-a-study-one`): that's the name
 that can't be a folder name gets a safe one made from it, which people never
 need to see.
 
-GRIP's address is the same for every dataset and every Pi: it comes with the
-release (for now GRIP's test gateway, then production's once GRIP sends it,
-reaching every Pi as a normal update). A site file's `[grip]` section can give
-another for one site, just in case. `hyperwheel doctor` shows the address a Pi
-uses. Nobody types it. On a Pi set up before 0.1.16, each dataset still has
-GRIP's address in its own entry. The first `hyperwheel datasets` change drops
-that entry's address if it's the site's, and from then on the dataset follows
-the site's. An entry whose address differs keeps it (doctor lists it), so
-before the release that changes the default, check those Pis.
+GRIP has one fixed address per region (data residency), the same for every
+dataset at a site. GRIP keeps its addresses out of public code, so none is in
+a release or in this repository: each site's address is in its site file's
+`[grip]` section, and from there in the Pi's `site.toml`. `hyperwheel doctor`
+shows the address a Pi uses. Nobody types it. Releases up to 0.1.16 had the
+address built in. When a Pi whose `site.toml` has no `[grip]` updates, the
+installer adds the address its current release uses, at the end of the file,
+and changes nothing else. If the current release has none to copy (0.1.15 and
+before), the install stops before anything changes, and the Pi stays on its
+release. On a Pi set up before 0.1.16, each dataset still has GRIP's address
+in its own entry. The first `hyperwheel datasets` change drops that entry's
+address if it's the site's, and from then on the dataset follows the site's.
+An entry whose address differs keeps it (doctor lists it).
 
 Each site's data managers own their datasets and keys, and manage them through
 the **data-manager account**, which can run only the dataset, scanner-password

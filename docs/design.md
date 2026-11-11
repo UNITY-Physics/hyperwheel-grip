@@ -13,8 +13,8 @@ project. A local file is deleted only once GRIP has confirmed it.
   `complete: true`. Anything else keeps the file.
 - **Routing on the Pi.** The part of `OperatorsName` after the last `/` picks
   the GRIP dataset (a "project" in the code) and its key (one key per
-  dataset, named by its client ID). GRIP's address is the site's: the
-  release's default unless the site file gives one. A login with no routing
+  dataset, named by its client ID). GRIP's address is the site's (one per
+  region), from the site file: it's never in the release. A login with no routing
   entry is never uploaded: its DICOM is deleted on the Pi and its raw files
   are never pulled from the scanner. Data managers change the datasets with
   `hyperwheel datasets`.
@@ -76,9 +76,10 @@ separate read-only service (`hyperwheel dashboard`):
 The Upload Monitor tells operators it is safe to switch the scanner off only
 once everything is on GRIP. Until then it says "Please keep the scanner on":
 the Pi reaches the internet through the scanner, and it isn't meant to keep
-data. When everything that can upload is on GRIP and only files that need a
-person are left (refused by GRIP, or held for a check), it says "Safe to switch
-off. Some files need your Hyperwheel admin.", not in green. (An old
+data. When everything that can upload is on GRIP and only refused files
+(tried again once a day) or sessions held for a check are left, it says "Safe
+to switch off. Some files are not on GRIP. Ask your Hyperwheel admin if they
+stay.", not in green. (An old
 `[dashboard] leave_on_after_hours` setting is ignored.)
 
 The local loop (Orthanc, scanner, housekeeping) and the upload loop run
@@ -103,7 +104,11 @@ file sends it back to `uploading`.
 
 File: `staged`/`pulled → sending → confirmed → deleted`, with `retry_wait`
 (timeouts, 5xx, 429) and `refused` (other 4xx and STOW failure reasons: kept
-and flagged). A raw file listed on the scanner but not fetched yet is `seen`.
+and flagged). A file GRIP refused is tried again once a day, since most
+refusals are something GRIP fixes on its side: if GRIP takes it, it goes up
+and its flag clears, and if not, it stays refused and flagged. A problem with
+the Pi's own copy (missing, changed or empty) isn't tried again. A raw file
+listed on the scanner but not fetched yet is `seen`.
 
 ## Upload order and retries
 

@@ -139,6 +139,9 @@ state_db = "/tmp/x.db"
 keys_dir = "/tmp/keys"
 [hotspot]
 routing = false
+[grip]
+api_base_url = "https://grip.example.org/api"
+token_url = "https://grip.example.org/api/get/token"
 TOML
 python3 -c "import sys; from pathlib import Path; from hyperwheel import firewall
 sys.exit(firewall.main(['--print'], site_toml=Path('$site/site.toml')))" | ns hw-pi nft -f -

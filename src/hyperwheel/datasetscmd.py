@@ -14,8 +14,7 @@ Hyperwheel runs itself again through sudo (see ``cli``), and the sudo rule
 account run ``list`` without a password and the other three with its own.
 
 A scanner login belongs to at most one dataset. GRIP's address is the site's
-(``[grip]`` in ``site.toml``, the release's default unless the site file gave
-one), so it's never asked for. Every key is checked with GRIP **before**
+(``[grip]`` in ``site.toml``, from the site file), so it's never asked for. Every key is checked with GRIP **before**
 anything is saved: a key GRIP refuses, or one that can't be checked because
 GRIP can't be reached, is never saved. The routing file is checked, then
 replaced in one step. After a change, Hyperwheel and the Upload Monitor restart
