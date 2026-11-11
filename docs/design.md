@@ -76,9 +76,10 @@ separate read-only service (`hyperwheel dashboard`):
 The Upload Monitor tells operators it is safe to switch the scanner off only
 once everything is on GRIP. Until then it says "Please keep the scanner on":
 the Pi reaches the internet through the scanner, and it isn't meant to keep
-data. When everything that can upload is on GRIP and only files that need a
-person are left (refused by GRIP, or held for a check), it says "Safe to switch
-off. Some files need your Hyperwheel admin.", not in green. (An old
+data. When everything that can upload is on GRIP and only refused files
+(tried again once a day) or sessions held for a check are left, it says "Safe
+to switch off. Some files are not on GRIP. Ask your Hyperwheel admin if they
+stay.", not in green. (An old
 `[dashboard] leave_on_after_hours` setting is ignored.)
 
 The local loop (Orthanc, scanner, housekeeping) and the upload loop run
