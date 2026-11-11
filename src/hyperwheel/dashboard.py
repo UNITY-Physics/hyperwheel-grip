@@ -105,8 +105,11 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         from .updater import Paths, hold_text
         update_hold = lambda: hold_text(Paths())  # noqa: E731
     free_bytes = free_bytes or (lambda p: shutil.disk_usage(p).free)
+    # A session sent again after it was deleted on the Pi waits, hidden, until Orthanc says it's complete: it's
+    # still arriving, so the page mustn't say it's safe to switch off.
+    resent = any(s.state == "unrouted" and s.stable_at is None for s in store.studies(states=("unrouted",)))
     studies = [s for s in store.studies() if s.state not in _HIDDEN]
-    cards, receiving, fetching = [], False, False
+    cards, receiving, fetching = [], resent, False
     for s in sorted(studies, key=lambda s: (s.study_date or "", s.study_time or ""), reverse=True):
         project = routing.label(s.project) if s.project else _routed_project(routing, s.operators_name)
         if project is None and s.state in ("receiving", "stable"):

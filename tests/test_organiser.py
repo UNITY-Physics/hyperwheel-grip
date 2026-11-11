@@ -244,6 +244,7 @@ def test_a_study_deleted_before_its_login_had_a_dataset_goes_through_when_sent_a
     study = env.store.study_by_uid(uid)
     assert study.state == "ready" and study.project == "SiteA-Later" and study.patient_id == PATIENT_ID
     assert len(env.store.files(study.id, kind="dicom")) == 3
+    assert "SENT_AGAIN" in codes(env, study)  # only what was sent again goes up: check it's complete
     organiser(env).housekeeping()
     assert env.store.study_by_uid(uid).state == "ready"  # not purged again
 

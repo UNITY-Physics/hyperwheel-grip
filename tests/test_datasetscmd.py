@@ -60,7 +60,7 @@ class Pi:
         self.restarts, self.service = [], []
         env.fake.clients[NEW_CLIENT] = NEW_SECRET
 
-    def run(self, action, typed, *, check=check_with_grip, root=True, active=False, restart=None):
+    def run(self, action, typed, *, check=check_with_grip, root=True, active=True, restart=None):
         return main(self.site, [action], routing_path=self.routing_path, console=typed.console(), keys=self.env.keys,
                     check=check, restart=restart or (lambda: self.restarts.append(1) or "Hyperwheel was restarted."),
                     is_root=lambda: root, service_active=lambda: active,
@@ -747,7 +747,7 @@ def test_a_held_session_with_everything_staged_on_grip_still_needs_delete_them(p
     env.store.move_study(study.id, "held")  # images from another login came in, never staged
     typed = Scripted(answers=["1", PROJECT, ""])
     assert pi.run("remove", typed) == 1
-    assert "(0 files on this Pi not uploaded, and some held for a check" in typed.text
+    assert "(0 files on this Pi not uploaded, and some held or still receiving" in typed.text
     assert PROJECT in pi.routing().projects and env.store.study(study.id).state == "held"
 
 
@@ -760,3 +760,52 @@ def test_unassigned_raw_files_of_its_sessions_are_said_and_kept(pi, env):
     assert pi.run("remove", typed) == 0
     assert "1 raw file of its sessions is on this Pi, held because the Pi couldn't tell which session" in typed.text
     assert env.store.file(kept.id).state == "unassigned"
+
+
+def test_a_session_back_to_receiving_long_ago_still_needs_delete_them(pi, env):
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    f = env.store.files(study.id)[0]
+    env.store.move_file(f.id, "sending")
+    env.store.move_file(f.id, "confirmed")
+    env.store.move_study(study.id, "uploading")
+    env.store.move_study(study.id, "uploaded")
+    env.store.move_study(study.id, "receiving")  # an image came, and Orthanc never said it was complete
+    env.store._db.execute("UPDATE studies SET updated_at = updated_at - 7200 WHERE id = ?", (study.id,))
+    typed = Scripted(answers=["1", PROJECT, ""])
+    assert pi.run("remove", typed) == 1 and "some held or still receiving" in typed.text
+    assert PROJECT in pi.routing().projects
+
+
+def test_remove_refuses_while_hyperwheel_isnt_running(pi, env):
+    typed = Scripted(answers=["1", PROJECT])
+    assert pi.run("remove", typed, active=False) == 1
+    assert "Hyperwheel isn't running, so this Pi may have scans it hasn't looked at yet." in typed.text
+    assert PROJECT in pi.routing().projects and typed.prompts == ["Which dataset do you want to remove? Type its "
+                                                                  "number (or press Enter to stop): "]
+
+
+def test_the_key_goes_only_after_the_routing_entry(pi, env, monkeypatch):
+    from hyperwheel import datasetscmd
+    real = datasetscmd.os.replace
+
+    def failing(src, dst):
+        if str(dst).endswith("routing.toml"):
+            raise OSError(28, "No space left on device")
+        return real(src, dst)
+    monkeypatch.setattr(datasetscmd.os, "replace", failing)
+    typed = Scripted(answers=["1", PROJECT])
+    assert pi.run("remove", typed) == 1 and "To finish, type: hyperwheel datasets remove" in typed.text
+    assert env.keys.path(PROJECT).exists() and PROJECT in pi.routing().projects
+
+
+def test_changing_logins_cant_be_interrupted_part_way(pi, env, monkeypatch):
+    import signal
+    from hyperwheel import datasetscmd
+    seen, real = [], datasetscmd.Datasets._write
+
+    def probe(self, projects, **kw):
+        seen.append(signal.getsignal(signal.SIGINT))
+        return real(self, projects, **kw)
+    monkeypatch.setattr(datasetscmd.Datasets, "_write", probe)
+    assert pi.run("change", Scripted(answers=["1", "1", "sandbox", "extra", ""])) == 0
+    assert seen == [signal.SIG_IGN]

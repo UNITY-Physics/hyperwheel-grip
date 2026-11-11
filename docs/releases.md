@@ -360,7 +360,9 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   receiving images for one of its sessions, it waits (try again once the
   Upload Monitor no longer says it's receiving). Images that reach the Pi
   during the removal itself are treated like scans from a login with no
-  dataset: deleted on the Pi (the scanner keeps them). If any of its sessions would be deleted on the Pi
+  dataset: deleted on the Pi (the scanner keeps them). It refuses while
+  Hyperwheel isn't running, since the Pi may then have scans it hasn't looked
+  at yet. If any of its sessions would be deleted on the Pi
   (not all on GRIP: files waiting or refused, or a session held for a check),
   it says how many and stops unless the person also types `delete them`. Raw
   files of its sessions held as unassigned stay on the Pi, flagged, and it
@@ -374,7 +376,9 @@ datasets are optional). The SOP has a page for each step, with screenshots.
   nothing and say to try again in a few minutes.
 - A session deleted on the Pi because its login had no dataset (or its
   dataset was removed) goes through as a new one if the scanner sends it again
-  once its login has a dataset.
+  once its login has a dataset. Only what the scanner sent again is uploaded,
+  so it's flagged to check it's complete on GRIP. While it arrives, the
+  Upload Monitor says it's receiving.
 
 Every command asks for the data-manager password (except `list`). The secret
 is typed hidden and never shown, logged or put on a command line. Pressing

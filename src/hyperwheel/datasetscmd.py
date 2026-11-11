@@ -61,6 +61,8 @@ CURRENT = Path("/opt/hyperwheel/current")
 # An update check still running this soon after the release switched may be checking it, and may roll back.
 SETTLING_S = 30 * 60
 STUCK_S = 3600  # as the organiser's
+# Session states whose newest images may be in Orthanc but not staged on the Pi yet.
+_MAY_HAVE_UNSTAGED = ("receiving", "stable", "checking", "held")
 STATUS_TEXT = {
     "working": "working",
     "rejected": "refused by GRIP (wrong, revoked or disabled). Uploads for this dataset are paused",
@@ -561,6 +563,9 @@ class Datasets:
             raise Stop("There are no GRIP datasets on this Pi, so there's none to remove.")
         project = self._pick(routing, "remove")
         label, logins = project.label, ", ".join(project.logins)
+        if not self.service_active():
+            raise Stop("Hyperwheel isn't running, so this Pi may have scans it hasn't looked at yet. Nothing was "
+                       "changed. Ask your Hyperwheel admin.")
         # Counted with the upload service running, so nothing pauses while the questions wait for an answer.
         arriving, drop, _, not_on_grip, on_scanner, unassigned = self._look(project)
         if arriving:
@@ -571,13 +576,15 @@ class Datasets:
                    "What's already on GRIP stays there.")
         if self.c.ask(f"To remove it, type its name ({label}): ").strip() != label:
             raise Cancelled()
-        asked = [(s, m) for s, m in drop if m or s.state == "held"]  # all its files on GRIP: nothing to ask
+        # Only a session on its way up with all its files on GRIP is cleared without asking. Any other may have
+        # images in Orthanc that were never staged (held, or back to receiving).
+        asked = [(s, m) for s, m in drop if m or s.state in _MAY_HAVE_UNSTAGED]
         if asked:
             k, n = len(asked), len(not_on_grip)
             self.c.say(f"{k} session{'s' if k != 1 else ''} of {label} {'are' if k != 1 else 'is'} not all on GRIP "
                        f"yet ({n} file{'s' if n != 1 else ''} on this Pi not uploaded"
-                       + (", and some held for a check, whose images may not all be counted" if
-                          any(s.state == "held" for s, _ in asked) else "")
+                       + (", and some held or still receiving, whose images may not all be counted" if
+                          any(s.state in _MAY_HAVE_UNSTAGED for s, _ in asked) else "")
                        + f"). If you go on, {'they are' if k != 1 else 'it is'} deleted on this Pi and in Orthanc, "
                        "and what isn't uploaded never reaches GRIP.")
             if self.c.ask("To delete them, type delete them: ").strip().lower() != "delete them":

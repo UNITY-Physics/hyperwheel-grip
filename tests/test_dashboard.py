@@ -349,3 +349,10 @@ def test_a_dataset_is_shown_by_its_client_id(env):
     s = snap(env)
     assert [c["project"] for c in s["studies"]] == ["unity/site-a-sandbox", "unity/site-a-sandbox"]
     assert s["keys"][0]["project"] == "unity/site-a-sandbox"
+
+
+def test_a_session_sent_again_and_still_arriving_keeps_the_scanner_on(env):
+    env.store.set_cursor(HEARTBEAT, int(env.clock()))
+    env.store.add_study("1.2.70", state="unrouted", stable_at=None, operators_name="site_a/sandbox")
+    s = snap(env)
+    assert not s["on_pi_complete"] and s["headline"] == "Receiving images from the scanner" and s["studies"] == []

@@ -175,6 +175,9 @@ class Organiser:
                                           patient_birth_date=first.patient_birth_date,
                                           operators_name=first.operators_name)
             self.store.clear_study_flags(study.id, ["ROUTING_CHANGED"])
+            self.store.raise_flag("SENT_AGAIN", "Sent again after it was deleted on this Pi, so only what the "
+                                  "scanner sent again is uploaded. Check it is complete on GRIP.", study_id=study.id,
+                                  level="flag")
             log.info("study %s: sent again, and its login now goes to %s", uid, project.name)
 
         if study.project is None:
