@@ -146,7 +146,10 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
             "flags": [{"level": f.level, "text": f.detail} for f in flags],
         })
 
-    pending_files = store.files(states=PENDING_FILE_STATES)
+    # Files that can still upload by themselves. Those of a session held for a check wait for a person, like a
+    # refused file (both count as "stuck" above).
+    held_ids = {s.id for s in studies if s.state == "held"}
+    pending_files = [f for f in store.files(states=PENDING_FILE_STATES) if f.study_id not in held_ids]
     pending = len(pending_files)
     general = [{"level": f.level, "text": f.detail} for f in store.open_flags() if f.study_id is None]
     if held := update_hold():
@@ -198,18 +201,22 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         sub = f"Everything from the scanner is on the Pi. {files} still to upload. {keep_on}"
     elif stuck:
         headline = "Not everything is on GRIP"
-        sub = ("Some files were refused by GRIP or are held for a check, and need your Hyperwheel admin. "
-               f"{keep_on}")
+        sub = ("Everything that can upload is on GRIP. Some files were refused by GRIP or are held for a check, "
+               "and need your Hyperwheel admin. You can switch the scanner off.")
     else:
         headline, sub = "Everything is on GRIP", "Nothing is waiting on the Pi."
     on_pi_complete = running and not receiving and not fetching
-    safe = on_pi_complete and not pending and not stuck
-    if safe:
-        badge = "Everything is on GRIP: safe to switch off"
+    # Safe once everything that can upload is on GRIP. Green only if that's everything: files left that only a
+    # person can move on (refused, or held for a check) get a badge of their own.
+    safe = on_pi_complete and not pending
+    if safe and not stuck:
+        badge, badge_style = "Everything is on GRIP: safe to switch off", "yes"
+    elif safe:
+        badge, badge_style = "Safe to switch off. Some files need your Hyperwheel admin.", "admin"
     elif scanner_down and not on_pi_complete:
-        badge = "Waiting for the scanner"
+        badge, badge_style = "Waiting for the scanner", "no"
     else:
-        badge = "Please keep the scanner on"
+        badge, badge_style = "Please keep the scanner on", "no"
 
     keys = []
     for name, dataset in routing.projects.items():
@@ -227,6 +234,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         "subline": sub,
         "on_pi_complete": on_pi_complete,
         "safe_to_switch_off": safe,
+        "badge_style": badge_style,
         "badge": badge,
         "attention": attention,
         "general": general,
@@ -376,6 +384,7 @@ PAGE = """<!doctype html>
   .sub { color:var(--sub); margin:0; }
   .safe { display:inline-block; margin-top:12px; padding:6px 12px; border-radius:8px; font-weight:600; }
   .safe.yes { background:#e3f5e8; color:var(--ok); } .safe.no { background:#fff1e0; color:var(--warn); }
+  .safe.admin { background:#e6f0fb; color:var(--blue); }
   h2 { font-size:15px; text-transform:uppercase; letter-spacing:.4px; color:var(--sub); margin:24px 4px 8px; }
   .flag { padding:10px 12px; border-radius:8px; margin-top:8px; background:#f5f5f7; }
   .flag.hold, .flag.alert { background:#ffeceb; color:#8a1010; }
@@ -429,7 +438,7 @@ function render(s) {
   document.getElementById("subline").textContent = s.subline;
   const safe = document.getElementById("safe");
   safe.hidden = false;
-  safe.className = "safe " + (s.safe_to_switch_off ? "yes" : "no");
+  safe.className = "safe " + (s.badge_style || (s.safe_to_switch_off ? "yes" : "no"));
   safe.textContent = s.badge;
   const general = document.getElementById("general");
   general.replaceChildren();

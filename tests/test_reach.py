@@ -153,17 +153,28 @@ def test_keep_the_scanner_on_shows_once(env):
     assert s["badge"] == "Please keep the scanner on"
 
 
-def test_a_refused_file_or_a_held_session_is_never_safe_to_switch_off(env):
+def test_only_refused_or_held_files_left_is_safe_with_a_badge_of_its_own(env):
     study = env.store.add_study("1.2.90", state="uploading", project="SiteA-Sandbox", raw_checked_at=env.clock())
     f = env.store.add_file(kind="dicom", name="a.dcm", state="staged", study_id=study.id, sop_uid="1.2.90.1")
     env.store.move_file(f.id, "sending")
     env.store.move_file(f.id, "refused")
     s = snap(env)
-    assert not s["safe_to_switch_off"] and s["badge"] == "Please keep the scanner on"
-    assert s["headline"] == "Not everything is on GRIP" and "your Hyperwheel admin" in s["subline"]
-    env2_study = env.store.add_study("1.2.91", state="held", project="SiteA-Sandbox")  # mixed logins: nothing staged
-    assert env.store.files(env2_study.id) == []
-    assert not snap(env)["safe_to_switch_off"]
+    assert s["safe_to_switch_off"] and s["badge_style"] == "admin"
+    assert s["badge"] == "Safe to switch off. Some files need your Hyperwheel admin."
+    assert s["headline"] == "Not everything is on GRIP" and ";" not in s["subline"]
+    held = env.store.add_study("1.2.91", state="held", project="SiteA-Sandbox")  # mixed logins
+    env.store.add_file(kind="dicom", name="b.dcm", state="staged", study_id=held.id, sop_uid="1.2.91.1")
+    s = snap(env)
+    assert s["badge_style"] == "admin" and s["safe_to_switch_off"]  # its staged file waits for a person too
+    other = env.store.add_study("1.2.92", state="ready", project="SiteA-Sandbox", raw_checked_at=env.clock())
+    env.store.add_file(kind="dicom", name="c.dcm", state="staged", study_id=other.id, sop_uid="1.2.92.1")
+    s = snap(env)  # a file that can still upload: keep the scanner on
+    assert not s["safe_to_switch_off"] and s["badge"] == "Please keep the scanner on" and s["badge_style"] == "no"
+
+
+def test_everything_on_grip_is_the_green_badge(env):
+    s = snap(env)
+    assert s["badge_style"] == "yes" and s["badge"] == "Everything is on GRIP: safe to switch off"
 
 
 def test_a_site_file_that_still_sets_leave_on_after_hours_loads(tmp_path):
