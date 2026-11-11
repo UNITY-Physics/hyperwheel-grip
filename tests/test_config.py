@@ -2,12 +2,18 @@ from pathlib import Path
 
 import pytest
 
-from hyperwheel.config import GRIP_API_BASE_URL, GRIP_TOKEN_URL, ConfigError, GripSettings, load_routing, load_site
+from hyperwheel.config import ConfigError, GripSettings, load_routing, load_site
 
 EXAMPLES = Path(__file__).parent.parent / "config" / "examples"
+# A made-up GRIP address: GRIP's real ones are never in the repository.
+GRIP = '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n'
+EXAMPLE_GRIP = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token")
 
 
-def write(tmp_path, text, name="f.toml"):
+def write(tmp_path, text, name="f.toml", *, grip=True):
+    """A settings file. A site file gets the made-up GRIP address unless it gives its own, or grip=False."""
+    if grip and "keys_dir" in text and "[grip]" not in text:
+        text = text.rstrip("\n") + "\n" + GRIP
     p = tmp_path / name
     p.write_text(text)
     return p
@@ -17,11 +23,11 @@ def test_examples_load():
     site = load_site(EXAMPLES / "site.toml")
     assert site.upload.chunk_bytes == 8 * 1024 * 1024
     assert site.phantom_patient_id is None and site.test_mode is False
-    assert site.grip == GripSettings(GRIP_API_BASE_URL, GRIP_TOKEN_URL)  # the release's GRIP address
+    assert site.grip == EXAMPLE_GRIP
     routing = load_routing(EXAMPLES / "routing.toml", grip=site.grip)
     dataset = routing.project_for_login("example")
     assert dataset.name == "site-a-study-one" and dataset.label == "site-a-study-one"
-    assert dataset.api_base_url == GRIP_API_BASE_URL and dataset.token_url == GRIP_TOKEN_URL
+    assert dataset.api_base_url == EXAMPLE_GRIP.api_base_url and dataset.token_url == EXAMPLE_GRIP.token_url
     assert routing.project_for_login("clinical") is None
 
 
@@ -74,16 +80,16 @@ token_url = "{token}"
 
 def test_routing_requires_https_unless_local_test_mode(tmp_path):
     good = ROUTING.format(api="https://grip.example.org/api", token="https://grip.example.org/api/get/token")
-    assert load_routing(write(tmp_path, good)).projects["StudyX-SiteB"].logins == ("studyx",)
+    assert load_routing(write(tmp_path, good), grip=EXAMPLE_GRIP).projects["StudyX-SiteB"].logins == ("studyx",)
 
     local = ROUTING.format(api="http://127.0.0.1:8080/api", token="http://127.0.0.1:8080/api/get/token")
     with pytest.raises(ConfigError, match="https"):
-        load_routing(write(tmp_path, local))
-    assert load_routing(write(tmp_path, local), test_mode=True)
+        load_routing(write(tmp_path, local), grip=EXAMPLE_GRIP)
+    assert load_routing(write(tmp_path, local), grip=EXAMPLE_GRIP, test_mode=True)
 
     remote_http = ROUTING.format(api="http://grip.example.org/api", token="https://grip.example.org/t")
     with pytest.raises(ConfigError, match="https"):
-        load_routing(write(tmp_path, remote_http), test_mode=True)
+        load_routing(write(tmp_path, remote_http), grip=EXAMPLE_GRIP, test_mode=True)
 
 
 @pytest.mark.parametrize("text,message", [
@@ -101,7 +107,7 @@ def test_routing_requires_https_unless_local_test_mode(tmp_path):
 ])
 def test_bad_routing(tmp_path, text, message):
     with pytest.raises(ConfigError, match=message):
-        load_routing(write(tmp_path, text))
+        load_routing(write(tmp_path, text), grip=EXAMPLE_GRIP)
 
 
 def test_a_dataset_uses_the_sites_grip_address_unless_it_has_its_own(tmp_path):
@@ -113,23 +119,25 @@ def test_a_dataset_uses_the_sites_grip_address_unless_it_has_its_own(tmp_path):
     assert routing.projects["a"].api_base_url == "https://grip.example.org/api"
     assert routing.projects["a"].token_url == "https://grip.example.org/api/get/token"
     assert routing.projects["B"].api_base_url == "https://own.example.org/api"
-    assert load_routing(write(tmp_path, text)).projects["a"].api_base_url == GRIP_API_BASE_URL  # the default
     assert routing.label("a") == "a" and routing.label("gone") == "gone" and routing.label(None) == ""
 
 
-def test_a_site_may_override_grips_address_with_both_settings(tmp_path):
+def test_a_site_must_give_grips_address_with_both_settings(tmp_path):
     base = ('schema_version = 1\nsite = "s"\nstaging_dir = "/s"\nstate_db = "/s.db"\nkeys_dir = "/k"\n')
-    site = load_site(write(tmp_path, base + '[grip]\napi_base_url = "https://g.example.org/api"\n'
+    site = load_site(write(tmp_path, grip=False, text=base + '[grip]\napi_base_url = "https://g.example.org/api"\n'
                                             'token_url = "https://g.example.org/token"\n'))
     assert site.grip == GripSettings("https://g.example.org/api", "https://g.example.org/token")
     with pytest.raises(ConfigError, match="give both"):
-        load_site(write(tmp_path, base + '[grip]\napi_base_url = "https://g.example.org/api"\n'))
+        load_site(write(tmp_path, grip=False, text=base + '[grip]\napi_base_url = "https://g.example.org/api"\n'))
     with pytest.raises(ConfigError, match="https"):
-        load_site(write(tmp_path, base + '[grip]\napi_base_url = "http://g.example.org/api"\n'
+        load_site(write(tmp_path, grip=False, text=base + '[grip]\napi_base_url = "http://g.example.org/api"\n'
                                          'token_url = "https://g.example.org/token"\n'))
     with pytest.raises(ConfigError, match="unknown"):
-        load_site(write(tmp_path, base + '[grip]\nurl = "https://g.example.org"\n'))
-    assert load_site(write(tmp_path, base)).grip == GripSettings()
+        load_site(write(tmp_path, grip=False, text=base + '[grip]\nurl = "https://g.example.org"\n'))
+    with pytest.raises(ConfigError, match=r"\[grip\] section .* is required"):
+        load_site(write(tmp_path, base, grip=False))  # no address in the release to fall back on
+    with pytest.raises(ConfigError, match="give both"):
+        load_site(write(tmp_path, grip=False, text=base + "[grip]\n"))
 
 
 def test_an_old_margin_minutes_setting_is_ignored(tmp_path):

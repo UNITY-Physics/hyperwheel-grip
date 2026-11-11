@@ -12,13 +12,14 @@ from test_datasetscmd import Scripted
 
 from hyperwheel import passwords, reach
 from hyperwheel.adminpw import AdminError
-from hyperwheel.config import GRIP_API_BASE_URL, GripSettings, load_routing, load_site
+from hyperwheel.config import GripSettings, load_routing, load_site
 from hyperwheel.installer import Layout, sudo_rule
 from hyperwheel.rawpull import LoginRefused
 from hyperwheel.sitesetup import (BOOT_HOTSPOT, CABLE_FILE, CLEAR_SCREEN, HOTSPOT_FILE, NM_DIR, Accounts, Setup,
                                   SetupError, hostname_for_site, parse_site_file)
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "config" / "examples" / "site-file.toml"
+EXAMPLE_GRIP = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token")  # made up
 HOTSPOT_PW = "hotspot-pw-not-for-logs"
 SCANNER_PW = "scanner-pw-not-for-logs"
 DM_PW = "borak-kefim-tumos"
@@ -108,8 +109,8 @@ def pi(tmp_path):
 # address was site-wide), one using the site's.
 WITH_DATASETS = TEMPLATE.read_text().replace("# end of site file", """[projects.SiteA-StudyOne]
 logins = ["study_one"]
-api_base_url = "https://grip.example.org/api"
-token_url = "https://grip.example.org/api/get/token"
+api_base_url = "https://own.example.org/api"
+token_url = "https://own.example.org/api/get/token"
 
 [projects.SiteA-Sandbox]
 client_id = "site-a-sandbox"
@@ -158,7 +159,7 @@ def test_a_fresh_pi_is_set_up_from_the_pasted_site_file(pi):
     etc = pi.root / "etc/hyperwheel"
 
     site = load_site(etc / "site.toml")
-    routing = load_routing(etc / "routing.toml")
+    routing = load_routing(etc / "routing.toml", grip=EXAMPLE_GRIP)
     assert (site.site, site.time_zone, site.wifi_country, site.updates.channel) == \
         ("site-a", "Europe/London", "GB", "stable")
     assert site.scanner.host == "10.42.0.1"
@@ -220,23 +221,26 @@ def test_the_pis_name_comes_from_the_site(site, name):
 def test_the_example_site_file_in_the_repo_is_accepted(pi):
     parsed = parse_site_file(TEMPLATE.read_text(), zoneinfo=pi.root / "usr/share/zoneinfo")
     assert parsed.site.site == "site-a" and parsed.routing.projects == {}
-    assert parsed.site.grip == GripSettings()  # the release's GRIP address: the site file needs none
+    assert parsed.site.grip == EXAMPLE_GRIP  # made up: GRIP's addresses are never in the repository
     parsed = parse_site_file(WITH_DATASETS, zoneinfo=pi.root / "usr/share/zoneinfo")
     assert set(parsed.routing.projects) == {"SiteA-StudyOne", "SiteA-Sandbox"}
     own, shared = parsed.routing.projects["SiteA-StudyOne"], parsed.routing.projects["SiteA-Sandbox"]
-    assert own.api_base_url == "https://grip.example.org/api" and shared.api_base_url == GRIP_API_BASE_URL
+    assert own.api_base_url == "https://own.example.org/api" and shared.api_base_url == EXAMPLE_GRIP.api_base_url
     assert shared.label == "site-a-sandbox" and own.label == "SiteA-StudyOne"
 
 
-def test_a_site_file_may_give_its_own_grip_address(pi):
-    text = TEMPLATE.read_text().replace('# [grip]\n# api_base_url = "https://grip.example.org/api"\n'
-                                        '# token_url = "https://grip.example.org/api/get/token"',
-                                        '[grip]\napi_base_url = "https://grip.example.org/api"\n'
-                                        'token_url = "https://grip.example.org/api/get/token"')
-    assert "\n[grip]\n" in text
-    parsed = parse_site_file(text, zoneinfo=pi.root / "usr/share/zoneinfo")
-    assert parsed.site.grip == GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token")
-    assert "[grip]" in parsed.site_toml
+def test_a_site_file_must_give_grips_address(pi):
+    zoneinfo = pi.root / "usr/share/zoneinfo"
+    parsed = parse_site_file(TEMPLATE.read_text(), zoneinfo=zoneinfo)
+    assert '[grip]\napi_base_url = "https://grip.example.org/api"' in parsed.site_toml.replace(
+        "# GRIP's address for this site's region, from the site file. Never in the release.\n", "")
+    grip = '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n'
+    assert grip in TEMPLATE.read_text()
+    for text in (TEMPLATE.read_text().replace(grip, ""),
+                 TEMPLATE.read_text().replace(grip, '[grip]\napi_base_url = "https://grip.example.org/api"\n'),
+                 TEMPLATE.read_text().replace(grip, 'grip = "https://grip.example.org/api"\n')):
+        with pytest.raises(SetupError, match=r"needs a \[grip\] section"):
+            parse_site_file(text, zoneinfo=zoneinfo)
 
 
 def test_setup_says_restart_and_restarts_only_on_yes(pi):
@@ -345,7 +349,7 @@ def test_a_wrong_site_file_is_explained_and_another_can_be_pasted(pi, change, sa
 
 
 def test_an_answer_other_than_yes_is_not_used_and_a_site_file_needs_no_datasets(pi):
-    no_datasets = [*TEMPLATE.read_text().split("[projects.")[0].splitlines(), "# end of site file"]
+    no_datasets = TEMPLATE.read_text().splitlines()  # the example lists no datasets
     typed = Scripted(answers=[*template_lines(), "no", *no_datasets, "yes", DM_PW, "no"], hidden=[""])
     setup, _ = make(pi, typed)
     assert setup.main() == 0

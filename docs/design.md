@@ -13,8 +13,8 @@ project. A local file is deleted only once GRIP has confirmed it.
   `complete: true`. Anything else keeps the file.
 - **Routing on the Pi.** The part of `OperatorsName` after the last `/` picks
   the GRIP dataset (a "project" in the code) and its key (one key per
-  dataset, named by its client ID). GRIP's address is the site's: the
-  release's default unless the site file gives one. A login with no routing
+  dataset, named by its client ID). GRIP's address is the site's (one per
+  region), from the site file: it's never in the release. A login with no routing
   entry is never uploaded: its DICOM is deleted on the Pi and its raw files
   are never pulled from the scanner. Data managers change the datasets with
   `hyperwheel datasets`.

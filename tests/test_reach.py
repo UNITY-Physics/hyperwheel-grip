@@ -181,5 +181,6 @@ def test_a_site_file_that_still_sets_leave_on_after_hours_loads(tmp_path):
     from hyperwheel.config import load_site
     path = tmp_path / "site.toml"
     path.write_text('schema_version = 1\nsite = "s"\nstaging_dir = "/s"\nstate_db = "/s.db"\nkeys_dir = "/k"\n'
-                    "[dashboard]\nleave_on_after_hours = 48\n")
+                    "[dashboard]\nleave_on_after_hours = 48\n"
+                    '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n')
     assert load_site(path).site == "s"

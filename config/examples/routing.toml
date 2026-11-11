@@ -9,8 +9,8 @@
 #
 # Each dataset is named by its GRIP client ID. The name in [projects.<name>] is
 # the dataset's name on the Pi (its folder and key file), made from the client
-# ID. GRIP's address is the site's ([grip] in site.toml, the release's default
-# unless the site file gave one). Each dataset's key is stored by
+# ID. GRIP's address is the site's ([grip] in site.toml, from the site file).
+# Each dataset's key is stored by
 # hyperwheel datasets add, never here.
 schema_version = 1
 

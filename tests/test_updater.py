@@ -450,7 +450,9 @@ def _site_toml(tmp_path: Path) -> Path:
     path = tmp_path / "etc" / "hyperwheel" / "site.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_site_toml({"site": "site-a", "time_zone": "Europe/London", "wifi_country": "GB",
-                                      "update_channel": "pilot"}))
+                                      "update_channel": "pilot",
+                                      "grip": {"api_base_url": "https://grip.example.org/api",
+                                               "token_url": "https://grip.example.org/api/get/token"}}))
     path.chmod(0o644)
     return path
 
