@@ -1,22 +1,31 @@
 """Uploads staged files to GRIP and deletes each one once GRIP has confirmed it.
 
 The delete rule: a local file is deleted only after a successful response for
-that file's own upload, i.e.
+that file's own upload, and only once GRIP's SHA-256 and size of its stored
+copy match the Pi's own:
 
 - DICOM: STOW-RS answers 200 and lists the file's SOP Instance UID as stored
-  (00081199);
-- RRDF: GRIP accepts the file's last chunk with ``complete: true``.
+  (00081199). The file is then ``stored``, and GRIP's study status (one call
+  for all of a study's stored files) gives each instance's SHA-256 and size;
+- RRDF: GRIP accepts the file's last chunk with ``complete: true``, and the
+  reply (or else the study status) gives the whole file's SHA-256 and size.
 
-Anything else (a timeout, an error, a 202/409, a 200 that doesn't list the
-file) keeps the file. Transient problems park it in ``retry_wait``; refusals
-park it in ``refused`` and raise a flag. A refused file is tried again once a
-day (most refusals are something GRIP fixes on its side): if GRIP takes it, it
-goes up and its flag clears, and if not, it stays refused and flagged.
+On a mismatch the file is sent again from the start (it overwrites). If
+GRIP's copy still doesn't match, or GRIP gives no checksum, the file is kept
+and flagged. Anything else (a timeout, an error, a 202/409, a 200 that
+doesn't list the file) keeps the file too. Transient problems park it in
+``retry_wait``; refusals park it in ``refused`` and raise a flag. A refused
+file is tried again once a day (most refusals are something GRIP fixes on its
+side): if GRIP takes it, it goes up and its flag clears, and if not, it stays
+refused and flagged.
+
+Region: the site's GRIP region (``[grip] region``) prefixes the two store
+calls only (see ``grip.api``).
 
 Order: one file per request; every study's DICOM before any raw file. A
 study's raw files go once GRIP has the study (at least one of its DICOM files
-confirmed and none still unsent), as agreed with GRIP. A refused DICOM file
-doesn't hold them back. Raw files are addressed by the study's
+confirmed and none still unsent or unchecked), as agreed with GRIP. A refused
+DICOM file doesn't hold them back. Raw files are addressed by the study's
 StudyInstanceUID and the file's own name, with no series.
 
 Slow links: each request gets the time its body needs at the slowest link
@@ -29,7 +38,9 @@ Resume: if GRIP has part of a raw file of the same size, the upload continues
 from GRIP's offset; otherwise (nothing there, a different size, or GRIP has
 dropped the partial upload) it starts again from 0, which overwrites. Neither
 raises a flag. If GRIP already has the whole file, only its last chunk is sent
-again, to get this file's own ``complete: true``.
+again, to get this file's own ``complete: true`` and GRIP's checksum. The
+checksum check makes a resumed upload safe even if GRIP restarted part-way:
+a copy put together wrongly doesn't match, so it is sent again in full.
 """
 
 from __future__ import annotations
@@ -47,7 +58,8 @@ import requests
 
 from . import reach
 from .config import Project, Routing, SiteConfig
-from .grip import AuthFailed, GripApi, Http, KeyRejected, Refused, TokenManager, Transient
+from .grip import (AuthFailed, GripApi, Http, KeyRejected, Refused, Stored, TokenManager, Transient, stored_instance,
+                   stored_raw)
 from .keys import KeyMissing, KeyProblem, KeyStore
 from .orthanc import Orthanc, OrthancError
 from .state import DONE_FILE_STATES, PENDING_FILE_STATES, File, Store, Study
@@ -69,7 +81,10 @@ class _ProjectBlocked(Exception):
 # A file GRIP refused is tried again after this long.
 REFUSED_RETRY_S = 24 * 3600
 # GRIP's refusals: those are tried again. A problem with the Pi's own copy (missing, changed, empty) isn't.
-_REFUSED_FLAGS = ("STOW_REFUSED", "STOW_FAILED", "RAW_NAME_REFUSED", "RAW_REFUSED", "RAW_CHECKSUM")
+_REFUSED_FLAGS = ("STOW_REFUSED", "STOW_FAILED", "RAW_NAME_REFUSED", "RAW_REFUSED", "RAW_CHECKSUM",
+                  "DICOM_CHECKSUM", "NO_CHECKSUM")
+# A file whose copy on GRIP doesn't match the Pi's is sent again this many times before it is kept and flagged.
+CHECKSUM_RESENDS = 1
 
 
 @dataclass
@@ -177,6 +192,8 @@ class Uploader:
                     self._send_dicom(api, project, study, f)
                 else:
                     self._send_raw(api, project, study, f)
+            if kind == "dicom":
+                self._check_dicom(api, study)
         except KeyProblem as e:
             status = "missing" if isinstance(e, KeyMissing) else "unreadable"
             self._key_failed(project, status, str(e))
@@ -188,9 +205,10 @@ class Uploader:
             log.warning("study %s: %s. Will try again later", study.study_uid, e)
 
     def _due_files(self, study: Study, kind: str) -> list[File]:
+        """Files to send now. ``stored`` ones are checked by ``_check_dicom`` instead, not sent."""
         now = self.clock()
         return [f for f in self.store.files(study.id, kind=kind, states=PENDING_FILE_STATES)
-                if f.state != "retry_wait" or (f.next_attempt_at or 0) <= now]
+                if f.state != "stored" and (f.state != "retry_wait" or (f.next_attempt_at or 0) <= now)]
 
     def _raw_may_go(self, study: Study) -> bool:
         """Raw files go once GRIP has the study: at least one DICOM file confirmed, none still unsent.
@@ -198,7 +216,7 @@ class Uploader:
         A refused or parked DICOM file doesn't hold the raw files back; it stays flagged on its own.
         """
         dicom = self.store.files(study.id, kind="dicom")
-        if any(f.state in ("staged", "sending") for f in dicom):
+        if any(f.state in ("staged", "sending", "stored") for f in dicom):
             return False
         if any(f.state in DONE_FILE_STATES for f in dicom):
             self.store.clear_flags("RAW_WAITING_FOR_DICOM", study_id=study.id)
@@ -223,7 +241,7 @@ class Uploader:
                                   timeout_s=self.settings.timeout_s, clock=self.monotonic)
             http = Http(project.api_base_url, tokens, session, self.settings, sleep=self.sleep, rng=self.rng,
                         extra_headers=self.extra_headers)
-            api = self._apis[project.name] = GripApi(http)
+            api = self._apis[project.name] = GripApi(http, region=project.region)
         return api
 
     def _key_working(self, project: str | None) -> None:
@@ -295,10 +313,9 @@ class Uploader:
         self._grip_answered()
 
         if result.status == 200 and f.sop_uid in result.stored:
-            self._confirmed(f)
-            self._report.confirmed += 1
-            log.info("DICOM %s of study %s: stored on GRIP", f.sop_uid, study.study_uid)
-            self._delete_local(self.store.file(f.id))
+            # Kept until GRIP's checksum of it matches (_check_dicom, after this study's files are sent).
+            self.store.move_file(f.id, "stored", last_error=None)
+            log.info("DICOM %s of study %s: stored on GRIP, checksum to check", f.sop_uid, study.study_uid)
         elif f.sop_uid in result.failed:
             reason = result.failed[f.sop_uid]
             meaning = STOW_REASONS.get(reason, "no reason given") if reason is not None else "no reason given"
@@ -307,6 +324,42 @@ class Uploader:
                                            f"reason {code}: {meaning})")
         else:
             self._park(f, f"GRIP answered HTTP {result.status} without listing this file as stored")
+
+    def _check_dicom(self, api: GripApi, study: Study) -> None:
+        """Compare GRIP's SHA-256 and size of each stored DICOM file of this study with the Pi's, with one study
+        status call. A match is confirmed and deleted. A mismatch (or a file GRIP doesn't list) is sent again from
+        the start, once. Still no match, or no checksum from GRIP: kept and flagged."""
+        waiting = self.store.files(study.id, kind="dicom", states=("stored",))
+        if not waiting:
+            return
+        try:
+            status = api.study_status(study.study_uid)
+        except Refused as e:
+            self.store.raise_flag("CHECKSUM_NOT_CHECKED", f"The Pi can't check GRIP's copies of this study's files "
+                                  f"({e}). They are kept on the Pi until it can.", study_id=study.id, level="alert")
+            log.warning("study %s: GRIP's checksums can't be read (%s). Files kept", study.study_uid, e)
+            return
+        self._grip_answered()
+        self.store.clear_flags("CHECKSUM_NOT_CHECKED", study_id=study.id)
+        for f in waiting:
+            got = stored_instance(status, f.sop_uid or "")
+            if got is not None and _reported(got) and f.sha256 is not None and f.size is not None \
+                    and got.matches(f.sha256, f.size):
+                self._confirmed(f)
+                self._report.confirmed += 1
+                log.info("DICOM %s of study %s: on GRIP, checksum matches", f.sop_uid, study.study_uid)
+                self._delete_local(self.store.file(f.id))
+            elif got is not None and not _reported(got):
+                self._refuse(f, "NO_CHECKSUM", f"GRIP stored DICOM {f.sop_uid} but gave no checksum for it, so the "
+                                               "Pi can't check GRIP's copy. Tell your Hyperwheel admin")
+            elif f.checksum_resets >= CHECKSUM_RESENDS:
+                self._refuse(f, "DICOM_CHECKSUM", f"GRIP's copy of DICOM {f.sop_uid} doesn't match the Pi's, even "
+                                                  "after sending it again")
+            else:
+                why = "isn't listed by GRIP" if got is None else "doesn't match the Pi's copy"
+                log.warning("DICOM %s of study %s: GRIP's copy %s. Sending it again", f.sop_uid, study.study_uid, why)
+                self.store.move_file(f.id, "staged", checksum_resets=f.checksum_resets + 1,
+                                     last_error=f"GRIP's copy {why}")
 
     def _read_checked(self, f: File) -> bytes | None:
         """The staged file's bytes, if they still match the hash taken when it was staged."""
@@ -335,6 +388,8 @@ class Uploader:
         if size == 0:
             self._refuse(f, "RAW_FILE_EMPTY", "RRDF file is empty (kept for a person to check)")
             return
+        if f.sha256 is None:  # pulled by a release that didn't hash raw files: hash it now, to check GRIP's copy
+            f = self.store.update_file(f.id, sha256=_sha256_file(f.path or ""))
         chunk_bytes = self._chunk_bytes
         last_chunk_start = ((size - 1) // chunk_bytes) * chunk_bytes
         try:
@@ -426,11 +481,28 @@ class Uploader:
                     else:
                         good = 0
                     if result.complete:
-                        self._confirmed(f, upload_offset=size)
-                        self._report.confirmed += 1
-                        log.info("RRDF file %s of study %s: stored on GRIP", f.name, study.study_uid)
-                        self._delete_local(self.store.file(f.id))
-                        return
+                        got = self._raw_on_grip(api, study, f, result.stored)
+                        if got is None:
+                            self._refuse(f, "NO_CHECKSUM", f"GRIP stored RRDF file {f.name} but gave no checksum for "
+                                                           "it, so the Pi can't check GRIP's copy. Tell your "
+                                                           "Hyperwheel admin")
+                            return
+                        if got.matches(f.sha256 or "", size):
+                            self._confirmed(f, upload_offset=size)
+                            self._report.confirmed += 1
+                            log.info("RRDF file %s of study %s: on GRIP, checksum matches", f.name, study.study_uid)
+                            self._delete_local(self.store.file(f.id))
+                            return
+                        resets += 1
+                        self.store.update_file(f.id, checksum_resets=resets, upload_offset=0)
+                        if resets > CHECKSUM_RESENDS:
+                            self._refuse(f, "RAW_CHECKSUM", f"GRIP's copy of RRDF file {f.name} doesn't match the "
+                                                            "Pi's, even after sending it again")
+                            return
+                        log.warning("RRDF file %s: GRIP's copy doesn't match the Pi's. Sending it again from the "
+                                    "start", f.name)
+                        restarted, resent_last, offset = True, False, 0
+                        continue
                     new_offset = result.offset if result.offset is not None else offset + len(chunk)
                     if new_offset <= offset and offset != last_chunk_start:
                         self._park(f, "GRIP accepted a chunk but its offset did not move")
@@ -457,6 +529,17 @@ class Uploader:
                     offset = 0
                     resent_last = False
         self._park(f, "upload did not finish")
+
+    def _raw_on_grip(self, api: GripApi, study: Study, f: File, reply: Stored | None) -> Stored | None:
+        """GRIP's SHA-256 and size of a complete raw file: from the last chunk's reply, else from the study
+        status. None if GRIP gives neither."""
+        if reply is not None and _reported(reply):
+            return reply
+        try:
+            listed = stored_raw(api.study_status(study.study_uid), f.name)
+        except Refused:
+            listed = None
+        return listed if listed is not None and _reported(listed) else None
 
     def _grip_answered(self) -> None:
         """Note that GRIP answered: proof that the scanner and the internet work, even when busy."""
@@ -498,6 +581,19 @@ class Uploader:
         self.store.move_file(f.id, "deleted")
         self.store.clear_flags("LOCAL_DELETE_FAILED", study_id=f.study_id, file_id=f.id)
         self._report.deleted += 1
+
+
+def _reported(stored: Stored) -> bool:
+    """GRIP gave both a SHA-256 and a size for its copy."""
+    return stored.sha256 is not None and stored.size is not None
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for piece in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(piece)
+    return digest.hexdigest()
 
 
 def _label(f: File) -> str:

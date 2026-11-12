@@ -1,4 +1,4 @@
-"""``hyperwheel grip address``: GRIP's address on this Pi (the ``[grip]`` section of ``site.toml``).
+"""``hyperwheel grip address``: GRIP's address and region on this Pi (``[grip]`` in ``site.toml``).
 
 GRIP has one fixed address per region, and each site's comes from its site
 file. This command changes it on a Pi that is already set up, for example when
@@ -6,10 +6,13 @@ GRIP moves a region to a new address. Only the admin can run it: the address
 decides which region a site's data goes to (data residency), so the
 data-manager account's sudo rule doesn't allow it.
 
-It shows the address in use, then asks for the new one (the API address GRIP
-gives) and the token address (by default the API address followed by
-``/get/token``). It asks rather than taking the address after the command, so
-the sudo rule still allows only exact words.
+It shows the address and region in use, then asks for the new address (the API
+address GRIP gives, or Enter to keep it), the token address (by default the
+API address followed by ``/get/token``) and the region (such as
+``westeurope``: where GRIP stores the site's data, carried by the two store
+calls only). A Pi with no region yet must be given one here. It asks rather
+than taking them after the command, so the sudo rule still allows only exact
+words.
 
 The new address is checked **before** it is saved. It is shown back and must
 be confirmed with "yes". Then, before any real key goes there, the new token
@@ -20,7 +23,11 @@ its own key. A key the new address refuses, or one that can't be checked
 because GRIP doesn't answer there, stops the command and nothing is saved. A
 dataset whose key is missing can't be checked, and is said so.
 
-Only the two lines of ``[grip]`` change. The rest of ``site.toml`` (comments
+When only the region changes, nothing is sent to GRIP: a region can't be
+checked with a token.
+
+Only the lines of ``[grip]`` change (a ``region`` line is added after
+``token_url`` if there's none). The rest of ``site.toml`` (comments
 included) stays as it was, and the new file is read back and compared before it
 replaces the old one in one step. Datasets with an address of their own keep
 it. Hyperwheel and the Upload Monitor then restart to use the new address.
@@ -31,12 +38,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 
 import requests
 
-from .config import ConfigError, GripSettings, Project, SiteConfig, check_url, load_site
+from .config import ConfigError, GripSettings, Project, SiteConfig, check_region, check_url, load_site
 from .datasetscmd import ROUTING, Cancelled, Datasets, Stop, _uninterrupted
 from .grip.errors import GripError, KeyRejected
 from .grip.http import TokenManager
@@ -47,7 +55,7 @@ TOKEN_PATH = "/get/token"
 # A client ID no GRIP dataset has: a token request with it shows the address answers like GRIP.
 NO_SUCH_CLIENT = Credentials("hyperwheel-address-check", "not-a-key")
 _HEADER = re.compile(r"\s*\[\s*([A-Za-z0-9_.-]+)\s*\]\s*(#.*)?")
-_LINE = re.compile(r"(\s*)(api_base_url|token_url)(\s*=\s*)\S.*")
+_LINE = re.compile(r"(\s*)(api_base_url|token_url|region)(\s*=\s*)\S.*")
 
 
 def answers_like_grip(token_url: str, timeout_s: float) -> bool:
@@ -64,11 +72,13 @@ def answers_like_grip(token_url: str, timeout_s: float) -> bool:
 
 
 def with_address(text: str, grip: GripSettings) -> str:
-    """``site.toml`` with the two lines of its ``[grip]`` section set to this address, all else unchanged.
-    Raises Stop if the section isn't written the plain way (one ``[grip]`` header with both lines in it)."""
+    """``site.toml`` with the lines of its ``[grip]`` section set to this address and region, all else unchanged.
+    A ``region`` line is added after ``token_url`` if there's none. Raises Stop if the section isn't written the
+    plain way (one ``[grip]`` header with both address lines in it)."""
     lines = text.splitlines(keepends=True)
     section, headers, done = None, 0, {}
     out = []
+    token_at = None
     for line in lines:
         header = _HEADER.fullmatch(line.rstrip("\r\n"))
         if header:
@@ -81,12 +91,31 @@ def with_address(text: str, grip: GripSettings) -> str:
                 if key in done:
                     raise Stop(_HAND_WRITTEN)
                 ending = line[len(line.rstrip("\r\n")):]
-                line = f"{m.group(1)}{key}{m.group(3)}{json.dumps(getattr(grip, key))}{ending}"
+                value = getattr(grip, key)
+                if value is None:  # no region to write: leave the section without one
+                    done[key] = True
+                    continue
+                if _value(line) != value:  # a line that already says it stays as it is, comment and all
+                    line = f"{m.group(1)}{key}{m.group(3)}{json.dumps(value)}{ending}"
                 done[key] = True
+                if key == "token_url":
+                    token_at = (len(out), m.group(1), m.group(3), ending or "\n")
         out.append(line)
-    if headers != 1 or set(done) != {"api_base_url", "token_url"}:
+    if headers != 1 or not {"api_base_url", "token_url"} <= set(done):
         raise Stop(_HAND_WRITTEN)
+    if "region" not in done and grip.region is not None and token_at is not None:
+        at, indent, equals, ending = token_at
+        if not out[at].endswith(("\n", "\r")):
+            out[at] += ending
+        out.insert(at + 1, f"{indent}region{equals}{json.dumps(grip.region)}{ending}")
     return "".join(out)
+
+
+def _value(line: str) -> object:
+    try:
+        return next(iter(tomllib.loads(line).values()), None)
+    except tomllib.TOMLDecodeError:
+        return None
 
 
 _HAND_WRITTEN = ("GRIP's address in this Pi's site settings isn't written the usual way, so this command can't "
@@ -101,6 +130,22 @@ class GripAddress:
                  answers=answers_like_grip):
         self.site, self.ds, self.site_path, self.answers = site, datasets, site_path, answers
         self.c = datasets.console
+
+    def _ask_region(self) -> str:
+        now = self.site.grip.region
+        if now:
+            typed = self.c.ask(f"GRIP region for this site, or press Enter to keep {now}: ").strip()
+            if not typed:
+                return now
+        else:
+            typed = self.c.ask("GRIP region for this site (such as westeurope), from your Hyperwheel admin: ").strip()
+            if not typed:
+                raise Stop("This Pi has no GRIP region yet, so one is needed. Nothing was changed.")
+        try:
+            return check_region(typed, "")
+        except ConfigError:
+            raise Stop(f"{typed} isn't a GRIP region name. A region is one lower-case word such as westeurope. "
+                       "Nothing was changed.") from None
 
     def _ask_url(self, prompt: str, default: str | None = None) -> str | None:
         typed = self.c.ask(prompt).strip()
@@ -196,33 +241,38 @@ class GripAddress:
         self.c.say("GRIP's address on this Pi:")
         self.c.say(f"  {now.api_base_url}")
         self.c.say(f"  Token address: {now.token_url}")
+        self.c.say(f"  Region: {now.region or 'none yet'}")
         api = self._ask_url("New address from GRIP (starting https://), or press Enter to keep it: ")
         if api is None:
-            self.c.say("Nothing was changed.")
-            return 0
-        default = api + TOKEN_PATH
-        token = self._ask_url(f"Token address (press Enter for {default}): ", default)
-        new = GripSettings(api, token)
+            api, token = now.api_base_url, now.token_url
+        else:
+            default = api + TOKEN_PATH
+            token = self._ask_url(f"Token address (press Enter for {default}): ", default)
+        new = GripSettings(api, token, self._ask_region())
         if new == now:
-            self.c.say("That is the address already. Nothing was changed.")
+            self.c.say("That is the address and region already. Nothing was changed.")
             return 0
-        self.c.say("The new address would be:")
+        moved = (new.api_base_url, new.token_url) != (now.api_base_url, now.token_url)
+        self.c.say("GRIP's address on this Pi would be:")
         self.c.say(f"  {new.api_base_url}")
         self.c.say(f"  Token address: {new.token_url}")
-        if self.c.ask("Type yes to check it with GRIP and save it: ").strip().lower() != "yes":
+        self.c.say(f"  Region: {new.region}")
+        prompt = "Type yes to check it with GRIP and save it: " if moved else "Type yes to save it: "
+        if self.c.ask(prompt).strip().lower() != "yes":
             self.c.say("Nothing was changed.")
             return 0
         following, own = self._following()
-        self._check(new, following)
+        if moved:
+            self._check(new, following)
         with self.ds._no_update(), _uninterrupted():
             if self._following()[0] != following:
                 raise Stop("The datasets changed while you answered. Nothing was changed. Run hyperwheel grip "
                            "address again.")
             self._save(new)
             code = self.ds._restarted()
-        self.c.say(f"GRIP's address on this Pi is now {new.api_base_url}")
+        self.c.say(f"GRIP's address on this Pi is now {new.api_base_url}, region {new.region}")
         for project in own:
-            self.c.say(f"{project.label} has its own GRIP address and keeps it.")
+            self.c.say(f"{project.label} has its own GRIP address and keeps it, with no region.")
         self.c.say("In a minute, check the keys show as working with: hyperwheel datasets list")
         return code
 

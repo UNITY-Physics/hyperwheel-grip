@@ -10,10 +10,18 @@ connections before or after the server has stored the data, expired tokens,
 STOW answers that leave a file out, refused file names, and a server that
 forgets partial uploads (GRIP said a failed upload may have to be sent again
 in full).
+
+Region: the two store calls may carry a region prefix (``/api/<region>/dicomweb/
+studies``, ``/api/<region>/v1/studies/{uid}/raw/{name}``), as on GRIP's gateway.
+Every other call with a prefix is 404. Checksums: the study status lists each
+instance's and complete raw file's ``sha256``, ``md5`` and ``size``, a raw PUT
+reply has them once the file is complete, and HEAD gives ``Repr-Digest``.
+``checksums = False`` leaves them out; ``corrupt`` makes GRIP's copy differ.
 """
 
 from __future__ import annotations
 
+import base64
 import gzip
 import hashlib
 import io
@@ -62,8 +70,10 @@ class RawUpload:
 class FakeStudy:
     client_id: str
     study_uid: str
-    stored: dict[str, tuple[str, str, str, int]] = field(default_factory=dict)  # sop -> (sha256, series, tsuid, size)
+    # sop -> (sha256, series, tsuid, size, md5)
+    stored: dict[str, tuple[str, str, str, int, str]] = field(default_factory=dict)
     raw: dict[str, RawUpload] = field(default_factory=dict)
+    region: str = "no_region_specified"
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -80,6 +90,12 @@ class FakeGrip:
         self.invalid_names: set[str] = set()
         # When set, GRIP keeps no partial uploads: an unfinished raw file is gone on the next look.
         self.forget_partials = False
+        # GRIP reports checksums (sha256, md5) of what it stored. False: a gateway that reports none.
+        self.checksums = True
+        # SOP Instance UIDs or raw file names (-> how many times) whose stored copy GRIP gets wrong.
+        self.corrupt: dict[str, int] = {}
+        # The region of each store call, in order (None: no region prefix).
+        self.store_regions: list[str | None] = []
         self.lock = threading.RLock()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(self))
         self._server.daemon_threads = True
@@ -122,6 +138,14 @@ class FakeGrip:
     def requests_matching(self, method: str, pattern: str) -> list[tuple[str, str, dict[str, str]]]:
         return [r for r in self.requests if r[0] == method and re.search(pattern, r[1])]
 
+    def _corrupted(self, key: str) -> bool:
+        with self.lock:
+            left = self.corrupt.get(key, 0)
+            if left > 0:
+                self.corrupt[key] = left - 1
+                return True
+        return False
+
     def _take_fault(self, method: str, path: str) -> Fault | None:
         with self.lock:
             for f in self.faults:
@@ -160,6 +184,11 @@ def _handler(fake: FakeGrip):
             if not raw_path.startswith("/api"):
                 return self._json(404, {"error": "not_found"})
             path = raw_path[len("/api"):]
+            # Only the two store calls take a region prefix. Anything else with one is 404 below.
+            self._region = None
+            m = re.fullmatch(r"/([a-z0-9_-]+)(/dicomweb/studies(?:/[^/]+)?|/v1/studies/[^/]+/raw/[^/]+)", path)
+            if m:
+                self._region, path = m.group(1), m.group(2)
 
             forced = self.headers.get("X-Mock-Fault")
             if forced:
@@ -276,14 +305,27 @@ def _handler(fake: FakeGrip):
             return {
                 "studyInstanceUid": s.study_uid, "workspace": "example", "project": "demo", "quarantined": False,
                 "createdAt": s.created_at, "instanceCount": len(s.stored), "rawFileCount": len(s.raw),
-                "instances": [{"sopInstanceUid": k, "size": v[3]} for k, v in s.stored.items()],
-                "rawFiles": [{"name": n, "size": r.size, "complete": r.complete, "offset": len(r.data)}
-                             for n, r in s.raw.items()],
+                "region": s.region,
+                "instances": [{"sopInstanceUid": k, "size": v[3],
+                               **({"sha256": v[0], "md5": v[4]} if fake.checksums else {})}
+                              for k, v in s.stored.items()],
+                "rawFiles": [{"name": n, "size": r.size, "complete": r.complete, "offset": len(r.data),
+                              **self._digests(r)} for n, r in s.raw.items()],
             }
+
+        def _digests(self, r: RawUpload) -> dict:
+            if not (fake.checksums and r.complete):
+                return {}
+            return {"sha256": hashlib.sha256(r.data).hexdigest(), "md5": hashlib.md5(r.data).hexdigest()}
 
         def _raw_json(self, s: FakeStudy, name: str, r: RawUpload) -> dict:
             return {"studyInstanceUid": s.study_uid, "name": name, "size": r.size, "offset": len(r.data),
-                    "complete": r.complete}
+                    "complete": r.complete, **self._digests(r)}
+
+        def _store_call(self, s: FakeStudy) -> None:
+            fake.store_regions.append(self._region)
+            if self._region:
+                s.region = self._region
 
         def _raw_status(self, client: str, uid: str, name: str) -> None:
             s = self._own_study(client, uid)
@@ -298,6 +340,10 @@ def _handler(fake: FakeGrip):
                 return self._not_found(f"Unknown raw file {name}")
             headers = {"Upload-Offset": str(len(r.data)), "Upload-Length": str(r.size),
                        "Upload-Complete": "true" if r.complete else "false"}
+            digests = self._digests(r)
+            if digests:
+                headers["Repr-Digest"] = (f"sha-256=:{base64.b64encode(bytes.fromhex(digests['sha256'])).decode()}:, "
+                                          f"md5=:{base64.b64encode(bytes.fromhex(digests['md5'])).decode()}:")
             return self._reply(200, self._raw_json(s, name, r), headers)
 
         def _raw_put(self, client: str, uid: str, name: str, chunk: bytes) -> None:
@@ -318,6 +364,7 @@ def _handler(fake: FakeGrip):
             want = self.headers.get("X-Chunk-SHA256")
             s = self._study(client, uid)
             with fake.lock:
+                self._store_call(s)
                 r = s.raw.get(name)
                 if r is not None and fake.forget_partials and not r.complete and start == 0:
                     r = None
@@ -334,6 +381,8 @@ def _handler(fake: FakeGrip):
                     r.data[start:] = chunk
                 else:
                     r.data[start:end + 1] = chunk
+                if r.complete and fake._corrupted(name):
+                    r.data[0] ^= 0xFF  # GRIP put the file together wrongly
                 return self._reply(200, self._raw_json(s, name, r), {"Upload-Offset": str(len(r.data))})
 
         def _stow(self, client: str, url_study: str | None, body: bytes, fault: Fault | None) -> None:
@@ -360,12 +409,15 @@ def _handler(fake: FakeGrip):
                 except Exception:
                     failed.append(("", "", 0xC000))
                     continue
-                sha = hashlib.sha256(part).hexdigest()
+                kept = part if not fake._corrupted(sop) else bytes([part[0] ^ 0xFF]) + part[1:]
+                sha, md5 = hashlib.sha256(kept).hexdigest(), hashlib.md5(kept).hexdigest()
                 if url_study and study != url_study:
                     failed.append((sop, cls, 0xA900))
                     continue
                 with fake.lock:
-                    self._study(client, study).stored[sop] = (sha, series, tsuid, len(part))  # a resend overwrites
+                    target = self._study(client, study)
+                    self._store_call(target)
+                    target.stored[sop] = (sha, series, tsuid, len(part), md5)  # a resend overwrites
                 stored.append((sop, cls))
 
             if fault is not None and fault.action == "stow_unlisted":
@@ -387,7 +439,7 @@ def _handler(fake: FakeGrip):
             with fake.lock:
                 items = [] if s is None else [
                     {"00080018": {"vr": "UI", "Value": [sop]}, "0020000E": {"vr": "UI", "Value": [series]},
-                     "00083002": {"vr": "UI", "Value": [tsuid]}} for sop, (_, series, tsuid, _) in s.stored.items()]
+                     "00083002": {"vr": "UI", "Value": [tsuid]}} for sop, (_, series, tsuid, _, _) in s.stored.items()]
             self._answer = (200, json.dumps(items).encode(), {"Content-Type": "application/dicom+json"})
 
     return Handler

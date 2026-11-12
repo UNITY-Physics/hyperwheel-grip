@@ -8,9 +8,12 @@ project. A local file is deleted only once GRIP has confirmed it.
 ## Rules
 
 - **Never lose data.** A local file is deleted only after a successful
-  response for that file's own upload: STOW-RS 200 listing the instance as
-  stored (`00081199`), or the last raw-file chunk accepted with
-  `complete: true`. Anything else keeps the file.
+  response for that file's own upload (STOW-RS 200 listing the instance as
+  stored, `00081199`, or the last raw-file chunk accepted with
+  `complete: true`), and only once GRIP's SHA-256 and size of its copy match
+  the Pi's own. On a mismatch the file is sent again from the start. If it
+  still doesn't match, or GRIP gives no checksum, the file is kept and
+  flagged. Anything else keeps the file too.
 - **Routing on the Pi.** The part of `OperatorsName` after the last `/` picks
   the GRIP dataset (a "project" in the code) and its key (one key per
   dataset, named by its client ID). GRIP's address is the site's (one per
@@ -114,18 +117,33 @@ listed on the scanner but not fetched yet is `seen`.
 
 All DICOM first (every study), then raw files (agreed with GRIP). A study's
 raw files go once GRIP has the study, i.e. at least one of its DICOM files is
-confirmed and none is still unsent. A refused DICOM file stays flagged on its
+confirmed (checksum matched) and none is still unsent or unchecked. A refused DICOM file stays flagged on its
 own and doesn't hold the raw files back. One file per request.
 
-- DICOM: STOW-RS `POST /dicomweb/studies/{StudyInstanceUID}`.
-- Raw files: `PUT /v1/studies/{StudyInstanceUID}/raw/{name}` in 8 MiB chunks
-  with `Content-Range` (and `X-Chunk-SHA256`), the name URL-encoded, no series.
+- DICOM: STOW-RS `POST /<region>/dicomweb/studies/{StudyInstanceUID}`.
+- Raw files: `PUT /<region>/v1/studies/{StudyInstanceUID}/raw/{name}` in 8 MiB
+  chunks with `Content-Range` (and `X-Chunk-SHA256`), the name URL-encoded, no
+  series.
+- Region: the site's GRIP region (`[grip] region`, such as `westeurope`)
+  prefixes those two store calls only (the raw file's progress `HEAD` is on
+  the same URL). The token, study status and QIDO calls never take one. A Pi
+  set up before regions has none and sends no prefix.
+- Checksums: a DICOM file GRIP lists as stored is `stored` until one study
+  status call (`GET /v1/studies/{uid}`, after the study's DICOM is sent) gives
+  each instance's `sha256` and `size`. A raw file is checked with the
+  `sha256` and `size` in the last chunk's reply (or else the study status).
+  Only a match is confirmed and deleted. A mismatch (or a DICOM file GRIP
+  doesn't list) is sent again from the start, once. Still no match:
+  `DICOM_CHECKSUM` or `RAW_CHECKSUM`. No checksum from GRIP: `NO_CHECKSUM`.
+  Both keep the file and are tried again daily. This also makes chunks and
+  resume safe if GRIP restarts part-way: a copy put together wrongly doesn't
+  match, so it is sent again in full.
 - Resume: the Pi asks GRIP (`HEAD` on the raw URL). If GRIP has part of the
   file at the same size, it continues from GRIP's offset; otherwise (nothing
   there, another size, or GRIP dropped or won't continue the partial upload)
   it sends the whole file again, which overwrites. Neither raises a flag. If
   GRIP has the whole file already, only the last chunk is sent again, to get
-  the file's own `complete: true`.
+  the file's own `complete: true` and GRIP's checksum.
 - What GRIP has of a study: `GET /v1/studies/{StudyInstanceUID}` (404 =
   nothing yet).
 - The key is checked (a token) before any file of a study is touched, so a

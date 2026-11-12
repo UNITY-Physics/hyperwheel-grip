@@ -19,7 +19,8 @@ from hyperwheel.sitesetup import (BOOT_HOTSPOT, CABLE_FILE, CLEAR_SCREEN, HOTSPO
                                   SetupError, hostname_for_site, parse_site_file)
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "config" / "examples" / "site-file.toml"
-EXAMPLE_GRIP = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token")  # made up
+EXAMPLE_GRIP = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token",
+                            "westeurope")  # made up
 HOTSPOT_PW = "hotspot-pw-not-for-logs"
 SCANNER_PW = "scanner-pw-not-for-logs"
 DM_PW = "borak-kefim-tumos"
@@ -234,9 +235,12 @@ def test_a_site_file_must_give_grips_address(pi):
     parsed = parse_site_file(TEMPLATE.read_text(), zoneinfo=zoneinfo)
     assert '[grip]\napi_base_url = "https://grip.example.org/api"' in parsed.site_toml.replace(
         "# GRIP's address for this site's region, from the site file. Never in the release.\n", "")
-    grip = '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n'
+    address = '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n'
+    grip = address + 'region = "westeurope"\n'
     assert grip in TEMPLATE.read_text()
+    assert 'region = "westeurope"' in parsed.site_toml
     for text in (TEMPLATE.read_text().replace(grip, ""),
+                 TEMPLATE.read_text().replace(grip, address),  # no region
                  TEMPLATE.read_text().replace(grip, '[grip]\napi_base_url = "https://grip.example.org/api"\n'),
                  TEMPLATE.read_text().replace(grip, 'grip = "https://grip.example.org/api"\n')):
         with pytest.raises(SetupError, match=r"needs a \[grip\] section"):

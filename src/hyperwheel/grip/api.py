@@ -4,7 +4,16 @@
 - Raw files: ``PUT /v1/studies/{StudyInstanceUID}/raw/{name}`` with ``Content-Range``;
   progress by ``HEAD`` on the same URL (``Upload-Offset``, ``Upload-Length``,
   ``Upload-Complete``).
-- What GRIP has of a study: ``GET /v1/studies/{StudyInstanceUID}`` (404 = nothing yet).
+- What GRIP has of a study: ``GET /v1/studies/{StudyInstanceUID}`` (404 = nothing yet),
+  with the SHA-256 and size of every stored DICOM instance and raw file.
+
+Region: the two store calls (STOW-RS, and the raw file's URL: PUT and its
+progress) go under ``/<region>`` when the site has one. The token, study status
+and QIDO calls never take a region.
+
+Checksums: GRIP gives the SHA-256 (and MD5) of each stored file, computed over
+the whole file: in the study status, and in the raw PUT reply once the file is
+complete. The uploader compares them with its own (``Stored``).
 
 Paths are relative to the project's API base URL. Every value put in a path is
 URL-encoded. Request and response bodies are never logged.
@@ -45,15 +54,57 @@ class RawProgress:
 
 
 @dataclass(frozen=True)
+class Stored:
+    """GRIP's own account of a stored file: its SHA-256 (lower-case hex) and size, each None if GRIP gave none."""
+    sha256: str | None
+    size: int | None
+
+    def matches(self, sha256: str, size: int) -> bool:
+        return self.sha256 is not None and self.sha256 == sha256.lower() and self.size == size
+
+
+@dataclass(frozen=True)
 class ChunkResult:
     status: int
     offset: int | None
     complete: bool
+    stored: Stored | None = None  # once complete: GRIP's checksum and size of the whole file, if it gave them
+
+
+def stored_instance(status: dict[str, Any] | None, sop_uid: str) -> Stored | None:
+    """GRIP's checksum and size of one DICOM instance, from a study status. None if GRIP doesn't list it."""
+    return _listed(status, "instances", "sopInstanceUid", sop_uid)
+
+
+def stored_raw(status: dict[str, Any] | None, name: str) -> Stored | None:
+    """GRIP's checksum and size of one complete raw file, from a study status. None if GRIP doesn't list it
+    as complete."""
+    return _listed(status, "rawFiles", "name", name, complete=True)
+
+
+def _listed(status, key: str, id_key: str, value: str, *, complete: bool = False) -> Stored | None:
+    items = status.get(key) if isinstance(status, dict) else None
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict) and item.get(id_key) == value:
+            if complete and item.get("complete") is not True:
+                return None
+            return _stored(item)
+    return None
+
+
+def _stored(item: dict[str, Any]) -> Stored:
+    sha = item.get("sha256")
+    size = item.get("size")
+    ok_sha = isinstance(sha, str) and len(sha) == 64 and all(c in "0123456789abcdefABCDEF" for c in sha)
+    return Stored(sha.lower() if ok_sha else None,
+                  size if isinstance(size, int) and not isinstance(size, bool) else None)
 
 
 class GripApi:
-    def __init__(self, http: Http):
+    def __init__(self, http: Http, region: str | None = None):
         self.http = http
+        # The prefix of the two store calls only (STOW-RS and the raw file's URL). Never on token, status, QIDO.
+        self._store = f"/{quote_path(region)}" if region else ""
 
     def check_key(self, fresh: bool = False) -> None:
         """Get a token (or reuse a valid one). Raises KeyProblem, KeyRejected or Transient.
@@ -92,7 +143,7 @@ class GripApi:
             f"\r\n--{boundary}--\r\n".encode(),
         ])
         r = self.http.call(
-            "POST", f"/dicomweb/studies/{quote_path(study_uid)}", data=body,
+            "POST", f"{self._store}/dicomweb/studies/{quote_path(study_uid)}", data=body,
             headers={
                 "Content-Type": f'multipart/related; type="application/dicom"; boundary={boundary}',
                 "Accept": "application/dicom+json",
@@ -106,7 +157,7 @@ class GripApi:
     # ---- raw files -------------------------------------------------------------
 
     def _raw_path(self, study_uid: str, name: str) -> str:
-        return f"/v1/studies/{quote_path(study_uid)}/raw/{quote_path(name)}"
+        return f"{self._store}/v1/studies/{quote_path(study_uid)}/raw/{quote_path(name)}"
 
     def raw_progress(self, study_uid: str, name: str) -> RawProgress | None:
         """What GRIP already has of a raw file, or None if GRIP doesn't know the file (or the study)."""
@@ -149,11 +200,14 @@ class GripApi:
             body = r.json()
         except ValueError:
             body = None
+        stored = None
         if isinstance(body, dict):
             complete = complete or body.get("complete") is True
             if offset is None and isinstance(body.get("offset"), int):
                 offset = body["offset"]
-        return ChunkResult(r.status_code, offset, complete)
+            if complete:
+                stored = _stored(body)
+        return ChunkResult(r.status_code, offset, complete, stored)
 
 
 def _parse_stow(r: requests.Response) -> tuple[frozenset[str], dict[str, int | None]]:

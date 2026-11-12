@@ -26,10 +26,15 @@ File states (DICOM and RRDF)
     pulled      RRDF pulled into the staging area unchanged, hashed
     unassigned  only from releases before 0.1.16 (raw files are now matched by folder): moved into their study
     sending     an upload is in progress
+    stored      DICOM GRIP listed as stored, its checksum not checked yet (one
+                study status call checks them together); kept until GRIP's
+                SHA-256 and size match the Pi's
     retry_wait  timeout, 5xx or 429: tried again after next_attempt_at
     refused     GRIP refused it (other 4xx, a STOW failure reason, two
-                checksum resets): kept, flagged, retried only on request
-    confirmed   GRIP confirmed this file's own upload; local delete pending
+                checksum resets, GRIP's copy still different after a resend,
+                or no checksum from GRIP): kept, flagged, tried again daily
+    confirmed   GRIP confirmed this file's own upload and its SHA-256 and size
+                match the Pi's; local delete pending
     deleted     local copy (and Orthanc's) deleted; the row is kept so the
                 file is never pulled or uploaded again by mistake (a DICOM
                 instance the scanner sends again goes back to staged)
@@ -62,7 +67,7 @@ STUDY_STATES = (
 )
 FILE_STATES = (
     "staged", "seen", "pulled", "unassigned", "sending", "retry_wait", "refused",
-    "confirmed", "deleted",
+    "confirmed", "deleted", "stored",
 )
 
 _STUDY_MOVES = {
@@ -86,7 +91,9 @@ _FILE_MOVES = {
     "unassigned": {"pulled"},
     "staged": {"sending"},
     "pulled": {"sending"},
-    "sending": {"sending", "retry_wait", "refused", "confirmed"},
+    "sending": {"sending", "retry_wait", "refused", "confirmed", "stored"},
+    # Checked against GRIP's checksum: confirmed, sent again (staged), or kept and flagged.
+    "stored": {"confirmed", "staged", "refused"},
     "retry_wait": {"sending"},
     "refused": {"staged", "pulled"},
     "confirmed": {"deleted"},
@@ -94,8 +101,8 @@ _FILE_MOVES = {
     "deleted": {"staged"},
 }
 
-# Files the uploader still has to send.
-PENDING_FILE_STATES = ("staged", "pulled", "sending", "retry_wait")
+# Files the uploader still has to send, or (stored) to check against GRIP's checksum.
+PENDING_FILE_STATES = ("staged", "pulled", "sending", "retry_wait", "stored")
 # Files GRIP has (whether or not the local delete has happened yet).
 DONE_FILE_STATES = ("confirmed", "deleted")
 
