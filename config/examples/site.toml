@@ -56,6 +56,6 @@ stop_free_gb = 4
 # of this repository: your Hyperwheel admin puts the real one in the site file.
 api_base_url = "https://grip.example.org/api"
 token_url = "https://grip.example.org/api/get/token"
-# The region where GRIP stores this site's data (such as "westeurope"). Only
+# The region where GRIP stores this site's data (a name GRIP gives). Only
 # GRIP's two store calls carry it. A Pi set up without one sends no region.
-region = "westeurope"
+region = "region-a"

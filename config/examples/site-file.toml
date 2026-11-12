@@ -38,10 +38,10 @@ update_channel = "stable"
 
 # GRIP's address and region for the site (required). GRIP gives them to your
 # Hyperwheel admin. The address is never in the release or the public repository.
-# The region (such as "westeurope") is where GRIP stores the site's data.
+# The region (a lower-case name GRIP gives) is where GRIP stores the site's data.
 [grip]
 api_base_url = "https://grip.example.org/api"
 token_url = "https://grip.example.org/api/get/token"
-region = "westeurope"
+region = "region-a"
 
 # end of site file

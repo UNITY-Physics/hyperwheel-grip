@@ -4,7 +4,7 @@ Skipped unless these are set:
     HYPERWHEEL_GRIP_MOCK_BASE      the mock's API base URL (https://.../api)
     HYPERWHEEL_GRIP_MOCK_KEY_FILE  a mode-600 JSON file {"client_id": ..., "client_secret": ...}
 Optional:
-    HYPERWHEEL_GRIP_MOCK_REGION    a GRIP region (e.g. westeurope) for the two store calls. Unset: no region.
+    HYPERWHEEL_GRIP_MOCK_REGION    a GRIP region (e.g. region-a) for the two store calls. Unset: no region.
 
 Faults are injected with the mock's X-Mock-Fault header. GRIP's API has no
 sessions: DICOM by STOW-RS, raw files by PUT /v1/studies/{uid}/raw/{name}, and
@@ -213,7 +213,8 @@ def test_grip_stores_in_the_region_and_its_checksums_match_the_pis(mock_env):
     files = mock_env.store.files(study.id)
     assert [f.state for f in files] == ["deleted"] * 3, [(f.name, f.state, f.last_error) for f in files]
     on_grip = grip_study(mock_env, study.study_uid)
-    assert on_grip.get("region") == (REGION or "no_region_specified")
+    if REGION:
+        assert on_grip.get("region") == REGION
     listed = {i["sopInstanceUid"]: (i["sha256"], i["size"]) for i in on_grip["instances"]}
     listed.update({r["name"]: (r["sha256"], r["size"]) for r in on_grip["rawFiles"]})
     assert listed == hashes

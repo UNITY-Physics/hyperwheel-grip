@@ -346,12 +346,12 @@ in its own entry. The first `hyperwheel datasets` change drops that entry's
 address if it's the site's, and from then on the dataset follows the site's.
 An entry whose address differs keeps it (doctor lists it).
 
-**The region** (`[grip] region`, such as `westeurope`) is where GRIP stores
+**The region** (`[grip] region`, a lower-case name GRIP gives) is where GRIP stores
 the site's data. Only GRIP's two store calls carry it, as a prefix
 (`/<region>/dicomweb/studies` and `/<region>/v1/studies/{uid}/raw/{name}`).
 The token, study status and QIDO calls don't. It's required in a site file
 from 0.1.18. A Pi set up before then has none and keeps working as before,
-with no prefix (GRIP files that data under `no_region_specified`), until the
+with no prefix (GRIP files that data without a region), until the
 admin sets one with `hyperwheel grip address`. A dataset with an address of
 its own sends no region. A release before 0.1.18 can't read a `site.toml`
 with a region, so once a Pi has one, don't roll it back to 0.1.17 or older.

@@ -20,7 +20,7 @@ from hyperwheel.sitesetup import (BOOT_HOTSPOT, CABLE_FILE, CLEAR_SCREEN, HOTSPO
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "config" / "examples" / "site-file.toml"
 EXAMPLE_GRIP = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token",
-                            "westeurope")  # made up
+                            "region-a")  # made up
 HOTSPOT_PW = "hotspot-pw-not-for-logs"
 SCANNER_PW = "scanner-pw-not-for-logs"
 DM_PW = "borak-kefim-tumos"
@@ -236,9 +236,9 @@ def test_a_site_file_must_give_grips_address(pi):
     assert '[grip]\napi_base_url = "https://grip.example.org/api"' in parsed.site_toml.replace(
         "# GRIP's address for this site's region, from the site file. Never in the release.\n", "")
     address = '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n'
-    grip = address + 'region = "westeurope"\n'
+    grip = address + 'region = "region-a"\n'
     assert grip in TEMPLATE.read_text()
-    assert 'region = "westeurope"' in parsed.site_toml
+    assert 'region = "region-a"' in parsed.site_toml
     for text in (TEMPLATE.read_text().replace(grip, ""),
                  TEMPLATE.read_text().replace(grip, address),  # no region
                  TEMPLATE.read_text().replace(grip, '[grip]\napi_base_url = "https://grip.example.org/api"\n'),

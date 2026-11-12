@@ -8,9 +8,8 @@ data-manager account's sudo rule doesn't allow it.
 
 It shows the address and region in use, then asks for the new address (the API
 address GRIP gives, or Enter to keep it), the token address (by default the
-API address followed by ``/get/token``) and the region (such as
-``westeurope``: where GRIP stores the site's data, carried by the two store
-calls only). A Pi with no region yet must be given one here. It asks rather
+API address followed by ``/get/token``) and the region (the name GRIP gives
+for where it stores the site's data, carried by the two store calls only). A Pi with no region yet must be given one here. It asks rather
 than taking them after the command, so the sudo rule still allows only exact
 words.
 
@@ -138,13 +137,13 @@ class GripAddress:
             if not typed:
                 return now
         else:
-            typed = self.c.ask("GRIP region for this site (such as westeurope), from your Hyperwheel admin: ").strip()
+            typed = self.c.ask("GRIP region for this site, as GRIP gave it: ").strip()
             if not typed:
                 raise Stop("This Pi has no GRIP region yet, so one is needed. Nothing was changed.")
         try:
             return check_region(typed, "")
         except ConfigError:
-            raise Stop(f"{typed} isn't a GRIP region name. A region is one lower-case word such as westeurope. "
+            raise Stop(f"{typed} isn't a GRIP region name. A region is one lower-case name, as GRIP gave it. "
                        "Nothing was changed.") from None
 
     def _ask_url(self, prompt: str, default: str | None = None) -> str | None:

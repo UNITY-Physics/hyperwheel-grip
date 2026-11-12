@@ -124,19 +124,19 @@ class UpdateSettings:
 class GripSettings:
     api_base_url: str
     token_url: str
-    # GRIP's storage region for this site (e.g. "westeurope"). Only the two store calls (STOW-RS and the RRDF
+    # GRIP's storage region for this site, a name GRIP gives. Only the two store calls (STOW-RS and the RRDF
     # PUT) carry it, as a prefix: /<region>/dicomweb/studies and /<region>/v1/studies/{uid}/raw/{name}. None on a
     # Pi set up before regions: those calls go without a prefix, as before.
     region: str | None = None
 
 
-# A GRIP region name, as GRIP uses them (Azure's: westeurope, eastus, centralindia). Lower case, safe in a path.
+# A GRIP region name, as GRIP gives it: lower case, safe in a path.
 REGION = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 
 
 def check_region(value: object, where: str) -> str:
     if not isinstance(value, str) or not REGION.fullmatch(value):
-        raise ConfigError(f"{where}: a GRIP region is a lower-case name such as \"westeurope\", found {value!r}")
+        raise ConfigError(f"{where}: a GRIP region is one lower-case name, as GRIP gives it, found {value!r}")
     return value
 
 

@@ -73,7 +73,7 @@ class FakeStudy:
     # sop -> (sha256, series, tsuid, size, md5)
     stored: dict[str, tuple[str, str, str, int, str]] = field(default_factory=dict)
     raw: dict[str, RawUpload] = field(default_factory=dict)
-    region: str = "no_region_specified"
+    region: str | None = None  # the region of its store calls, None without a prefix
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 

@@ -8,7 +8,7 @@ EXAMPLES = Path(__file__).parent.parent / "config" / "examples"
 # A made-up GRIP address: GRIP's real ones are never in the repository.
 GRIP = '[grip]\napi_base_url = "https://grip.example.org/api"\ntoken_url = "https://grip.example.org/api/get/token"\n'
 EXAMPLE_GRIP = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token",
-                            "westeurope")
+                            "region-a")
 
 
 def write(tmp_path, text, name="f.toml", *, grip=True):

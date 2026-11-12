@@ -16,7 +16,7 @@ from hyperwheel.sitesetup import render_routing_toml
 CLIENT = "site-a-sandbox-client"
 
 
-def with_region(env, region="westeurope"):
+def with_region(env, region="region-a"):
     project = replace(env.routing.projects[PROJECT], region=region)
     env.routing = Routing(projects={PROJECT: project})
     return env
@@ -38,13 +38,13 @@ def test_only_the_store_calls_carry_the_region(env):
     study = env.stage_study(n_dicom=2, raw_sizes=(2_500_000,))
     env.uploader().run_once()
     assert states(env, study) == ["deleted"] * 3
-    assert env.fake.store_regions and set(env.fake.store_regions) == {"westeurope"}
-    assert env.fake.study_for(study.study_uid).region == "westeurope"
+    assert env.fake.store_regions and set(env.fake.store_regions) == {"region-a"}
+    assert env.fake.study_for(study.study_uid).region == "region-a"
     paths = [(m, p) for m, p, _ in env.fake.requests]
     stows = [p for m, p in paths if m == "POST" and "/dicomweb/" in p]
     raws = [p for m, p in paths if "/raw/" in p]
-    assert stows and all(p.startswith("/api/westeurope/dicomweb/studies/") for p in stows)
-    assert raws and all(p.startswith(f"/api/westeurope/v1/studies/{study.study_uid}/raw/") for p in raws)
+    assert stows and all(p.startswith("/api/region-a/dicomweb/studies/") for p in stows)
+    assert raws and all(p.startswith(f"/api/region-a/v1/studies/{study.study_uid}/raw/") for p in raws)
     # Token and study status: never a region.
     assert all(p == "/api/get/token" for m, p in paths if m == "POST" and "token" in p)
     status = [p for m, p in paths if m == "GET" and "/raw/" not in p]
@@ -56,11 +56,11 @@ def test_a_pi_with_no_region_sends_without_a_prefix(env):
     env.uploader().run_once()
     assert states(env, study) == ["deleted"] * 2
     assert set(env.fake.store_regions) == {None}
-    assert env.fake.study_for(study.study_uid).region == "no_region_specified"
+    assert env.fake.study_for(study.study_uid).region is None
 
 
 def test_a_region_is_url_safe_and_lower_case():
-    assert check_region("westeurope", "x") == "westeurope"
+    assert check_region("region-a", "x") == "region-a"
     for bad in ("", "West", "a/b", "..", "west europe", "x" * 64, 3):
         with pytest.raises(ConfigError):
             check_region(bad, "x")
@@ -76,15 +76,15 @@ def test_site_toml_region_is_optional_on_a_pi_and_checked(tmp_path):
     path = tmp_path / "site.toml"
     path.write_text(site_text(tmp_path, ""))
     assert load_site(path).grip.region is None
-    path.write_text(site_text(tmp_path, 'region = "eastus"\n'))
-    assert load_site(path).grip.region == "eastus"
+    path.write_text(site_text(tmp_path, 'region = "region-b"\n'))
+    assert load_site(path).grip.region == "region-b"
     path.write_text(site_text(tmp_path, 'region = "East US"\n'))
     with pytest.raises(ConfigError, match="region"):
         load_site(path)
 
 
 def test_the_region_goes_only_with_the_sites_address(tmp_path):
-    grip = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token", "westeurope")
+    grip = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token", "region-a")
     path = tmp_path / "routing.toml"
     path.write_text(render_routing_toml({
         "follows": {"logins": ["a"]},
@@ -92,7 +92,7 @@ def test_the_region_goes_only_with_the_sites_address(tmp_path):
         "elsewhere": {"logins": ["c"], "api_base_url": "https://other.example.org/api",
                       "token_url": "https://other.example.org/api/get/token"}}))
     projects = load_routing(path, grip=grip).projects
-    assert projects["follows"].region == projects["names-the-same"].region == "westeurope"
+    assert projects["follows"].region == projects["names-the-same"].region == "region-a"
     assert projects["elsewhere"].region is None
 
 

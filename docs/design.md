@@ -124,7 +124,7 @@ own and doesn't hold the raw files back. One file per request.
 - Raw files: `PUT /<region>/v1/studies/{StudyInstanceUID}/raw/{name}` in 8 MiB
   chunks with `Content-Range` (and `X-Chunk-SHA256`), the name URL-encoded, no
   series.
-- Region: the site's GRIP region (`[grip] region`, such as `westeurope`)
+- Region: the site's GRIP region (`[grip] region`, a name GRIP gives)
   prefixes those two store calls only (the raw file's progress `HEAD` is on
   the same URL). The token, study status and QIDO calls never take one. A Pi
   set up before regions has none and sends no prefix.
