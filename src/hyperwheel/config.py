@@ -4,7 +4,9 @@ Two files, both site-specific and both kept outside the release:
 
 - ``site.toml``: paths, upload settings, the raw-data rule, disk limits, the
   site's phantom Patient ID, time zone and Wi-Fi country, and GRIP's address
-  (``[grip]``, required: GRIP's addresses are never in the release).
+  (``[grip]``, required: GRIP's addresses are never in the release) with the
+  site's GRIP region (``region``: required in a site file, and a Pi set up
+  before regions keeps working without one).
 - ``routing.toml``: scanner login -> GRIP dataset (a "project" in the code).
   Each dataset is named by its GRIP client ID. A dataset may carry its own API
   address and token URL (Pis set up before GRIP's address was site-wide), else
@@ -122,6 +124,20 @@ class UpdateSettings:
 class GripSettings:
     api_base_url: str
     token_url: str
+    # GRIP's storage region for this site, a name GRIP gives. Only the two store calls (STOW-RS and the RRDF
+    # PUT) carry it, as a prefix: /<region>/dicomweb/studies and /<region>/v1/studies/{uid}/raw/{name}. None on a
+    # Pi set up before regions: those calls go without a prefix, as before.
+    region: str | None = None
+
+
+# A GRIP region name, as GRIP gives it: lower case, safe in a path.
+REGION = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
+
+
+def check_region(value: object, where: str) -> str:
+    if not isinstance(value, str) or not REGION.fullmatch(value):
+        raise ConfigError(f"{where}: a GRIP region is one lower-case name, as GRIP gives it, found {value!r}")
+    return value
 
 
 @dataclass(frozen=True)
@@ -165,6 +181,9 @@ class Project:
     patient_id_pattern: str | None = None
     # The dataset's GRIP client ID, which is its name for people. Datasets from before it was stored have none.
     client_id: str | None = None
+    # The site's GRIP region, for a dataset that uses the site's address. None for one with an address of its own,
+    # or on a Pi with no region yet: its store calls then go without a region prefix.
+    region: str | None = None
 
     @property
     def label(self) -> str:
@@ -261,11 +280,12 @@ def load_site(path: Path) -> SiteConfig:
     grip_data = data["grip"]
     if not isinstance(grip_data, dict):
         raise ConfigError(f"{where} [grip]: expected a table")
-    unknown = set(grip_data) - {"api_base_url", "token_url"}
+    unknown = set(grip_data) - {"api_base_url", "token_url", "region"}
     if unknown:
         raise ConfigError(f"{where} [grip]: unknown setting(s) {', '.join(sorted(unknown))}")
-    if set(grip_data) != {"api_base_url", "token_url"}:
+    if not {"api_base_url", "token_url"} <= set(grip_data):
         raise ConfigError(f"{where} [grip]: give both api_base_url and token_url")
+    region = check_region(grip_data["region"], f"{where} [grip].region") if "region" in grip_data else None
     updates = _section(UpdateSettings, data.get("updates", {}), f"{where} [updates]")
     if updates.channel not in ("dev", "pilot", "stable"):
         raise ConfigError(f"{where} [updates].channel must be dev, pilot or stable")
@@ -303,7 +323,8 @@ def load_site(path: Path) -> SiteConfig:
         hotspot=hotspot,
         grip=GripSettings(
             check_url(grip_data["api_base_url"], f"{where} [grip].api_base_url", test_mode=test_mode),
-            check_url(grip_data["token_url"], f"{where} [grip].token_url", test_mode=test_mode)),
+            check_url(grip_data["token_url"], f"{where} [grip].token_url", test_mode=test_mode),
+            region),
     )
 
 
@@ -373,13 +394,18 @@ def load_routing(path: Path, *, grip: GripSettings, test_mode: bool = False) -> 
                 re.compile(pattern)
             except (re.error, TypeError):
                 raise ConfigError(f"{at}.patient_id_pattern: not a valid regular expression") from None
+        api_base_url = check_url(entry.get("api_base_url", grip.api_base_url), f"{at}.api_base_url",
+                                 test_mode=test_mode)
+        token_url = check_url(entry.get("token_url", grip.token_url), f"{at}.token_url", test_mode=test_mode)
+        # The site's region goes with the site's address: a dataset with an address of its own has none.
+        site_address = (api_base_url, token_url) == (grip.api_base_url, grip.token_url)
         projects[name] = Project(
             name=name,
             logins=tuple(logins),
-            api_base_url=check_url(entry.get("api_base_url", grip.api_base_url), f"{at}.api_base_url",
-                                   test_mode=test_mode),
-            token_url=check_url(entry.get("token_url", grip.token_url), f"{at}.token_url", test_mode=test_mode),
+            api_base_url=api_base_url,
+            token_url=token_url,
             patient_id_pattern=pattern,
             client_id=client_id,
+            region=grip.region if site_address else None,
         )
     return Routing(projects=projects)

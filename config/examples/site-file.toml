@@ -36,10 +36,12 @@ update_channel = "stable"
 # lower case ("site_a/study_one" is "study_one"). A login that isn't listed is
 # never uploaded.
 
-# GRIP's address for the site's region (required). GRIP gives it to your
-# Hyperwheel admin. It is never in the release or the public repository.
+# GRIP's address and region for the site (required). GRIP gives them to your
+# Hyperwheel admin. The address is never in the release or the public repository.
+# The region (a lower-case name GRIP gives) is where GRIP stores the site's data.
 [grip]
 api_base_url = "https://grip.example.org/api"
 token_url = "https://grip.example.org/api/get/token"
+region = "region-a"
 
 # end of site file

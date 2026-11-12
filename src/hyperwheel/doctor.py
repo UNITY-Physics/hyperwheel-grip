@@ -106,6 +106,7 @@ def run(site: SiteConfig, routing: Routing, probes: Probes | None = None) -> tup
     own = sorted({p.api_base_url for p in routing.projects.values()} - {site.grip.api_base_url})
     out.append((NOTE, "GRIP address", site.grip.api_base_url
                 + (f" (and for some datasets: {', '.join(own)})" if own else "")))
+    out.append((NOTE, "GRIP region", site.grip.region or "none yet (your Hyperwheel admin sets it)"))
     # With no datasets yet, GRIP's own address is still worth checking.
     site_grip = Routing(projects={"": Project("", (), site.grip.api_base_url, site.grip.token_url)})
     hosts = reach.grip_hosts(routing) or reach.grip_hosts(site_grip)

@@ -20,7 +20,8 @@ from hyperwheel.sitesetup import render_routing_toml
 OTHER = "site-a-other"
 
 
-def site_toml(grip: GripSettings, tmp) -> str:
+def site_toml(grip: GripSettings, tmp, region: str | None = "region-a") -> str:
+    region_line = f'region = "{region}"\n' if region else ""
     return f"""\
 # Site settings: a comment that stays
 schema_version = 1
@@ -37,7 +38,7 @@ timeout_s = 5
 # GRIP's address for this site's region.
 api_base_url = "{grip.api_base_url}"
 token_url = "{grip.token_url}"   # trailing words go too
-
+{region_line}
 [hotspot]
 routing = true
 """
@@ -46,10 +47,10 @@ routing = true
 class Pi:
     """The env's Pi with its site.toml and routing file, and GRIP's new address (a second fake GRIP)."""
 
-    def __init__(self, env, new):
+    def __init__(self, env, new, region: str | None = "region-a"):
         self.env, self.new = env, new
         self.site_path = env.tmp / "site.toml"
-        self.site_path.write_text(site_toml(env.site.grip, env.tmp))
+        self.site_path.write_text(site_toml(env.site.grip, env.tmp, region))
         os.chmod(self.site_path, 0o644)
         self.site = load_site(self.site_path)
         self.routing_path = env.tmp / "routing.toml"
@@ -87,14 +88,14 @@ def pi(env, new):
 
 def test_the_new_address_is_saved_only_after_grip_there_gave_every_dataset_a_token(pi, env, new):
     before = pi.site_path.read_text()
-    typed = Scripted(answers=[new.base_url + "/", "", "yes"])
+    typed = Scripted(answers=[new.base_url + "/", "", "", "yes"])
     assert pi.run(typed) == 0, typed.text
     assert new.token_requests == 2  # a made-up key first, then the dataset's own
     assert pi.answered == [new.token_url]
 
     after = pi.site_path.read_text()
     site = load_site(pi.site_path)
-    assert site.grip == GripSettings(new.base_url, new.token_url)
+    assert site.grip == GripSettings(new.base_url, new.token_url, "region-a")
     assert replace(site, grip=pi.site.grip) == pi.site  # nothing else changed
     changed = [(a, b) for a, b in zip(before.splitlines(), after.splitlines()) if a != b]
     assert changed == [(f'api_base_url = "{env.fake.base_url}"', f'api_base_url = "{new.base_url}"'),
@@ -105,12 +106,12 @@ def test_the_new_address_is_saved_only_after_grip_there_gave_every_dataset_a_tok
     project = load_routing(pi.routing_path, test_mode=True, grip=site.grip).projects[PROJECT]
     assert (project.api_base_url, project.token_url) == (new.base_url, new.token_url)
     assert pi.restarts == [1]
-    assert f"now {new.base_url}" in typed.text
+    assert f"now {new.base_url}, region region-a" in typed.text
     assert OLD_SECRET not in typed.text and not list(env.tmp.glob(".*.new"))
 
 
 def test_a_token_address_of_its_own_can_be_given(pi, env, new):
-    typed = Scripted(answers=[new.base_url, new.base_url + "/get/token", "yes"])
+    typed = Scripted(answers=[new.base_url, new.base_url + "/get/token", "", "yes"])
     assert pi.run(typed) == 0, typed.text
     assert load_site(pi.site_path).grip.token_url == new.token_url
 
@@ -118,7 +119,7 @@ def test_a_token_address_of_its_own_can_be_given(pi, env, new):
 def test_a_key_the_new_address_refuses_changes_nothing(pi, env, new):
     new.clients["site-a-sandbox-client"] = "another-secret"
     before = pi.files()
-    typed = Scripted(answers=[new.base_url, "", "yes"])
+    typed = Scripted(answers=[new.base_url, "", "", "yes"])
     assert pi.run(typed) == 1
     assert pi.files() == before and not pi.restarts
     assert "refused" in typed.text and "Nothing was changed" in typed.text and "hyperwheel datasets change" in typed.text
@@ -128,7 +129,7 @@ def test_an_address_that_doesnt_answer_changes_nothing(pi, env, new):
     url = new.base_url
     new.stop()
     before = pi.files()
-    typed = Scripted(answers=[url, "", "yes"])
+    typed = Scripted(answers=[url, "", "", "yes"])
     assert pi.run(typed) == 1
     assert pi.files() == before and not pi.restarts
     assert "doesn't answer like GRIP" in typed.text
@@ -145,7 +146,7 @@ def test_only_an_https_address_is_taken(pi, typed_url):
 
 def test_enter_or_the_same_address_keeps_it(pi, env):
     before = pi.files()
-    for answers in ([""], [env.fake.base_url, ""]):
+    for answers in (["", ""], [env.fake.base_url, "", ""], ["", "region-a"]):
         typed = Scripted(answers=answers)
         assert pi.run(typed) == 0
         assert pi.files() == before and not pi.restarts
@@ -160,7 +161,7 @@ def test_a_dataset_with_an_address_of_its_own_keeps_it_and_isnt_checked(pi, env,
             PROJECT: {"logins": ["sandbox"]},
             OTHER: {"logins": ["other"], "api_base_url": elsewhere.base_url, "token_url": elsewhere.token_url}}))
         env.keys.write(OTHER, Credentials("other", "other-secret"))
-        typed = Scripted(answers=[new.base_url, "", "yes"])
+        typed = Scripted(answers=[new.base_url, "", "", "yes"])
         assert pi.run(typed) == 0, typed.text
         assert elsewhere.token_requests == 0 and new.token_requests == 2
         routing = load_routing(pi.routing_path, test_mode=True, grip=load_site(pi.site_path).grip)
@@ -174,17 +175,17 @@ def test_a_dataset_with_an_address_of_its_own_keeps_it_and_isnt_checked(pi, env,
 def test_with_no_key_to_check_the_new_address_must_answer_like_grip(pi, env, new):
     pi.routing_path.write_text(render_routing_toml({}))
     before = pi.files()
-    typed = Scripted(answers=[new.base_url, "", "yes"])
+    typed = Scripted(answers=[new.base_url, "", "", "yes"])
     assert pi.run(typed, answers=False) == 1
     assert pi.files() == before and "doesn't answer like GRIP" in typed.text
-    typed = Scripted(answers=[new.base_url, "", "yes"])
+    typed = Scripted(answers=[new.base_url, "", "", "yes"])
     assert pi.run(typed) == 0, typed.text
     assert pi.answered[-1] == new.token_url and load_site(pi.site_path).grip.api_base_url == new.base_url
 
 
 def test_a_dataset_with_no_key_is_said_and_the_rest_are_checked(pi, env, new):
     env.keys.path(PROJECT).unlink()
-    typed = Scripted(answers=[new.base_url, "", "yes"])
+    typed = Scripted(answers=[new.base_url, "", "", "yes"])
     assert pi.run(typed) == 0, typed.text
     assert "has no key stored" in typed.text and pi.answered == [new.token_url]
     assert "no dataset key to check it with" in typed.text
@@ -216,7 +217,7 @@ def test_only_root_runs_it(pi):
 
 def test_no_key_goes_to_an_address_that_doesnt_answer_like_grip(pi, env, new):
     before = pi.files()
-    typed = Scripted(answers=[new.base_url, "", "yes"])
+    typed = Scripted(answers=[new.base_url, "", "", "yes"])
     assert pi.run(typed, answers=False) == 1
     assert new.token_requests == 0  # not one real key was sent
     assert pi.files() == before and "no key was sent there" in typed.text
@@ -224,7 +225,7 @@ def test_no_key_goes_to_an_address_that_doesnt_answer_like_grip(pi, env, new):
 
 def test_nothing_is_sent_or_saved_unless_the_new_address_is_confirmed(pi, env, new):
     before = pi.files()
-    typed = Scripted(answers=[new.base_url, "", "no"])
+    typed = Scripted(answers=[new.base_url, "", "", "no"])
     assert pi.run(typed) == 0
     assert new.token_requests == 0 and not pi.answered and pi.files() == before
     assert "Nothing was changed" in typed.text
@@ -250,3 +251,51 @@ def test_an_address_that_redirects_doesnt_answer_like_grip(new):
         assert new.token_requests == 0
     finally:
         server.shutdown()
+
+
+def test_only_the_region_changes_without_asking_grip(pi, env, new):
+    before = pi.site_path.read_text()
+    typed = Scripted(answers=["", "region-b", "yes"])
+    assert pi.run(typed) == 0, typed.text
+    assert env.fake.token_requests == 0 and new.token_requests == 0 and not pi.answered
+    after = pi.site_path.read_text()
+    changed = [(a, b) for a, b in zip(before.splitlines(), after.splitlines()) if a != b]
+    assert changed == [('region = "region-a"', 'region = "region-b"')]
+    assert load_site(pi.site_path).grip == replace(pi.site.grip, region="region-b")
+    assert pi.restarts == [1] and "region region-b" in typed.text
+
+
+def test_a_pi_with_no_region_gets_one_added_after_the_token_address(env, new):
+    pi = Pi(env, new, region=None)
+    assert pi.site.grip.region is None  # a Pi set up before regions still loads
+    typed = Scripted(answers=["", "region-a", "yes"])
+    assert pi.run(typed) == 0, typed.text
+    lines = pi.site_path.read_text().splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith("token_url"))
+    assert lines[at + 1] == 'region = "region-a"'
+    assert load_site(pi.site_path).grip.region == "region-a"
+    assert "Region: none yet" in typed.text
+
+
+def test_a_pi_with_no_region_must_be_given_one(env, new):
+    pi = Pi(env, new, region=None)
+    before = pi.files()
+    typed = Scripted(answers=["", ""])
+    assert pi.run(typed) == 1
+    assert pi.files() == before and "no GRIP region yet" in typed.text and not pi.restarts
+
+
+@pytest.mark.parametrize("typed_region", ["Region A", "RegionA", "region/a", "../x"])
+def test_a_region_must_be_a_plain_lower_case_name(pi, typed_region):
+    before = pi.files()
+    typed = Scripted(answers=["", typed_region])
+    assert pi.run(typed) == 1
+    assert pi.files() == before and "isn't a GRIP region name" in typed.text
+
+
+def test_with_address_writes_or_adds_the_region():
+    grip = GripSettings("https://grip.example.org/api", "https://grip.example.org/api/get/token", "region-b")
+    assert with_address('[grip]\napi_base_url = "x"\ntoken_url = "y"\nregion = "region-a"\n', grip) == (
+        f'[grip]\napi_base_url = "{grip.api_base_url}"\ntoken_url = "{grip.token_url}"\nregion = "region-b"\n')
+    assert with_address('[grip]\napi_base_url = "x"\ntoken_url = "y"', grip) == (
+        f'[grip]\napi_base_url = "{grip.api_base_url}"\ntoken_url = "{grip.token_url}"\nregion = "region-b"\n')

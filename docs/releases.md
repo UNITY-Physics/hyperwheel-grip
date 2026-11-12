@@ -244,9 +244,9 @@ up, setup refuses to run, and the sudo rule no longer lists it.
    `config/examples/site-file.toml`: the site name, time zone, Wi-Fi country,
    update channel and phantom Patient ID. Which scanner logins go to which
    GRIP dataset is optional: datasets are usually added after setup, with
-   `hyperwheel datasets add`. GRIP's address for the site's region goes in
-   its `[grip]` section, which is required (setup refuses a site file
-   without it). No keys or passwords are in it. Setup asks for it to be
+   `hyperwheel datasets add`. GRIP's address and region for the site go in
+   its `[grip]` section (`api_base_url`, `token_url` and `region`), which is
+   required (setup refuses a site file without all three). No keys or passwords are in it. Setup asks for it to be
    pasted (it ends with the line `# end of site file`), checks it, shows it
    back and writes `site.toml` and `routing.toml` once it is confirmed. Site
    settings already on the Pi are never overwritten.
@@ -346,18 +346,30 @@ in its own entry. The first `hyperwheel datasets` change drops that entry's
 address if it's the site's, and from then on the dataset follows the site's.
 An entry whose address differs keeps it (doctor lists it).
 
+**The region** (`[grip] region`, a lower-case name GRIP gives) is where GRIP stores
+the site's data. Only GRIP's two store calls carry it, as a prefix
+(`/<region>/dicomweb/studies` and `/<region>/v1/studies/{uid}/raw/{name}`).
+The token, study status and QIDO calls don't. It's required in a site file
+from 0.1.18. A Pi set up before then has none and keeps working as before,
+with no prefix (GRIP files that data without a region), until the
+admin sets one with `hyperwheel grip address`. A dataset with an address of
+its own sends no region. A release before 0.1.18 can't read a `site.toml`
+with a region, so once a Pi has one, don't roll it back to 0.1.17 or older.
+
 If GRIP gives a site a new address after setup, the admin (only: the address
-decides which region the site's data goes to) changes it with `hyperwheel grip address`. It shows the address in use, asks
-for the new one and the token address (Enter takes the new address followed by
-`/get/token`), and asks rather than taking the address after the command, so
-the sudo rule still allows only exact words. It shows the new address back and
+decides which region the site's data goes to) changes it with `hyperwheel grip address`. It shows the address and
+region in use, asks for the new address (Enter keeps it), the token address
+(Enter takes the new address followed by `/get/token`) and the region (Enter
+keeps it, and a Pi with none must be given one), and asks rather than taking
+them after the command, so the sudo rule still allows only exact words. When
+only the region changes, nothing is sent to GRIP. It shows the new address back and
 asks for "yes". Then the new token address must refuse a made-up key the way
 GRIP does, so a mistyped address never gets a real key. Only then every
 dataset that uses the site's address gets a token from GRIP at the new address
 with its own key. If one is refused, or GRIP doesn't answer there, nothing
 changes. A dataset with no key stored is named and skipped.
-Only the two `[grip]` lines of `site.toml` change, and Hyperwheel and the
-Upload Monitor restart. A dataset with an address of its own keeps it.
+Only the `[grip]` lines of `site.toml` change (a `region` line is added after
+`token_url` if there's none), and Hyperwheel and the Upload Monitor restart. A dataset with an address of its own keeps it.
 
 Each site's data managers own their datasets and keys, and manage them through
 the **data-manager account**, which can run only the dataset, scanner-password

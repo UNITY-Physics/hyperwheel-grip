@@ -9,7 +9,7 @@ refuses to run once the Pi is set up. The steps:
    ``config/examples/site-file.toml``): the site name, time zone, Wi-Fi
    country, update channel, phantom Patient ID, and optionally which scanner
    logins go to which GRIP dataset (datasets are usually added after setup, with
-   ``hyperwheel datasets add``), and GRIP's address for the site's region
+   ``hyperwheel datasets add``), and GRIP's address and region for the site
    (``[grip]``, required: it is never in the release). It is checked and shown back to
    confirm, then written as ``site.toml`` and ``routing.toml``. Site settings
    already on the Pi are never overwritten.
@@ -182,8 +182,8 @@ def parse_site_file(text: str, *, zoneinfo: Path) -> SiteFile:
     projects = data.get("projects", {})
     if not isinstance(projects, dict) or any(not isinstance(entry, dict) for entry in projects.values()):
         raise SetupError("each dataset must be a [projects.<name>] table")
-    if not isinstance(data.get("grip"), dict) or set(data["grip"]) != {"api_base_url", "token_url"}:
-        raise SetupError("the site file needs a [grip] section with GRIP's api_base_url and token_url. "
+    if not isinstance(data.get("grip"), dict) or set(data["grip"]) != {"api_base_url", "token_url", "region"}:
+        raise SetupError("the site file needs a [grip] section with GRIP's api_base_url, token_url and region. "
                          "Your Hyperwheel admin has them")
     site_toml, routing_toml = render_site_toml(data), render_routing_toml(projects)
     with tempfile.TemporaryDirectory() as tmp:
@@ -229,7 +229,7 @@ def summary(site: SiteConfig, routing: Routing, now: float | None = None) -> lis
            f"  Updates: {site.updates.channel}",
            f"  Phantom Patient ID: {site.phantom_patient_id or 'none'}",
            f"  Hotspot devices reach the scanner and the internet: {'yes' if site.hotspot.routing else 'no'}",
-           f"  GRIP: {_host(site.grip.api_base_url)}",
+           f"  GRIP: {_host(site.grip.api_base_url)}, region {site.grip.region}",
            "  Datasets:" if routing.projects else "  Datasets: none yet (added after setup)"]
     for p in routing.projects.values():
         out.append(f"    {p.label}: login{'s' if len(p.logins) != 1 else ''} {', '.join(p.logins)}"

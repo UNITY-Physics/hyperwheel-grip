@@ -3,6 +3,8 @@
 Skipped unless these are set:
     HYPERWHEEL_GRIP_MOCK_BASE      the mock's API base URL (https://.../api)
     HYPERWHEEL_GRIP_MOCK_KEY_FILE  a mode-600 JSON file {"client_id": ..., "client_secret": ...}
+Optional:
+    HYPERWHEEL_GRIP_MOCK_REGION    a GRIP region (e.g. region-a) for the two store calls. Unset: no region.
 
 Faults are injected with the mock's X-Mock-Fault header. GRIP's API has no
 sessions: DICOM by STOW-RS, raw files by PUT /v1/studies/{uid}/raw/{name}, and
@@ -25,13 +27,14 @@ from pydicom.uid import generate_uid
 from fakes import FakeScanner
 from test_partial_send import FIRST, RAW_FIRST, RAW_SECOND, SECOND, pull, send
 from test_rawpull import FOLDER, raw
-from hyperwheel.config import Project, Routing, SiteConfig, UploadSettings, check_url
+from hyperwheel.config import Project, Routing, SiteConfig, UploadSettings, check_region, check_url
 from hyperwheel.keys import KeyStore
 from hyperwheel.state import Store
 from hyperwheel.uploader import Uploader
 
 BASE = os.environ.get("HYPERWHEEL_GRIP_MOCK_BASE")
 KEY_FILE = os.environ.get("HYPERWHEEL_GRIP_MOCK_KEY_FILE")
+REGION = os.environ.get("HYPERWHEEL_GRIP_MOCK_REGION") or None
 
 pytestmark = [
     pytest.mark.grip_mock,
@@ -49,7 +52,8 @@ def mock_env(tmp_path):
     os.chmod(dest, 0o600)
     site = SiteConfig(site="mock-test", staging_dir=tmp_path / "stagingArea", state_db=tmp_path / "state.db",
                       keys_dir=keys_dir, upload=UploadSettings(chunk_bytes=1024 * 1024, timeout_s=60))
-    routing = Routing(projects={PROJECT: Project(PROJECT, ("sandbox",), base, base + "/get/token")})
+    region = check_region(REGION, "HYPERWHEEL_GRIP_MOCK_REGION") if REGION else None
+    routing = Routing(projects={PROJECT: Project(PROJECT, ("sandbox",), base, base + "/get/token", region=region)})
     e = Env(tmp=tmp_path, fake=None, store=None, site=site, routing=routing,  # type: ignore[arg-type]
             keys=KeyStore(keys_dir), orthanc=FakeOrthanc())
     e.store = Store(site.state_db, clock=e.clock)
@@ -200,3 +204,37 @@ def test_partial_of_another_size_on_grip_is_sent_again_in_full(mock_env):
     on_grip = grip_study(mock_env, study.study_uid)
     assert [(r["size"], r["complete"]) for r in on_grip["rawFiles"]] == [(1_200_000, True)]
     assert not mock_env.store.open_flags(study_id=study.id)
+
+
+def test_grip_stores_in_the_region_and_its_checksums_match_the_pis(mock_env):
+    study = mock_env.stage_study(n_dicom=2, raw_sizes=(2 * 1024 * 1024 + 7,))
+    hashes = {(f.sop_uid or f.name): (f.sha256, f.size) for f in mock_env.store.files(study.id)}
+    uploader(mock_env).run_once()
+    files = mock_env.store.files(study.id)
+    assert [f.state for f in files] == ["deleted"] * 3, [(f.name, f.state, f.last_error) for f in files]
+    on_grip = grip_study(mock_env, study.study_uid)
+    if REGION:
+        assert on_grip.get("region") == REGION
+    listed = {i["sopInstanceUid"]: (i["sha256"], i["size"]) for i in on_grip["instances"]}
+    listed.update({r["name"]: (r["sha256"], r["size"]) for r in on_grip["rawFiles"]})
+    assert listed == hashes
+
+
+def test_a_wrong_copy_on_grip_is_found_and_sent_again(mock_env):
+    """A partial upload of other bytes is on GRIP (as after a restart part-way): resuming makes a wrong copy, the
+    checksum shows it, and the file is sent again in full."""
+    study = mock_env.stage_study(n_dicom=1, raw_sizes=(2 * 1024 * 1024 + 3,))
+    uploader(mock_env).run_once()  # the DICOM, and the RRDF file once
+    raw = mock_env.store.files(study.id, kind="rrdf")[0]
+    assert raw.state == "deleted"
+    name, size = "second_rrdf_20261027_141500.h5", 2 * 1024 * 1024 + 3
+    data = os.urandom(size)
+    api = uploader(mock_env)._api(mock_env.routing.projects[PROJECT])
+    api.raw_put(study.study_uid, name, os.urandom(1024 * 1024), 0, size)  # another version's first part
+    raw_id = mock_env.add_raw(study, name, size, data=data)
+    mock_env.store.move_study(study.id, "uploading")
+    uploader(mock_env).run_once()
+    raw = mock_env.store.file(raw_id)
+    assert raw.state == "deleted", (raw.state, raw.last_error)
+    on_grip = {r["name"]: r for r in grip_study(mock_env, study.study_uid)["rawFiles"]}
+    assert on_grip[name]["sha256"] == hashlib.sha256(data).hexdigest() and on_grip[name]["size"] == size
