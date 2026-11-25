@@ -399,6 +399,7 @@ PAGE = """<!doctype html>
   .keys { display:grid; gap:8px; }
   .key { display:flex; justify-content:space-between; gap:12px; }
   .key .bad { color:var(--bad); font-weight:600; } .key .ok { color:var(--ok); }
+  .key > span:first-child { flex:none; } .key > span:last-child { text-align:right; }
   footer { color:var(--sub); font-size:13px; margin:16px 4px; }
 </style>
 </head>
@@ -454,7 +455,7 @@ function render(s) {
     head.appendChild(el("span", "study-title", st.project ? st.session + " · " + st.project : st.session));
     head.appendChild(el("span", "meta", st.state));
     card.appendChild(head);
-    card.appendChild(el("div", "meta", "Patient ID: " + (st.patient_id.trim() ? st.patient_id : "(blank)")));
+    card.appendChild(el("div", "meta", "ID: " + (st.patient_id.trim() ? st.patient_id : "(blank)")));
     const counts = el("div", "counts");
     const d = st.dicom, r = st.raw;
     counts.appendChild(el("span", "pill" + (d.total && d.on_grip === d.total ? " done" : ""), d.text));

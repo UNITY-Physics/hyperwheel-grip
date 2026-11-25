@@ -207,6 +207,16 @@ def test_page_and_api_over_http(env):
         server.server_close()
 
 
+def test_session_card_says_id_not_patient_id():
+    assert '"ID: " + (st.patient_id' in dashboard.SCRIPT and "Patient ID" not in dashboard.SCRIPT
+
+
+def test_a_long_key_status_wraps_and_the_dataset_name_stays_on_one_line():
+    page = dashboard.PAGE
+    assert ".key > span:first-child { flex:none; }" in page
+    assert ".key > span:last-child { text-align:right; }" in page
+
+
 def test_page_never_inserts_data_as_html():
     assert "innerHTML" not in dashboard.SCRIPT and "insertAdjacentHTML" not in dashboard.SCRIPT
 

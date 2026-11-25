@@ -6,7 +6,7 @@ else is a flag for the data manager: the data still goes to GRIP unchanged,
 because data managers fix subjects and sessions in GRIP.
 
 Flag texts are written for data managers and carry no patient data; the
-dashboard shows the Patient ID next to them.
+dashboard shows the ID next to them.
 """
 
 from __future__ import annotations
@@ -61,23 +61,23 @@ def study_issues(store: Store, study: Study, instances: list[InstanceInfo], site
 
     if clean == "0":
         # Some scanner software sends 0 when the field is left empty. It's sent unchanged.
-        issues.append(Issue("BLANK_PATIENT_ID", "The Patient ID is blank (the scanner sent 0). Please move this "
+        issues.append(Issue("BLANK_PATIENT_ID", "The ID is blank (the scanner sent 0). Please move this "
                             "session to the right subject in GRIP."))
     elif clean == "":
-        issues.append(Issue("BLANK_PATIENT_ID", "The Patient ID is blank. GRIP files the session under a "
+        issues.append(Issue("BLANK_PATIENT_ID", "The ID is blank. GRIP files the session under a "
                             "MISSING_<n> subject. Please move it to the right subject in GRIP."))
     elif clean != pid:
-        issues.append(Issue("PATIENT_ID_SPACES", "The Patient ID starts or ends with a space. It is sent as typed. "
+        issues.append(Issue("PATIENT_ID_SPACES", "The ID starts or ends with a space. It is sent as typed. "
                             "Check the subject in GRIP."))
     if clean and project.patient_id_pattern:
         pattern = re.compile(project.patient_id_pattern)
         if not pattern.fullmatch(clean):
-            issues.append(Issue("PATIENT_ID_PATTERN", "The Patient ID doesn't look like this study's IDs. "
+            issues.append(Issue("PATIENT_ID_PATTERN", "The ID doesn't look like this study's IDs. "
                                 "Check it for a typo and fix the subject in GRIP if needed."))
         in_name = {m.group(0) for m in pattern.finditer(first.patient_name or "")}
         if in_name and clean not in in_name:
-            issues.append(Issue("PATIENT_ID_NAME_DIFFER", "The patient name contains a different ID from the "
-                                "Patient ID, which suggests a typo in one of them."))
+            issues.append(Issue("PATIENT_ID_NAME_DIFFER", "The name contains a different ID, which suggests a "
+                                "typo in one of them."))
 
     if site.phantom_patient_id:
         phantom = any(PHANTOM_SERIES in (i.series_description or "").lower() for i in instances)
@@ -94,12 +94,12 @@ def study_issues(store: Store, study: Study, instances: list[InstanceInfo], site
                 continue
             label = f"{other.study_date}_{(other.study_time or '')[:6]}"
             if other.study_date and other.study_date == study.study_date:
-                issues.append(Issue("SAME_ID_SAME_DAY", f"The same Patient ID was scanned twice on the same day (also in "
+                issues.append(Issue("SAME_ID_SAME_DAY", f"The same ID was scanned twice on the same day (also in "
                                     f"session {label}). If these are two children, fix one in GRIP."))
             if ((first.patient_sex and other.patient_sex and first.patient_sex != other.patient_sex) or
                     (first.patient_birth_date and other.patient_birth_date
                      and first.patient_birth_date != other.patient_birth_date)):
-                issues.append(Issue("DEMOGRAPHICS_DIFFER", f"Another session with this Patient ID ({label}) has a "
+                issues.append(Issue("DEMOGRAPHICS_DIFFER", f"Another session with this ID ({label}) has a "
                                     "different sex or birth date, so they may be different people."))
     return _dedupe(issues)
 
