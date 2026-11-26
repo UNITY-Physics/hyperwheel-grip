@@ -10,6 +10,12 @@ copy match the Pi's own:
 - RRDF: GRIP accepts the file's last chunk with ``complete: true``, and the
   reply (or else the study status) gives the whole file's SHA-256 and size.
 
+GRIP may take a little while to list a file it has just stored. For
+``CHECKSUM_WAIT_S`` after a file is stored, a study status that leaves it out
+or lists it without a checksum means "not yet": the file stays ``stored`` and is
+checked again on the next round. The same goes for an RRDF file whose last
+chunk's reply has no checksum. Only after that wait does what follows apply.
+
 On a mismatch the file is sent again from the start (it overwrites). If
 GRIP's copy still doesn't match, or GRIP gives no checksum, the file is kept
 and flagged. Anything else (a timeout, an error, a 202/409, a 200 that
@@ -85,6 +91,9 @@ _REFUSED_FLAGS = ("STOW_REFUSED", "STOW_FAILED", "RAW_NAME_REFUSED", "RAW_REFUSE
                   "DICOM_CHECKSUM", "NO_CHECKSUM")
 # A file whose copy on GRIP doesn't match the Pi's is sent again this many times before it is kept and flagged.
 CHECKSUM_RESENDS = 1
+# How long after a file is stored GRIP may still leave it out of the study status, or list it without its
+# checksum, before that counts as GRIP not having it (or not reporting a checksum).
+CHECKSUM_WAIT_S = 300.0
 
 
 @dataclass
@@ -194,6 +203,8 @@ class Uploader:
                     self._send_raw(api, project, study, f)
             if kind == "dicom":
                 self._check_dicom(api, study)
+            else:
+                self._check_raw(api, study)
         except KeyProblem as e:
             status = "missing" if isinstance(e, KeyMissing) else "unreadable"
             self._key_failed(project, status, str(e))
@@ -349,6 +360,9 @@ class Uploader:
                 self._report.confirmed += 1
                 log.info("DICOM %s of study %s: on GRIP, checksum matches", f.sop_uid, study.study_uid)
                 self._delete_local(self.store.file(f.id))
+            elif (got is None or not _reported(got)) and self._just_stored(f):
+                log.info("DICOM %s of study %s: GRIP doesn't list its checksum yet. Checking again on the next "
+                         "round", f.sop_uid, study.study_uid)
             elif got is not None and not _reported(got):
                 self._refuse(f, "NO_CHECKSUM", f"GRIP stored DICOM {f.sop_uid} but gave no checksum for it, so the "
                                                "Pi can't check GRIP's copy. Tell your Hyperwheel admin")
@@ -483,9 +497,10 @@ class Uploader:
                     if result.complete:
                         got = self._raw_on_grip(api, study, f, result.stored)
                         if got is None:
-                            self._refuse(f, "NO_CHECKSUM", f"GRIP stored RRDF file {f.name} but gave no checksum for "
-                                                           "it, so the Pi can't check GRIP's copy. Tell your "
-                                                           "Hyperwheel admin")
+                            # GRIP may not list its checksum yet: checked again on the next round (_check_raw).
+                            self.store.move_file(f.id, "stored", upload_offset=size, last_error=None)
+                            log.info("RRDF file %s of study %s: on GRIP, but no checksum from GRIP yet. Checking "
+                                     "again on the next round", f.name, study.study_uid)
                             return
                         if got.matches(f.sha256 or "", size):
                             self._confirmed(f, upload_offset=size)
@@ -529,6 +544,49 @@ class Uploader:
                     offset = 0
                     resent_last = False
         self._park(f, "upload did not finish")
+
+    def _check_raw(self, api: GripApi, study: Study) -> None:
+        """RRDF files GRIP took whole but gave no checksum for yet: look again in the study status. A match is
+        confirmed and deleted. Still nothing once ``CHECKSUM_WAIT_S`` has passed: kept and flagged. A mismatch is
+        sent again from the start, once, then kept and flagged."""
+        waiting = self.store.files(study.id, kind="rrdf", states=("stored",))
+        if not waiting:
+            return
+        try:
+            status = api.study_status(study.study_uid)
+        except Refused as e:
+            self.store.raise_flag("CHECKSUM_NOT_CHECKED", f"The Pi can't check GRIP's copies of this study's files "
+                                  f"({e}). They are kept on the Pi until it can.", study_id=study.id, level="alert")
+            log.warning("study %s: GRIP's checksums can't be read (%s). Files kept", study.study_uid, e)
+            return
+        self._grip_answered()
+        self.store.clear_flags("CHECKSUM_NOT_CHECKED", study_id=study.id)
+        for f in waiting:
+            got = stored_raw(status, f.name)
+            if got is not None and _reported(got) and got.matches(f.sha256 or "", f.size or -1):
+                self._confirmed(f, upload_offset=f.size)
+                self._report.confirmed += 1
+                log.info("RRDF file %s of study %s: on GRIP, checksum matches", f.name, study.study_uid)
+                self._delete_local(self.store.file(f.id))
+            elif got is None or not _reported(got):
+                if self._just_stored(f):
+                    log.info("RRDF file %s of study %s: GRIP doesn't list its checksum yet. Checking again on the "
+                             "next round", f.name, study.study_uid)
+                else:
+                    self._refuse(f, "NO_CHECKSUM", f"GRIP stored RRDF file {f.name} but gave no checksum for it, "
+                                                   "so the Pi can't check GRIP's copy. Tell your Hyperwheel admin")
+            elif f.checksum_resets >= CHECKSUM_RESENDS:
+                self._refuse(f, "RAW_CHECKSUM", f"GRIP's copy of RRDF file {f.name} doesn't match the Pi's, even "
+                                                "after sending it again")
+            else:
+                log.warning("RRDF file %s: GRIP's copy doesn't match the Pi's. Sending it again from the start",
+                            f.name)
+                self.store.move_file(f.id, "pulled", checksum_resets=f.checksum_resets + 1, upload_offset=0,
+                                     last_error="GRIP's copy doesn't match the Pi's copy")
+
+    def _just_stored(self, f: File) -> bool:
+        """Stored on GRIP less than CHECKSUM_WAIT_S ago, so GRIP may not list it, or its checksum, yet."""
+        return self.clock() - f.updated_at < CHECKSUM_WAIT_S
 
     def _raw_on_grip(self, api: GripApi, study: Study, f: File, reply: Stored | None) -> Stored | None:
         """GRIP's SHA-256 and size of a complete raw file: from the last chunk's reply, else from the study

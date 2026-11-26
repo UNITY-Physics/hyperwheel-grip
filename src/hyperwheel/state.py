@@ -92,8 +92,9 @@ _FILE_MOVES = {
     "staged": {"sending"},
     "pulled": {"sending"},
     "sending": {"sending", "retry_wait", "refused", "confirmed", "stored"},
-    # Checked against GRIP's checksum: confirmed, sent again (staged), or kept and flagged.
-    "stored": {"confirmed", "staged", "refused"},
+    # Checked against GRIP's checksum: confirmed, sent again (staged for DICOM, pulled for RRDF), or kept and
+    # flagged.
+    "stored": {"confirmed", "staged", "pulled", "refused"},
     "retry_wait": {"sending"},
     "refused": {"staged", "pulled"},
     "confirmed": {"deleted"},

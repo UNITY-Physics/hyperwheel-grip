@@ -30,6 +30,7 @@ import re
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -92,6 +93,14 @@ class FakeGrip:
         self.forget_partials = False
         # GRIP reports checksums (sha256, md5) of what it stored. False: a gateway that reports none.
         self.checksums = True
+        # A gateway that is slow to list what it stored: for lag_s after a file is stored, its study
+        # status leaves it out ("unlisted") or lists it without a checksum ("no_checksum"). By ``clock``.
+        self.lag_s = 0.0
+        self.lag_mode = "no_checksum"
+        self.clock: Callable[[], float] = time.time
+        self.stored_at: dict[str, float] = {}  # SOP Instance UID or raw file name -> when stored
+        # False: a raw PUT reply that gives no checksum even once the file is complete.
+        self.reply_checksums = True
         # SOP Instance UIDs or raw file names (-> how many times) whose stored copy GRIP gets wrong.
         self.corrupt: dict[str, int] = {}
         # The region of each store call, in order (None: no region prefix).
@@ -301,16 +310,30 @@ def _handler(fake: FakeGrip):
             with fake.lock:
                 return fake.studies.setdefault((client, uid), FakeStudy(client, uid))
 
+        def _lagging(self, key: str) -> bool:
+            return fake.clock() - fake.stored_at.get(key, float("-inf")) < fake.lag_s
+
+        def _listed(self, items: list[tuple[str, dict]]) -> list[dict]:
+            out = []
+            for key, item in items:
+                if self._lagging(key):
+                    if fake.lag_mode == "unlisted":
+                        continue
+                    item = {k: v for k, v in item.items() if k not in ("sha256", "md5")}
+                out.append(item)
+            return out
+
         def _study_json(self, s: FakeStudy) -> dict:
             return {
                 "studyInstanceUid": s.study_uid, "workspace": "example", "project": "demo", "quarantined": False,
                 "createdAt": s.created_at, "instanceCount": len(s.stored), "rawFileCount": len(s.raw),
                 "region": s.region,
-                "instances": [{"sopInstanceUid": k, "size": v[3],
-                               **({"sha256": v[0], "md5": v[4]} if fake.checksums else {})}
-                              for k, v in s.stored.items()],
-                "rawFiles": [{"name": n, "size": r.size, "complete": r.complete, "offset": len(r.data),
-                              **self._digests(r)} for n, r in s.raw.items()],
+                "instances": self._listed([(k, {"sopInstanceUid": k, "size": v[3],
+                                                **({"sha256": v[0], "md5": v[4]} if fake.checksums else {})})
+                                           for k, v in s.stored.items()]),
+                "rawFiles": self._listed([(n, {"name": n, "size": r.size, "complete": r.complete,
+                                               "offset": len(r.data), **self._digests(r)})
+                                          for n, r in s.raw.items()]),
             }
 
         def _digests(self, r: RawUpload) -> dict:
@@ -383,7 +406,12 @@ def _handler(fake: FakeGrip):
                     r.data[start:end + 1] = chunk
                 if r.complete and fake._corrupted(name):
                     r.data[0] ^= 0xFF  # GRIP put the file together wrongly
-                return self._reply(200, self._raw_json(s, name, r), {"Upload-Offset": str(len(r.data))})
+                if r.complete:
+                    fake.stored_at[name] = fake.clock()
+                reply = self._raw_json(s, name, r)
+                if not fake.reply_checksums:
+                    reply = {k: v for k, v in reply.items() if k not in ("sha256", "md5")}
+                return self._reply(200, reply, {"Upload-Offset": str(len(r.data))})
 
         def _stow(self, client: str, url_study: str | None, body: bytes, fault: Fault | None) -> None:
             if self.headers.get("Content-Encoding") == "gzip":
@@ -418,6 +446,7 @@ def _handler(fake: FakeGrip):
                     target = self._study(client, study)
                     self._store_call(target)
                     target.stored[sop] = (sha, series, tsuid, len(part), md5)  # a resend overwrites
+                    fake.stored_at[sop] = fake.clock()
                 stored.append((sop, cls))
 
             if fault is not None and fault.action == "stow_unlisted":
