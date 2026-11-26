@@ -368,3 +368,23 @@ def test_rrdf_listed_with_a_different_checksum_after_a_late_check_is_sent_again_
     chunks = -(-size // (1024 * 1024))
     assert starts.count("0") == 2 and len(puts) == 2 * chunks  # sent in full twice, not just its last chunk
     assert bytes(env.fake.study_for(study.study_uid).raw[raw.name].data) == data
+
+
+def test_the_daily_retry_of_an_rrdf_file_grip_copied_wrongly_sends_it_in_full(env):
+    study = env.stage_study(n_dicom=1, raw_sizes=(2_500_000,))  # three chunks
+    raw = env.store.files(study.id, kind="rrdf")[0]
+    data = Path(raw.path).read_bytes()
+    env.fake.corrupt[raw.name] = 2
+    for _ in range(2):
+        env.uploader().run_once()
+    assert env.store.file(raw.id).state == "refused" and flags(env, study) == ["RAW_CHECKSUM"]
+    before = len(env.fake.requests_matching("PUT", r"/raw/"))
+
+    # GRIP fixes it. A day later the file is tried again: in full, from byte 0, not just its last chunk.
+    env.advance(25 * 3600)
+    env.uploader().run_once()
+    puts = env.fake.requests_matching("PUT", r"/raw/")[before:]
+    starts = [h["Content-Range"].split()[1].split("-")[0] for _, _, h in puts]
+    assert starts[0] == "0" and len(puts) == 3
+    assert env.store.file(raw.id).state == "deleted" and flags(env, study) == []
+    assert bytes(env.fake.study_for(study.study_uid).raw[raw.name].data) == data

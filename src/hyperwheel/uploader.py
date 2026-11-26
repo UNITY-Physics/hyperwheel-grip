@@ -164,7 +164,8 @@ class Uploader:
             if not any(fl.code in _REFUSED_FLAGS for fl in self.store.open_flags(study_id=f.study_id)
                        if fl.file_id == f.id):
                 continue  # not GRIP's refusal: a problem with the Pi's copy, which trying again won't change
-            self.store.move_file(f.id, "staged" if f.kind == "dicom" else "pulled", checksum_resets=0)
+            fields = {} if f.kind == "dicom" else {"upload_offset": 0}  # RRDF: _send_raw decides where to start
+            self.store.move_file(f.id, "staged" if f.kind == "dicom" else "pulled", checksum_resets=0, **fields)
             log.info("%s %s: refused by GRIP a day or more ago. Trying it again", _label(f), _ident(f))
 
     def _confirmed(self, f: File, **fields) -> None:
@@ -411,8 +412,9 @@ class Uploader:
             self._key_working(project.name)
             self._grip_answered()
             same_size = progress is not None and progress.length == size
-            if f.checksum_resets > 0 and not f.upload_offset:
-                # GRIP's copy was found to differ from the Pi's: send it in full, never just its last chunk.
+            if not f.upload_offset and (f.checksum_resets > 0 or self._copy_on_grip_differed(f)):
+                # GRIP's copy was found to differ from the Pi's (now, or before the daily retry of a refused
+                # file): send it in full, never just its last chunk.
                 offset = 0
             elif same_size and progress.complete:
                 # GRIP has it all, but this run never saw the confirmation:
@@ -586,6 +588,10 @@ class Uploader:
                             f.name)
                 self.store.move_file(f.id, "pulled", checksum_resets=f.checksum_resets + 1, upload_offset=0,
                                      last_error="GRIP's copy doesn't match the Pi's copy")
+
+    def _copy_on_grip_differed(self, f: File) -> bool:
+        """The file is flagged because GRIP's copy of it didn't match the Pi's (the flag stays until GRIP takes it)."""
+        return any(fl.code == "RAW_CHECKSUM" and fl.file_id == f.id for fl in self.store.open_flags(study_id=f.study_id))
 
     def _just_stored(self, f: File) -> bool:
         """Stored on GRIP less than CHECKSUM_WAIT_S ago, so GRIP may not list it, or its checksum, yet."""
