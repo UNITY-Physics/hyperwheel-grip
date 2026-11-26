@@ -134,6 +134,7 @@ def test_patient_id_problems_are_flagged_but_sent_unchanged(env):
     assert codes(env, env.store.study_by_uid(blank)) == {"BLANK_PATIENT_ID"}
     assert env.store.study_by_uid(blank).state == "ready"
     assert "MISSING_" in env.store.open_flags(study_id=env.store.study_by_uid(blank).id)[0].detail
+    assert env.store.open_flags(study_id=study.id)[0].detail.startswith("The ID starts or ends with a space.")
 
 
 def test_patient_id_0_is_flagged_as_blank_and_says_what_the_scanner_sent(env):
@@ -144,7 +145,7 @@ def test_patient_id_0_is_flagged_as_blank_and_says_what_the_scanner_sent(env):
     assert study.state == "ready" and study.patient_id == "0"  # flagged, not held, sent unchanged
     flags = env.store.open_flags(study_id=study.id)
     assert [f.code for f in flags] == ["BLANK_PATIENT_ID"]
-    assert flags[0].detail.startswith("The Patient ID is blank (the scanner sent 0).")
+    assert flags[0].detail.startswith("The ID is blank (the scanner sent 0).")
     assert "MISSING_" not in flags[0].detail
 
 
@@ -153,6 +154,11 @@ def test_patient_id_pattern_and_name(env):
     uid = scan(env, n=1, patient_id="R2-042", patient_name="R2-0042^Baby")
     organiser(env).follow()
     assert codes(env, env.store.study_by_uid(uid)) == {"PATIENT_ID_PATTERN", "PATIENT_ID_NAME_DIFFER"}
+    details = {f.code: f.detail for f in env.store.open_flags(study_id=env.store.study_by_uid(uid).id)}
+    assert details["PATIENT_ID_PATTERN"].startswith("The ID doesn't look like this study's IDs.")
+    assert details["PATIENT_ID_NAME_DIFFER"] == ("The name contains a different ID, which suggests a typo "
+                                                 "in one of them.")
+    assert not any("Patient ID" in d for d in details.values())
 
 
 def test_phantom_checks_only_with_a_phantom_id(env):
@@ -175,6 +181,9 @@ def test_same_id_twice_a_day_and_different_sex(env):
     uid = scan(env, n=1, patient_id="R2-0007", sex="M", study_time="150000")
     organiser(env).follow()
     assert codes(env, env.store.study_by_uid(uid)) == {"SAME_ID_SAME_DAY", "DEMOGRAPHICS_DIFFER"}
+    details = {f.code: f.detail for f in env.store.open_flags(study_id=env.store.study_by_uid(uid).id)}
+    assert details["SAME_ID_SAME_DAY"].startswith("The same ID was scanned twice on the same day")
+    assert details["DEMOGRAPHICS_DIFFER"].startswith("Another session with this ID (")
 
 
 def test_routing_change_keeps_the_first_project(env):

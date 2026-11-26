@@ -227,7 +227,7 @@ def summary(site: SiteConfig, routing: Routing, now: float | None = None) -> lis
            f"  Time zone: {site.time_zone or 'not set'}{local}",
            f"  Wi-Fi country: {site.wifi_country or 'not set'}",
            f"  Updates: {site.updates.channel}",
-           f"  Phantom Patient ID: {site.phantom_patient_id or 'none'}",
+           f"  Phantom ID: {site.phantom_patient_id or 'none'}",
            f"  Hotspot devices reach the scanner and the internet: {'yes' if site.hotspot.routing else 'no'}",
            f"  GRIP: {_host(site.grip.api_base_url)}, region {site.grip.region}",
            "  Datasets:" if routing.projects else "  Datasets: none yet (added after setup)"]
