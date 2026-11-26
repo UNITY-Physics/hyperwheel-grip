@@ -411,7 +411,10 @@ class Uploader:
             self._key_working(project.name)
             self._grip_answered()
             same_size = progress is not None and progress.length == size
-            if same_size and progress.complete:
+            if f.checksum_resets > 0 and not f.upload_offset:
+                # GRIP's copy was found to differ from the Pi's: send it in full, never just its last chunk.
+                offset = 0
+            elif same_size and progress.complete:
                 # GRIP has it all, but this run never saw the confirmation:
                 # send the last chunk again to get this file's own confirmation.
                 offset = last_chunk_start

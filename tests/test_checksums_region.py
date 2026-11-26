@@ -344,14 +344,16 @@ def test_dicom_still_unlisted_after_the_wait_is_sent_again_once_then_flagged(env
     assert len(env.fake.requests_matching("POST", r"/dicomweb/studies/")) == 2
 
 
-def test_rrdf_listed_with_a_different_checksum_after_a_late_check_is_sent_again(env):
+@pytest.mark.parametrize("size", [500_000, 2_500_000])  # one chunk, and three
+def test_rrdf_listed_with_a_different_checksum_after_a_late_check_is_sent_again_in_full(env, size):
     env.fake.reply_checksums = False
     lagging(env, "no_checksum")
-    study = env.stage_study(n_dicom=1, raw_sizes=(500_000,))
+    study = env.stage_study(n_dicom=1, raw_sizes=(size,))
     dicom = env.store.files(study.id, kind="dicom")[0]
     for state in ("sending", "confirmed", "deleted"):
         env.store.move_file(dicom.id, state)
     raw = env.store.files(study.id, kind="rrdf")[0]
+    data = Path(raw.path).read_bytes()
     env.fake.corrupt[raw.name] = 1
     env.uploader().run_once()
     env.advance(61)
@@ -361,3 +363,8 @@ def test_rrdf_listed_with_a_different_checksum_after_a_late_check_is_sent_again(
     env.advance(61)
     env.uploader().run_once()
     assert env.store.file(raw.id).state == "deleted" and flags(env, study) == []
+    puts = env.fake.requests_matching("PUT", r"/raw/")
+    starts = [h.get("Content-Range", "").split()[1].split("-")[0] for _, _, h in puts]
+    chunks = -(-size // (1024 * 1024))
+    assert starts.count("0") == 2 and len(puts) == 2 * chunks  # sent in full twice, not just its last chunk
+    assert bytes(env.fake.study_for(study.study_uid).raw[raw.name].data) == data
