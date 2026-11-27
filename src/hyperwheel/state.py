@@ -26,9 +26,10 @@ File states (DICOM and RRDF)
     pulled      RRDF pulled into the staging area unchanged, hashed
     unassigned  only from releases before 0.1.16 (raw files are now matched by folder): moved into their study
     sending     an upload is in progress
-    stored      DICOM GRIP listed as stored, its checksum not checked yet (one
-                study status call checks them together); kept until GRIP's
-                SHA-256 and size match the Pi's
+    stored      DICOM GRIP listed as stored, or RRDF GRIP took whole but gave no
+                checksum for yet, its checksum not checked yet (one study
+                status call checks a study's files together); kept until
+                GRIP's SHA-256 and size match the Pi's
     retry_wait  timeout, 5xx or 429: tried again after next_attempt_at
     refused     GRIP refused it (other 4xx, a STOW failure reason, two
                 checksum resets, GRIP's copy still different after a resend,
@@ -92,8 +93,9 @@ _FILE_MOVES = {
     "staged": {"sending"},
     "pulled": {"sending"},
     "sending": {"sending", "retry_wait", "refused", "confirmed", "stored"},
-    # Checked against GRIP's checksum: confirmed, sent again (staged), or kept and flagged.
-    "stored": {"confirmed", "staged", "refused"},
+    # Checked against GRIP's checksum: confirmed, sent again (staged for DICOM, pulled for RRDF), or kept and
+    # flagged.
+    "stored": {"confirmed", "staged", "pulled", "refused"},
     "retry_wait": {"sending"},
     "refused": {"staged", "pulled"},
     "confirmed": {"deleted"},

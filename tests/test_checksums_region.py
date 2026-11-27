@@ -12,6 +12,7 @@ from fakegrip import FakeStudy, RawUpload
 
 from hyperwheel.config import ConfigError, GripSettings, Routing, check_region, load_routing, load_site
 from hyperwheel.sitesetup import render_routing_toml
+from hyperwheel.uploader import CHECKSUM_WAIT_S
 
 CLIENT = "site-a-sandbox-client"
 
@@ -136,6 +137,11 @@ def test_no_checksum_from_grip_keeps_every_file_and_flags_it(env):
     env.fake.checksums = False
     study = env.stage_study(n_dicom=2, raw_sizes=(1_200_000,))
     env.uploader().run_once()
+    # GRIP may just be slow to list them: nothing is flagged for the first few minutes.
+    assert sorted(f.state for f in env.store.files(study.id, kind="dicom")) == ["stored", "stored"]
+    assert flags(env, study) == []
+    env.advance(CHECKSUM_WAIT_S + 1)
+    env.uploader().run_once()
     files = env.store.files(study.id)
     assert all(Path(f.path).exists() for f in files) and env.orthanc.deleted == []
     assert sorted(f.state for f in files if f.kind == "dicom") == ["refused", "refused"]
@@ -210,9 +216,13 @@ def test_rrdf_with_no_checksum_from_grip_is_kept_and_flagged(env):
         env.store.move_file(dicom.id, state)
     env.fake.checksums = False
     env.uploader().run_once()
+    assert env.store.file(raw.id).state == "stored" and flags(env, study) == []  # GRIP may just be slow
+    env.advance(CHECKSUM_WAIT_S + 1)
+    env.uploader().run_once()
     raw = env.store.file(raw.id)
     assert raw.state == "refused" and Path(raw.path).exists()
     assert flags(env, study) == ["NO_CHECKSUM"]
+    assert len(env.fake.requests_matching("PUT", r"/raw/")) == 2  # sent once (two chunks), not again
 
 
 def test_a_resumed_upload_whose_first_part_came_from_another_copy_is_caught_and_sent_again(env):
@@ -262,3 +272,119 @@ def test_the_checksum_comes_from_the_study_status_if_the_put_reply_has_none(env,
     raw = env.store.files(study.id, kind="rrdf")[0]
     assert raw.state == "deleted"
     assert env.fake.requests_matching("GET", rf"^/api/v1/studies/{study.study_uid}$")
+
+
+# ---- a gateway that is slow to list what it stored ------------------------------------------------------
+
+
+def lagging(env, mode, seconds=60.0):
+    env.fake.clock = env.clock
+    env.fake.lag_mode = mode
+    env.fake.lag_s = seconds
+
+
+@pytest.mark.parametrize("mode", ["unlisted", "no_checksum"])
+def test_dicom_grip_lists_late_is_checked_again_not_sent_again_or_flagged(env, mode):
+    lagging(env, mode)
+    study = env.stage_study(n_dicom=3, raw_sizes=())
+    env.uploader().run_once()
+    assert states(env, study) == ["stored"] * 3 and flags(env, study) == []
+    env.advance(30)
+    env.uploader().run_once()  # still lagging: still waiting
+    assert states(env, study) == ["stored"] * 3 and flags(env, study) == []
+    env.advance(31)
+    env.uploader().run_once()
+    assert states(env, study) == ["deleted"] * 3 and flags(env, study) == []
+    assert len(env.fake.requests_matching("POST", r"/dicomweb/studies/")) == 3  # each sent once
+
+
+def test_rrdf_waits_for_its_dicom_to_be_checked_then_goes(env):
+    lagging(env, "no_checksum")
+    study = env.stage_study(n_dicom=1, raw_sizes=(1_500_000,))
+    env.uploader().run_once()
+    assert not env.fake.requests_matching("PUT", r"/raw/")
+    env.advance(61)
+    env.uploader().run_once()  # DICOM checked and deleted, then the RRDF file goes
+    # The last chunk's reply carries the checksum, so the status's lag doesn't hold the RRDF file up.
+    assert states(env, study) == ["deleted", "deleted"] and flags(env, study) == []
+
+
+def test_rrdf_reply_without_a_checksum_is_checked_again_in_the_study_status(env):
+    env.fake.reply_checksums = False
+    lagging(env, "no_checksum")
+    study = env.stage_study(n_dicom=1, raw_sizes=(1_500_000,))
+    dicom = env.store.files(study.id, kind="dicom")[0]
+    for state in ("sending", "confirmed", "deleted"):  # its DICOM is already on GRIP
+        env.store.move_file(dicom.id, state)
+    raw = env.store.files(study.id, kind="rrdf")[0]
+    env.uploader().run_once()
+    assert env.store.file(raw.id).state == "stored" and Path(raw.path).exists() and flags(env, study) == []
+    env.advance(30)
+    env.uploader().run_once()
+    assert env.store.file(raw.id).state == "stored" and flags(env, study) == []
+    env.advance(31)
+    env.uploader().run_once()
+    assert env.store.file(raw.id).state == "deleted" and not Path(raw.path).exists() and flags(env, study) == []
+    assert len(env.fake.requests_matching("PUT", r"/raw/")) == 2  # sent once (two chunks), not again
+
+
+def test_dicom_still_unlisted_after_the_wait_is_sent_again_once_then_flagged(env):
+    lagging(env, "unlisted", seconds=10 * CHECKSUM_WAIT_S)
+    study = env.stage_study(n_dicom=1, raw_sizes=())
+    f = env.store.files(study.id)[0]
+    env.uploader().run_once()
+    env.advance(CHECKSUM_WAIT_S + 1)
+    env.uploader().run_once()  # today's behaviour after the wait: sent again
+    assert env.store.file(f.id).state in ("stored", "staged") and flags(env, study) == []
+    for _ in range(3):
+        env.advance(CHECKSUM_WAIT_S + 1)
+        env.uploader().run_once()
+    assert env.store.file(f.id).state == "refused" and Path(f.path).exists()
+    assert flags(env, study) == ["DICOM_CHECKSUM"]
+    assert len(env.fake.requests_matching("POST", r"/dicomweb/studies/")) == 2
+
+
+@pytest.mark.parametrize("size", [500_000, 2_500_000])  # one chunk, and three
+def test_rrdf_listed_with_a_different_checksum_after_a_late_check_is_sent_again_in_full(env, size):
+    env.fake.reply_checksums = False
+    lagging(env, "no_checksum")
+    study = env.stage_study(n_dicom=1, raw_sizes=(size,))
+    dicom = env.store.files(study.id, kind="dicom")[0]
+    for state in ("sending", "confirmed", "deleted"):
+        env.store.move_file(dicom.id, state)
+    raw = env.store.files(study.id, kind="rrdf")[0]
+    data = Path(raw.path).read_bytes()
+    env.fake.corrupt[raw.name] = 1
+    env.uploader().run_once()
+    env.advance(61)
+    env.uploader().run_once()  # listed now, but different: back in line to be sent in full
+    assert env.store.file(raw.id).state == "pulled" and flags(env, study) == []
+    env.uploader().run_once()
+    env.advance(61)
+    env.uploader().run_once()
+    assert env.store.file(raw.id).state == "deleted" and flags(env, study) == []
+    puts = env.fake.requests_matching("PUT", r"/raw/")
+    starts = [h.get("Content-Range", "").split()[1].split("-")[0] for _, _, h in puts]
+    chunks = -(-size // (1024 * 1024))
+    assert starts.count("0") == 2 and len(puts) == 2 * chunks  # sent in full twice, not just its last chunk
+    assert bytes(env.fake.study_for(study.study_uid).raw[raw.name].data) == data
+
+
+def test_the_daily_retry_of_an_rrdf_file_grip_copied_wrongly_sends_it_in_full(env):
+    study = env.stage_study(n_dicom=1, raw_sizes=(2_500_000,))  # three chunks
+    raw = env.store.files(study.id, kind="rrdf")[0]
+    data = Path(raw.path).read_bytes()
+    env.fake.corrupt[raw.name] = 2
+    for _ in range(2):
+        env.uploader().run_once()
+    assert env.store.file(raw.id).state == "refused" and flags(env, study) == ["RAW_CHECKSUM"]
+    before = len(env.fake.requests_matching("PUT", r"/raw/"))
+
+    # GRIP fixes it. A day later the file is tried again: in full, from byte 0, not just its last chunk.
+    env.advance(25 * 3600)
+    env.uploader().run_once()
+    puts = env.fake.requests_matching("PUT", r"/raw/")[before:]
+    starts = [h["Content-Range"].split()[1].split("-")[0] for _, _, h in puts]
+    assert starts[0] == "0" and len(puts) == 3
+    assert env.store.file(raw.id).state == "deleted" and flags(env, study) == []
+    assert bytes(env.fake.study_for(study.study_uid).raw[raw.name].data) == data
