@@ -62,7 +62,7 @@ from pathlib import Path
 
 import requests
 
-from . import reach
+from . import reach, speed
 from .config import Project, Routing, SiteConfig
 from .grip import (AuthFailed, GripApi, Http, KeyRejected, Refused, Stored, TokenManager, Transient, stored_instance,
                    stored_raw)
@@ -446,6 +446,12 @@ class Uploader:
         resent_last = False
         restarted = offset == 0
         conflicts = failures = good = 0
+        # Upload speed, for the log and the Upload Monitor only: the bytes GRIP accepted in this try, over the
+        # time from the first chunk to the answer to the last.
+        first_sent: float | None = None
+        answered = 0.0
+        accepted = 0
+        retried = False
         steps_left = 3 * (size // self.settings.min_chunk_bytes + 1) + 10  # guards against a server that never moves on
         with open(f.path or "", "rb") as fh:
             while steps_left > 0:
@@ -459,10 +465,13 @@ class Uploader:
                 fh.seek(offset)
                 chunk = fh.read(self._chunk_bytes)
                 started = self.monotonic()
+                if first_sent is None:
+                    first_sent = started
                 try:
                     result = api.raw_put(study.study_uid, f.name, chunk, offset, size, attempts=1)
                 except Transient as e:
                     failures += 1
+                    retried = True
                     if failures >= self.settings.attempts_per_call:
                         raise
                     if e.no_answer and self._chunk_bytes > self.settings.min_chunk_bytes:
@@ -486,7 +495,9 @@ class Uploader:
                 failures = 0
                 if result.status == 200:
                     conflicts = 0
-                    took = self.monotonic() - started
+                    accepted += len(chunk)
+                    answered = self.monotonic()
+                    took = answered - started
                     if took > self.settings.target_chunk_s and self._chunk_bytes > self.settings.min_chunk_bytes:
                         self._chunk_bytes = max(self.settings.min_chunk_bytes, self._chunk_bytes // 2)
                         good = 0
@@ -510,8 +521,15 @@ class Uploader:
                         if got.matches(f.sha256 or "", size):
                             self._confirmed(f, upload_offset=size)
                             self._report.confirmed += 1
-                            log.info("RRDF file %s of study %s: on GRIP, checksum matches", f.name, study.study_uid)
+                            seconds = answered - (first_sent or answered)
+                            # A speed only when this try sent the whole file once, with no retry (not resumed,
+                            # not sent again, no wait for GRIP).
+                            rate = speed.measured(accepted, seconds) if accepted == size and not retried else None
+                            log.info("RRDF file %s of study %s: on GRIP, checksum matches (%s)", f.name,
+                                     study.study_uid, speed.describe(size, seconds, rate))
                             self._delete_local(self.store.file(f.id))
+                            if rate is not None:
+                                self._record_speed(rate)
                             return
                         resets += 1
                         self.store.update_file(f.id, checksum_resets=resets, upload_offset=0)
@@ -592,6 +610,13 @@ class Uploader:
     def _copy_on_grip_differed(self, f: File) -> bool:
         """The file is flagged because GRIP's copy of it didn't match the Pi's (the flag stays until GRIP takes it)."""
         return any(fl.code == "RAW_CHECKSUM" and fl.file_id == f.id for fl in self.store.open_flags(study_id=f.study_id))
+
+    def _record_speed(self, bytes_per_s: float) -> None:
+        """For the Upload Monitor only: a failure here never stops an upload."""
+        try:
+            speed.record(self.store, bytes_per_s, self.clock())
+        except Exception as e:  # noqa: BLE001 - display only
+            log.warning("Upload speed not saved (%s)", e)
 
     def _just_stored(self, f: File) -> bool:
         """Stored on GRIP less than CHECKSUM_WAIT_S ago, so GRIP may not list it, or its checksum, yet."""

@@ -579,6 +579,14 @@ class Store:
             db.execute("INSERT INTO cursors (name, value) VALUES (?, ?) "
                        "ON CONFLICT(name) DO UPDATE SET value = excluded.value", (name, value))
 
+    def delete_cursors(self, prefix: str, *, keep: set[str]) -> None:
+        """Remove the cursors whose name starts with ``prefix``, except those in ``keep``."""
+        with self.transaction() as db:
+            for (name,) in db.execute("SELECT name FROM cursors WHERE substr(name, 1, ?) = ?",
+                                      (len(prefix), prefix)).fetchall():
+                if name not in keep:
+                    db.execute("DELETE FROM cursors WHERE name = ?", (name,))
+
     def last_arrival(self) -> float | None:
         """When the newest study or file was first recorded (the updater waits until this is long ago)."""
         row = self._db.execute("SELECT max(t) AS t FROM (SELECT max(created_at) AS t FROM files "
