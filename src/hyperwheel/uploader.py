@@ -62,7 +62,7 @@ from pathlib import Path
 
 import requests
 
-from . import reach
+from . import reach, speed
 from .config import Project, Routing, SiteConfig
 from .grip import (AuthFailed, GripApi, Http, KeyRejected, Refused, Stored, TokenManager, Transient, stored_instance,
                    stored_raw)
@@ -446,6 +446,10 @@ class Uploader:
         resent_last = False
         restarted = offset == 0
         conflicts = failures = good = 0
+        # Upload speed, for the log and the Upload Monitor only: the bytes GRIP accepted in this try, over the
+        # time from the first chunk to the answer to the last.
+        first_sent: float | None = None
+        accepted = 0
         steps_left = 3 * (size // self.settings.min_chunk_bytes + 1) + 10  # guards against a server that never moves on
         with open(f.path or "", "rb") as fh:
             while steps_left > 0:
@@ -459,6 +463,8 @@ class Uploader:
                 fh.seek(offset)
                 chunk = fh.read(self._chunk_bytes)
                 started = self.monotonic()
+                if first_sent is None:
+                    first_sent = started
                 try:
                     result = api.raw_put(study.study_uid, f.name, chunk, offset, size, attempts=1)
                 except Transient as e:
@@ -486,6 +492,7 @@ class Uploader:
                 failures = 0
                 if result.status == 200:
                     conflicts = 0
+                    accepted += len(chunk)
                     took = self.monotonic() - started
                     if took > self.settings.target_chunk_s and self._chunk_bytes > self.settings.min_chunk_bytes:
                         self._chunk_bytes = max(self.settings.min_chunk_bytes, self._chunk_bytes // 2)
@@ -510,7 +517,13 @@ class Uploader:
                         if got.matches(f.sha256 or "", size):
                             self._confirmed(f, upload_offset=size)
                             self._report.confirmed += 1
-                            log.info("RRDF file %s of study %s: on GRIP, checksum matches", f.name, study.study_uid)
+                            seconds = self.monotonic() - (first_sent or started)
+                            # A speed only when this try sent the whole file once (not resumed, not sent again).
+                            rate = speed.measured(accepted, seconds) if accepted == size else None
+                            if rate is not None:
+                                speed.record(self.store, rate, self.clock())
+                            log.info("RRDF file %s of study %s: on GRIP, checksum matches (%s)", f.name,
+                                     study.study_uid, speed.describe(size, seconds, rate))
                             self._delete_local(self.store.file(f.id))
                             return
                         resets += 1
