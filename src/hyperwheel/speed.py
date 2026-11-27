@@ -3,12 +3,12 @@
 Nothing here changes how files are sent. Each RRDF file of at least
 ``MIN_BYTES`` that goes up whole in one try (not resumed, not sent again, no
 retry) gives a speed: its size over the time from its first chunk being sent to
-GRIP's answer to the last. Smaller files are left out: their time is mostly waiting for an answer.
+GRIP's answer to the last.
 
-The speeds are kept in the state store's cursors table (whole numbers), so the
-store's layout doesn't change: the last speed and when it was measured, and
-each day's top speed. The top shown is the best of the last ``TOP_DAYS``
-days, today included. Days older than that are removed.
+The Upload Monitor shows the average of the last ``AVERAGE_OF`` such files:
+their total bytes over their total seconds. They are kept in the state store's
+cursors table (whole numbers: bytes and milliseconds, in ``AVERAGE_OF`` slots
+used in turn), so the store's layout doesn't change.
 
 MB here is 1,000,000 bytes.
 """
@@ -18,12 +18,21 @@ from __future__ import annotations
 from .state import Store
 
 MIN_BYTES = 1_000_000
-TOP_DAYS = 7
-DAY_S = 86400
+AVERAGE_OF = 5
 
-LAST = "rrdf_speed_last"  # bytes per second
-LAST_AT = "rrdf_speed_last_at"  # seconds since the epoch
-_DAY = "rrdf_speed_top_day_"  # + the day number (UTC days since the epoch) -> that day's top, bytes per second
+_PREFIX = "rrdf_speed_"
+_NEXT = "rrdf_speed_next"  # the slot the next file goes in
+
+
+def _bytes(slot: int) -> str:
+    return f"{_PREFIX}{slot}_bytes"
+
+
+def _ms(slot: int) -> str:
+    return f"{_PREFIX}{slot}_ms"
+
+
+_OURS = {_NEXT, *(_bytes(i) for i in range(AVERAGE_OF)), *(_ms(i) for i in range(AVERAGE_OF))}
 
 
 def measured(sent_bytes: int, seconds: float) -> float | None:
@@ -33,22 +42,24 @@ def measured(sent_bytes: int, seconds: float) -> float | None:
     return sent_bytes / seconds
 
 
-def record(store: Store, bytes_per_s: float, now: float) -> None:
-    rate = max(1, round(bytes_per_s))
-    day = int(now // DAY_S)
-    store.set_cursor(LAST, rate)
-    store.set_cursor(LAST_AT, int(now))
-    if rate > store.cursor(f"{_DAY}{day}"):
-        store.set_cursor(f"{_DAY}{day}", rate)
-    store.delete_cursors(_DAY, keep={f"{_DAY}{d}" for d in range(day - TOP_DAYS + 1, day + 1)})
+def record(store: Store, size: int, seconds: float) -> None:
+    """Keep one file's size and time, in place of the oldest of the last AVERAGE_OF."""
+    slot = store.cursor(_NEXT) % AVERAGE_OF
+    store.set_cursor(_bytes(slot), int(size))
+    store.set_cursor(_ms(slot), max(1, round(seconds * 1000)))
+    store.set_cursor(_NEXT, (slot + 1) % AVERAGE_OF)
+    store.delete_cursors(_PREFIX, keep=_OURS)  # anything else under the prefix is from 0.1.20's speeds
 
 
-def read(store: Store, now: float) -> dict[str, float | None]:
-    """The last speed and the top of the last TOP_DAYS days, in MB/s (None for either if there is none)."""
-    last = store.cursor(LAST)
-    day = int(now // DAY_S)
-    top = max((store.cursor(f"{_DAY}{d}") for d in range(day - TOP_DAYS + 1, day + 1)), default=0)
-    return {"last_mb_s": mb_s(last) if last > 0 else None, "top_mb_s": mb_s(top) if top > 0 else None}
+def average_mb_s(store: Store) -> float | None:
+    """The last AVERAGE_OF files' total MB over their total seconds, or None before the first."""
+    total_bytes = total_ms = 0
+    for slot in range(AVERAGE_OF):
+        b, ms = store.cursor(_bytes(slot)), store.cursor(_ms(slot))
+        if b > 0 and ms > 0:
+            total_bytes += b
+            total_ms += ms
+    return mb_s(total_bytes * 1000 / total_ms) if total_ms else None
 
 
 def mb_s(bytes_per_s: float) -> float:

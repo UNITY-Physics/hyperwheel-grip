@@ -529,7 +529,7 @@ class Uploader:
                                      study.study_uid, speed.describe(size, seconds, rate))
                             self._delete_local(self.store.file(f.id))
                             if rate is not None:
-                                self._record_speed(rate)
+                                self._record_speed(size, seconds)
                             return
                         resets += 1
                         self.store.update_file(f.id, checksum_resets=resets, upload_offset=0)
@@ -611,10 +611,10 @@ class Uploader:
         """The file is flagged because GRIP's copy of it didn't match the Pi's (the flag stays until GRIP takes it)."""
         return any(fl.code == "RAW_CHECKSUM" and fl.file_id == f.id for fl in self.store.open_flags(study_id=f.study_id))
 
-    def _record_speed(self, bytes_per_s: float) -> None:
+    def _record_speed(self, size: int, seconds: float) -> None:
         """For the Upload Monitor only: a failure here never stops an upload."""
         try:
-            speed.record(self.store, bytes_per_s, self.clock())
+            speed.record(self.store, size, seconds)
         except Exception as e:  # noqa: BLE001 - display only
             log.warning("Upload speed not saved (%s)", e)
 

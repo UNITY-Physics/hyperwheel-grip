@@ -242,7 +242,7 @@ def snapshot(store: Store, site: SiteConfig, routing: Routing, *, now: float,
         "studies": cards,
         "keys": keys,
         "free_gb": round(free_gb, 1) if free_gb is not None else None,
-        "upload_speed": speed.read(store, now),
+        "upload_mb_s": speed.average_mb_s(store),
         "updated": time.strftime("%H:%M:%S", time.localtime(now)),
     }
 
@@ -479,12 +479,9 @@ function render(s) {
   const connect = document.getElementById("connect");
   connect.textContent = s.connect.text;
   connect.className = s.connect.ok ? "ok" : (s.connect.problem ? "bad" : "");
-  const up = s.upload_speed || {};
-  const speeds = [up.last_mb_s != null ? "last " + up.last_mb_s + " MB/s" : "",
-                  up.top_mb_s != null ? "top " + up.top_mb_s + " MB/s" : ""].filter(Boolean);
   document.getElementById("footer").textContent =
     s.site + " · updated " + s.updated + (s.free_gb !== null ? " · " + s.free_gb + " GB free" : "") +
-    (speeds.length ? " · upload to GRIP: " + speeds.join(", ") : "");
+    (s.upload_mb_s != null ? " · \u2191 " + s.upload_mb_s + " MB/s" : "");
 }
 async function refresh() {
   try {

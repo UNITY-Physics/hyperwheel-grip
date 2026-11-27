@@ -13,7 +13,6 @@ from hyperwheel.dashboard import snapshot
 from hyperwheel.uploader import Uploader
 
 CLIENT = "site-a-sandbox-client"
-DAY = speed.DAY_S
 
 
 class Ticks:
@@ -52,10 +51,8 @@ def test_an_rrdf_file_on_grip_logs_its_size_time_and_speed(env, caplog):
     assert m, line
     seconds = float(m.group(2))
     assert seconds > 0
-    rate = env.store.cursor(speed.LAST)
-    assert abs(rate - 2_500_000 / seconds) / rate < 0.05  # the stored speed is the logged one
-    shown = speed.read(env.store, env.clock())
-    assert shown["last_mb_s"] == shown["top_mb_s"] == speed.mb_s(rate) == float(m.group(3))
+    # One file so far: the average is its own speed, as logged.
+    assert speed.average_mb_s(env.store) == float(m.group(3))
 
 
 def test_files_under_1_mb_give_no_speed(env, caplog):
@@ -65,7 +62,7 @@ def test_files_under_1_mb_give_no_speed(env, caplog):
         uploader(env, Ticks(0.5)).run_once()
     line = next(r.getMessage() for r in caplog.records if "checksum matches" in r.getMessage())
     assert re.search(r"\(0\.9 MB in \d+\.\d s\)$", line), line
-    assert speed.read(env.store, env.clock()) == {"last_mb_s": None, "top_mb_s": None}
+    assert speed.average_mb_s(env.store) is None
 
 
 def test_a_file_not_sent_whole_in_one_try_gives_no_speed(env):
@@ -77,7 +74,7 @@ def test_a_file_not_sent_whole_in_one_try_gives_no_speed(env):
     on_grip.raw[raw.name] = RawUpload(raw.size, bytearray(Path(raw.path).read_bytes()))
     uploader(env, Ticks(0.5)).run_once()
     assert env.store.file(raw.id).state == "deleted"
-    assert env.store.cursor(speed.LAST) == 0
+    assert speed.average_mb_s(env.store) is None
 
 
 def test_speeds_do_not_change_what_is_sent(env):
@@ -87,29 +84,38 @@ def test_speeds_do_not_change_what_is_sent(env):
     assert len(env.fake.requests_matching("PUT", r"/raw/")) == 3
 
 
-def test_top_is_the_best_of_the_last_seven_days_and_older_days_go(env):
-    now = 1_800_000_000.0
-    speed.record(env.store, 9e6, now - 8 * DAY)  # too old
-    speed.record(env.store, 5e6, now - 6 * DAY)
-    speed.record(env.store, 2e6, now)
-    assert speed.read(env.store, now) == {"last_mb_s": 2.0, "top_mb_s": 5.0}
-    assert speed.read(env.store, now + DAY) == {"last_mb_s": 2.0, "top_mb_s": 2.0}  # the 5 MB/s day is now 8 days old
-    days = [r["name"] for r in env.store._db.execute("SELECT name FROM cursors WHERE name LIKE 'rrdf_speed_top_day_%'")]
-    assert len(days) == 2  # the 8-day-old one was removed when the next speed was recorded
+def test_the_average_is_the_last_five_files_total_mb_over_their_total_seconds(env):
+    speed.record(env.store, 50_000_000, 100.0)  # 0.5 MB/s: drops out once five newer files are in
+    for size, seconds in [(50_000_000, 5.0), (10_000_000, 1.0), (40_000_000, 8.0), (50_000_000, 5.0),
+                          (50_000_000, 6.0)]:
+        speed.record(env.store, size, seconds)
+    # 200 MB in 25 s, not the mean of the five speeds (10, 10, 5, 10, 8.3 -> 8.7).
+    assert speed.average_mb_s(env.store) == 8.0
 
 
-def test_a_slower_file_the_same_day_keeps_that_days_top(env):
-    now = 1_800_000_000.0
-    speed.record(env.store, 7e6, now)
-    speed.record(env.store, 3e6, now + 60)
-    assert speed.read(env.store, now + 60) == {"last_mb_s": 3.0, "top_mb_s": 7.0}
+def test_fewer_than_five_files_average_what_there_is(env):
+    assert speed.average_mb_s(env.store) is None
+    speed.record(env.store, 30_000_000, 4.0)
+    speed.record(env.store, 20_000_000, 1.0)
+    assert speed.average_mb_s(env.store) == 10.0
 
 
-def test_the_footer_shows_last_and_top_and_nothing_without_a_speed(env):
-    assert snap(env)["upload_speed"] == {"last_mb_s": None, "top_mb_s": None}
-    speed.record(env.store, 6.74e6, env.clock())
-    assert snap(env)["upload_speed"] == {"last_mb_s": 6.7, "top_mb_s": 6.7}
-    assert 'upload to GRIP: ' in dashboard.SCRIPT and 'up.last_mb_s != null' in dashboard.SCRIPT
+def test_the_7_day_speeds_of_0_1_20_are_removed(env):
+    for name in ("rrdf_speed_last", "rrdf_speed_last_at", "rrdf_speed_top_day_20830"):
+        env.store.set_cursor(name, 1)
+    env.store.set_cursor("reach_grip_answered", 5)  # someone else's cursor stays
+    speed.record(env.store, 20_000_000, 2.0)
+    names = {r["name"] for r in env.store._db.execute("SELECT name FROM cursors")}
+    assert not names & {"rrdf_speed_last", "rrdf_speed_last_at", "rrdf_speed_top_day_20830"}
+    assert "reach_grip_answered" in names and speed.average_mb_s(env.store) == 10.0
+
+
+def test_the_footer_shows_an_up_arrow_and_the_speed_and_nothing_without_one(env):
+    assert snap(env)["upload_mb_s"] is None
+    speed.record(env.store, 11_700_000, 1.0)
+    assert snap(env)["upload_mb_s"] == 11.7
+    assert '" \u00b7 \u2191 " + s.upload_mb_s + " MB/s"' in dashboard.SCRIPT
+    assert "s.upload_mb_s != null" in dashboard.SCRIPT and "upload to GRIP" not in dashboard.SCRIPT
 
 
 def test_a_resumed_upload_gives_no_speed_even_when_over_1_mb_is_sent(env):
@@ -122,7 +128,7 @@ def test_a_resumed_upload_gives_no_speed_even_when_over_1_mb_is_sent(env):
     uploader(env, Ticks(0.5)).run_once()
     assert env.store.file(raw.id).state == "deleted"
     assert env.fake.requests_matching("PUT", r"/raw/")[0][2]["Content-Range"].startswith("bytes 1000000-")
-    assert env.store.cursor(speed.LAST) == 0
+    assert speed.average_mb_s(env.store) is None
 
 
 def test_a_file_that_needed_a_retry_gives_no_speed(env):
@@ -133,7 +139,7 @@ def test_a_file_that_needed_a_retry_gives_no_speed(env):
     uploader(env, Ticks(0.5)).run_once()
     assert env.sleeps  # it did wait and try again
     assert env.store.files(study.id, kind="rrdf")[0].state == "deleted"
-    assert env.store.cursor(speed.LAST) == 0
+    assert speed.average_mb_s(env.store) is None
 
 
 def test_a_speed_that_cant_be_saved_never_stops_an_upload(env, monkeypatch):
