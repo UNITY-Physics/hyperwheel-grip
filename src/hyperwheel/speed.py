@@ -1,9 +1,9 @@
 """Upload speed to GRIP, from RRDF files: for the log and the Upload Monitor only.
 
 Nothing here changes how files are sent. Each RRDF file of at least
-``MIN_BYTES`` that goes up whole in one try (not resumed, not sent again) gives
-a speed: its size over the time from its first chunk to GRIP's answer to the
-last. Smaller files are left out: their time is mostly waiting for an answer.
+``MIN_BYTES`` that goes up whole in one try (not resumed, not sent again, no
+retry) gives a speed: its size over the time from its first chunk being sent to
+GRIP's answer to the last. Smaller files are left out: their time is mostly waiting for an answer.
 
 The speeds are kept in the state store's cursors table (whole numbers), so the
 store's layout doesn't change: the last speed and when it was measured, and

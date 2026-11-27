@@ -6,7 +6,6 @@ import logging
 import re
 from pathlib import Path
 
-from conftest import PROJECT
 from fakegrip import FakeStudy, RawUpload
 
 from hyperwheel import dashboard, speed
@@ -111,4 +110,42 @@ def test_the_footer_shows_last_and_top_and_nothing_without_a_speed(env):
     speed.record(env.store, 6.74e6, env.clock())
     assert snap(env)["upload_speed"] == {"last_mb_s": 6.7, "top_mb_s": 6.7}
     assert 'upload to GRIP: ' in dashboard.SCRIPT and 'up.last_mb_s != null' in dashboard.SCRIPT
-    assert PROJECT  # the fixture's dataset is routed, so the page is the set-up one
+
+
+def test_a_resumed_upload_gives_no_speed_even_when_over_1_mb_is_sent(env):
+    study = env.stage_study(n_dicom=1, raw_sizes=(3 * 1024 * 1024,))
+    dicom_on_grip(env, study)
+    raw = env.store.files(study.id, kind="rrdf")[0]
+    data = Path(raw.path).read_bytes()
+    on_grip = env.fake.studies.setdefault((CLIENT, study.study_uid), FakeStudy(CLIENT, study.study_uid))
+    on_grip.raw[raw.name] = RawUpload(raw.size, bytearray(data[:1_000_000]))  # about 2.1 MB still to send
+    uploader(env, Ticks(0.5)).run_once()
+    assert env.store.file(raw.id).state == "deleted"
+    assert env.fake.requests_matching("PUT", r"/raw/")[0][2]["Content-Range"].startswith("bytes 1000000-")
+    assert env.store.cursor(speed.LAST) == 0
+
+
+def test_a_file_that_needed_a_retry_gives_no_speed(env):
+    """The wait before a retry isn't the link's speed."""
+    study = env.stage_study(n_dicom=1, raw_sizes=(2_500_000,))
+    dicom_on_grip(env, study)
+    env.fake.add_fault("PUT", r"/v1/studies/.*/raw/.*", 503)
+    uploader(env, Ticks(0.5)).run_once()
+    assert env.sleeps  # it did wait and try again
+    assert env.store.files(study.id, kind="rrdf")[0].state == "deleted"
+    assert env.store.cursor(speed.LAST) == 0
+
+
+def test_a_speed_that_cant_be_saved_never_stops_an_upload(env, monkeypatch):
+    def broken(*a, **kw):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(speed, "record", broken)
+    first = env.stage_study(n_dicom=1, raw_sizes=(2_500_000,))
+    second = env.stage_study(n_dicom=1, raw_sizes=(2_500_000,))
+    for study in (first, second):
+        dicom_on_grip(env, study)
+    uploader(env, Ticks(0.5)).run_once()
+    for study in (first, second):
+        f = env.store.files(study.id, kind="rrdf")[0]
+        assert f.state == "deleted" and not Path(f.path).exists()
